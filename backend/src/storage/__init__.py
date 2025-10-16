@@ -1,0 +1,1 @@
+# Storage management module for Chronicle Keeper

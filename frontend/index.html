@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chronicle Keeper</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <div class="app-container">
+      <!-- Header -->
+      <header class="app-header">
+        <h1>Chronicle Keeper</h1>
+        <p class="subtitle">Generate D&D Session Notes from Discord Audio</p>
+        <button id="settings-btn" class="settings-button">⚙️ Settings</button>
+      </header>
+
+      <!-- Main Content Area -->
+      <main class="main-content">
+        <!-- Step 1: Upload -->
+        <section id="upload-screen" class="screen active">
+          <div class="step-header">
+            <h2>Step 1: Upload Craig Bot File</h2>
+            <p>Select your Craig Bot ZIP file containing the session audio tracks</p>
+          </div>
+          <div class="upload-area">
+            <div id="file-drop-zone" class="file-drop-zone">
+              <div class="drop-zone-content">
+                <span class="upload-icon">📁</span>
+                <p>Drag & drop your Craig Bot ZIP file here</p>
+                <p class="upload-or">or</p>
+                <button id="file-select-btn" class="primary-button">Select File</button>
+                <button id="debug-upload-btn" class="secondary-button">🔧 Use Example Recording</button>
+              </div>
+            </div>
+            <div id="upload-status" class="upload-status hidden"></div>
+          </div>
+        </section>
+
+        <!-- Step 2: Label Speakers -->
+        <section id="speakers-screen" class="screen">
+          <div class="step-header">
+            <h2>Step 2: Label Audio Tracks</h2>
+            <p>Assign speaker names to each audio track</p>
+          </div>
+          <div id="tracks-container" class="tracks-container"></div>
+          <div class="screen-actions">
+            <button id="back-to-upload" class="secondary-button">← Back</button>
+            <button id="continue-to-processing" class="primary-button" disabled>Continue →</button>
+          </div>
+        </section>
+
+        <!-- Step 3: Processing -->
+        <section id="processing-screen" class="screen">
+          <div class="step-header">
+            <h2>Step 3: Generate Session Notes</h2>
+            <p>Choose your LLM engine and generate the session summary</p>
+          </div>
+          <div class="processing-options">
+            <div class="llm-selection">
+              <label class="radio-label">
+                <input type="radio" name="llm-engine" value="local" checked>
+                <span class="radio-custom"></span>
+                Local LLM (Ollama)
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="llm-engine" value="cloud">
+                <span class="radio-custom"></span>
+                Cloud LLM (Gemini)
+              </label>
+            </div>
+            <button id="generate-notes-btn" class="primary-button">🔄 Generate Notes</button>
+          </div>
+          <div id="processing-status" class="processing-status hidden"></div>
+          <div class="screen-actions">
+            <button id="back-to-speakers" class="secondary-button">← Back</button>
+          </div>
+        </section>
+
+        <!-- Step 4: Export -->
+        <section id="export-screen" class="screen">
+          <div class="step-header">
+            <h2>Step 4: Export Notes</h2>
+            <p>Review and save your session notes</p>
+          </div>
+          <div class="notes-preview">
+            <textarea id="notes-content" class="notes-textarea" readonly></textarea>
+          </div>
+          <div class="screen-actions">
+            <button id="back-to-processing" class="secondary-button">← Back</button>
+            <button id="export-notes-btn" class="primary-button">💾 Export as Markdown</button>
+            <button id="start-new-session" class="secondary-button">🆕 New Session</button>
+          </div>
+        </section>
+      </main>
+
+      <!-- Settings Modal -->
+      <div id="settings-modal" class="modal hidden">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>Settings</h2>
+            <button id="close-settings" class="close-button">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="setting-group">
+              <label for="gemini-api-key">Gemini API Key:</label>
+              <input type="password" id="gemini-api-key" placeholder="Enter your Gemini API key">
+            </div>
+            <div class="setting-group">
+              <label for="system-prompt">System Prompt:</label>
+              <textarea id="system-prompt" rows="10" placeholder="Enter your custom system prompt..."></textarea>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button id="save-settings" class="primary-button">Save Settings</button>
+            <button id="cancel-settings" class="secondary-button">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

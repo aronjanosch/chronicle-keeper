@@ -48,14 +48,58 @@
           <div id="tracks-container" class="tracks-container"></div>
           <div class="screen-actions">
             <button id="back-to-upload" class="secondary-button">← Back</button>
-            <button id="continue-to-processing" class="primary-button" disabled>Continue →</button>
+            <button id="continue-to-metadata" class="primary-button" disabled>Continue →</button>
           </div>
         </section>
 
-        <!-- Step 3: Processing -->
+        <!-- Step 3: Session Metadata -->
+        <section id="metadata-screen" class="screen">
+          <div class="step-header">
+            <h2>Step 3: Session Details</h2>
+            <p>Enter session information for better organization</p>
+          </div>
+          <div class="metadata-form">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="session-date">Session Date:</label>
+                <input type="date" id="session-date" class="form-input">
+              </div>
+              <div class="form-group">
+                <label for="session-number">Session Number:</label>
+                <input type="number" id="session-number" class="form-input" min="1" placeholder="1">
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="campaign-name">Campaign Name:</label>
+              <input type="text" id="campaign-name" class="form-input" placeholder="Enter campaign name">
+            </div>
+            <div class="form-group">
+              <label for="session-locations">Locations:</label>
+              <input type="text" id="session-locations" class="form-input" placeholder="Locations visited (comma separated)">
+            </div>
+            <div class="form-group">
+              <label for="characters-present">Characters Present:</label>
+              <input type="text" id="characters-present" class="form-input" placeholder="Character names (comma separated)">
+            </div>
+            <div class="form-group">
+              <label for="session-tags">Tags:</label>
+              <input type="text" id="session-tags" class="form-input" placeholder="Tags (comma separated)">
+            </div>
+            <div class="form-group">
+              <label for="session-notes">Additional Notes:</label>
+              <textarea id="session-notes" class="form-textarea" rows="3" placeholder="Any additional notes about this session..."></textarea>
+            </div>
+          </div>
+          <div class="screen-actions">
+            <button id="back-to-speakers" class="secondary-button">← Back</button>
+            <button id="continue-to-processing" class="primary-button">Continue →</button>
+          </div>
+        </section>
+
+        <!-- Step 4: Processing -->
         <section id="processing-screen" class="screen">
           <div class="step-header">
-            <h2>Step 3: Generate Session Notes</h2>
+            <h2>Step 4: Generate Session Notes</h2>
             <p>Choose your LLM engine and generate the session summary</p>
           </div>
           <div class="processing-options">
@@ -75,15 +119,28 @@
           </div>
           <div id="processing-status" class="processing-status hidden"></div>
           <div class="screen-actions">
-            <button id="back-to-speakers" class="secondary-button">← Back</button>
+            <button id="back-to-metadata" class="secondary-button">← Back</button>
           </div>
         </section>
 
-        <!-- Step 4: Export -->
+        <!-- Step 5: Export -->
         <section id="export-screen" class="screen">
           <div class="step-header">
-            <h2>Step 4: Export Notes</h2>
+            <h2>Step 5: Export Notes</h2>
             <p>Review and save your session notes</p>
+          </div>
+          <div class="export-options">
+            <div class="export-format">
+              <label class="checkbox-label">
+                <input type="checkbox" id="use-obsidian-format">
+                <span class="checkbox-custom"></span>
+                Export for Obsidian (with YAML frontmatter)
+              </label>
+            </div>
+            <div class="filename-input">
+              <label for="custom-filename">Filename (optional):</label>
+              <input type="text" id="custom-filename" class="form-input" placeholder="Auto-generated filename will be used">
+            </div>
           </div>
           <div class="notes-preview">
             <textarea id="notes-content" class="notes-textarea" readonly></textarea>

@@ -66,6 +66,26 @@ class SettingsModel(BaseModel):
     llm_preference: str = "local"
     system_prompt: str
 
+class SessionMetadata(BaseModel):
+    session_id: str
+    session_date: Optional[str] = None
+    session_number: Optional[int] = None
+    campaign_id: Optional[str] = None
+    campaign_name: Optional[str] = None
+    locations: List[str] = []
+    characters_present: List[str] = []
+    tags: List[str] = []
+    notes: Optional[str] = None
+
+class CampaignCreate(BaseModel):
+    campaign_id: str
+    name: str
+
+class ExportOptionsRequest(BaseModel):
+    session_id: str
+    use_obsidian_format: bool = False
+    custom_filename: Optional[str] = None
+
 @app.post("/upload", response_model=UploadResponse)
 async def upload_craig_zip(file: UploadFile = File(...)):
     """Process Craig Bot ZIP file containing multi-track audio"""
@@ -149,6 +169,12 @@ async def generate_notes(request: GenerateNotesRequest):
             ollama_client = OllamaClient()
             summary = ollama_client.generate_summary(transcript, system_prompt)
         
+        # Store the summary in the session
+        session_manager.update_session(request.session_id, {
+            "summary": summary,
+            "transcript": transcript
+        })
+        
         return {"summary": summary, "transcript": transcript}
     
     except Exception as e:
@@ -225,6 +251,105 @@ async def debug_upload_example():
     except Exception as e:
         logger.error(f"Error processing example ZIP: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to process example ZIP: {str(e)}")
+
+@app.post("/session-metadata")
+async def set_session_metadata(metadata: SessionMetadata):
+    """Set session metadata (date, number, campaign, etc.)"""
+    try:
+        session_data = {
+            "session_date": metadata.session_date,
+            "session_number": metadata.session_number,
+            "campaign_id": metadata.campaign_id,
+            "campaign_name": metadata.campaign_name,
+            "locations": metadata.locations,
+            "characters_present": metadata.characters_present,
+            "tags": metadata.tags,
+            "notes": metadata.notes
+        }
+        
+        session_manager.set_session_metadata(metadata.session_id, session_data)
+        
+        # If session number is provided, increment the campaign's next session number
+        if metadata.session_number and metadata.campaign_id:
+            config_manager.increment_session_number(metadata.campaign_id)
+        
+        return {"status": "success", "message": "Session metadata updated"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update metadata: {str(e)}")
+
+@app.get("/session-metadata/{session_id}")
+async def get_session_metadata(session_id: str):
+    """Get session metadata"""
+    try:
+        metadata = session_manager.get_session_metadata(session_id)
+        return metadata
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get metadata: {str(e)}")
+
+@app.get("/campaigns")
+async def get_campaigns():
+    """Get all campaigns and their info"""
+    try:
+        campaigns = config_manager.get_campaigns()
+        current_campaign = config_manager.get_current_campaign()
+        return {
+            "campaigns": campaigns,
+            "current_campaign": current_campaign
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get campaigns: {str(e)}")
+
+@app.post("/campaigns")
+async def create_campaign(campaign: CampaignCreate):
+    """Create a new campaign"""
+    try:
+        campaign_data = config_manager.create_campaign(campaign.campaign_id, campaign.name)
+        return {"status": "success", "campaign": campaign_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create campaign: {str(e)}")
+
+@app.get("/next-session-number")
+async def get_next_session_number(campaign_id: Optional[str] = None):
+    """Get next session number for current or specified campaign"""
+    try:
+        next_number = config_manager.get_next_session_number(campaign_id)
+        return {"next_session_number": next_number}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get session number: {str(e)}")
+
+@app.post("/export-obsidian")
+async def export_obsidian_notes(request: ExportOptionsRequest):
+    """Generate and return Obsidian-formatted notes"""
+    try:
+        # Get session data
+        session_data = session_manager.get_session(request.session_id)
+        if not session_data:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        summary = session_data.get("summary", "")
+        if not summary:
+            raise HTTPException(status_code=400, detail="No summary available. Generate notes first.")
+        
+        if request.use_obsidian_format:
+            # Generate Obsidian-formatted content
+            content = session_manager.generate_obsidian_content(
+                request.session_id, summary, config_manager
+            )
+            filename = request.custom_filename or session_manager.generate_filename(
+                request.session_id, config_manager
+            )
+        else:
+            # Use standard format
+            content = summary
+            filename = request.custom_filename or "session_notes.md"
+        
+        return {
+            "content": content,
+            "filename": filename,
+            "use_obsidian_format": request.use_obsidian_format
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export: {str(e)}")
 
 @app.get("/health")
 async def health_check():

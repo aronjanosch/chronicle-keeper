@@ -19,6 +19,18 @@ interface Settings {
   llm_preference?: 'local' | 'cloud';
 }
 
+interface SessionMetadata {
+  session_id: string;
+  session_date?: string;
+  session_number?: number;
+  campaign_id?: string;
+  campaign_name?: string;
+  locations?: string[];
+  characters_present?: string[];
+  tags?: string[];
+  notes?: string;
+}
+
 class ChronicleKeeperApp {
   private currentSessionId: string | null = null;
   private tracks: Track[] = [];
@@ -65,8 +77,10 @@ class ChronicleKeeperApp {
 
     // Navigation buttons
     document.getElementById('back-to-upload')?.addEventListener('click', () => this.showScreen('upload-screen'));
-    document.getElementById('continue-to-processing')?.addEventListener('click', () => this.proceedToProcessing());
+    document.getElementById('continue-to-metadata')?.addEventListener('click', () => this.proceedToMetadata());
     document.getElementById('back-to-speakers')?.addEventListener('click', () => this.showScreen('speakers-screen'));
+    document.getElementById('continue-to-processing')?.addEventListener('click', () => this.proceedToProcessing());
+    document.getElementById('back-to-metadata')?.addEventListener('click', () => this.showScreen('metadata-screen'));
     document.getElementById('back-to-processing')?.addEventListener('click', () => this.showScreen('processing-screen'));
 
     // Processing
@@ -269,7 +283,7 @@ class ChronicleKeeperApp {
 
   private validateSpeakerMappings() {
     const inputs = document.querySelectorAll('.speaker-input') as NodeListOf<HTMLInputElement>;
-    const continueBtn = document.getElementById('continue-to-processing') as HTMLButtonElement;
+    const continueBtn = document.getElementById('continue-to-metadata') as HTMLButtonElement;
     
     let allFilled = true;
     this.speakerMappings = {};
@@ -290,7 +304,7 @@ class ChronicleKeeperApp {
     continueBtn.disabled = !allFilled;
   }
 
-  private async proceedToProcessing() {
+  private async proceedToMetadata() {
     if (!this.currentSessionId) return;
 
     try {
@@ -306,7 +320,8 @@ class ChronicleKeeperApp {
       });
 
       if (response.ok) {
-        this.showScreen('processing-screen');
+        await this.loadSessionDefaults();
+        this.showScreen('metadata-screen');
       } else {
         const error = await response.json();
         alert(`Failed to save speaker mappings: ${error.detail}`);
@@ -314,6 +329,91 @@ class ChronicleKeeperApp {
     } catch (error) {
       console.error('Failed to save speaker mappings:', error);
       alert('Failed to save speaker mappings');
+    }
+  }
+
+  private async loadSessionDefaults() {
+    try {
+      // Get next session number
+      const sessionResponse = await window.fetch(`${API_BASE_URL}/next-session-number`);
+      if (sessionResponse.ok) {
+        const data = await sessionResponse.json();
+        const sessionNumberInput = document.getElementById('session-number') as HTMLInputElement;
+        if (sessionNumberInput) {
+          sessionNumberInput.value = data.next_session_number.toString();
+        }
+      }
+
+      // Set today's date as default
+      const dateInput = document.getElementById('session-date') as HTMLInputElement;
+      if (dateInput) {
+        dateInput.value = new Date().toISOString().split('T')[0];
+      }
+
+      // Load campaigns if available
+      const campaignsResponse = await window.fetch(`${API_BASE_URL}/campaigns`);
+      if (campaignsResponse.ok) {
+        const campaignData = await campaignsResponse.json();
+        const currentCampaign = campaignData.campaigns[campaignData.current_campaign];
+        if (currentCampaign) {
+          const campaignInput = document.getElementById('campaign-name') as HTMLInputElement;
+          if (campaignInput) {
+            campaignInput.value = currentCampaign.name;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load session defaults:', error);
+    }
+  }
+
+  private async proceedToProcessing() {
+    if (!this.currentSessionId) return;
+
+    try {
+      // Collect metadata from form
+      const sessionDate = (document.getElementById('session-date') as HTMLInputElement)?.value;
+      const sessionNumber = parseInt((document.getElementById('session-number') as HTMLInputElement)?.value || '1');
+      const campaignName = (document.getElementById('campaign-name') as HTMLInputElement)?.value;
+      const locationsText = (document.getElementById('session-locations') as HTMLInputElement)?.value;
+      const charactersText = (document.getElementById('characters-present') as HTMLInputElement)?.value;
+      const tagsText = (document.getElementById('session-tags') as HTMLInputElement)?.value;
+      const notes = (document.getElementById('session-notes') as HTMLTextAreaElement)?.value;
+
+      // Parse comma-separated values
+      const locations = locationsText ? locationsText.split(',').map(l => l.trim()).filter(l => l) : [];
+      const characters = charactersText ? charactersText.split(',').map(c => c.trim()).filter(c => c) : [];
+      const tags = tagsText ? tagsText.split(',').map(t => t.trim()).filter(t => t) : [];
+
+      const metadata: SessionMetadata = {
+        session_id: this.currentSessionId,
+        session_date: sessionDate || undefined,
+        session_number: sessionNumber || undefined,
+        campaign_name: campaignName || undefined,
+        locations: locations,
+        characters_present: characters,
+        tags: tags,
+        notes: notes || undefined
+      };
+
+      // Save metadata
+      const response = await window.fetch(`${API_BASE_URL}/session-metadata`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(metadata),
+      });
+
+      if (response.ok) {
+        this.showScreen('processing-screen');
+      } else {
+        const error = await response.json();
+        alert(`Failed to save session metadata: ${error.detail}`);
+      }
+    } catch (error) {
+      console.error('Failed to save session metadata:', error);
+      alert('Failed to save session metadata');
     }
   }
 
@@ -363,28 +463,51 @@ class ChronicleKeeperApp {
   }
 
   private async exportNotes() {
-    if (!this.generatedNotes) return;
+    if (!this.currentSessionId) return;
 
     try {
-      // Create a blob with the markdown content
-      const blob = new Blob([this.generatedNotes], { type: 'text/markdown' });
-      const url = URL.createObjectURL(blob);
-      
-      // Create a temporary download link
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'session_notes.md';
-      link.style.display = 'none';
-      
-      // Trigger download
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      
-      // Clean up the URL object
-      URL.revokeObjectURL(url);
-      
-      this.showStatus('Notes exported successfully!', 'success');
+      const useObsidianFormat = (document.getElementById('use-obsidian-format') as HTMLInputElement)?.checked || false;
+      const customFilename = (document.getElementById('custom-filename') as HTMLInputElement)?.value || undefined;
+
+      // Get formatted content from backend
+      const response = await window.fetch(`${API_BASE_URL}/export-obsidian`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          session_id: this.currentSessionId,
+          use_obsidian_format: useObsidianFormat,
+          custom_filename: customFilename
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Create a blob with the formatted content
+        const blob = new Blob([data.content], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        
+        // Create a temporary download link
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = data.filename;
+        link.style.display = 'none';
+        
+        // Trigger download
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up the URL object
+        URL.revokeObjectURL(url);
+        
+        this.showStatus('Notes exported successfully!', 'success');
+      } else {
+        const error = await response.json();
+        this.showStatus(`Export failed: ${error.detail}`, 'error');
+      }
     } catch (error) {
       console.error('Export error:', error);
       this.showStatus('Export failed', 'error');
@@ -401,6 +524,26 @@ class ChronicleKeeperApp {
     const notesTextarea = document.getElementById('notes-content') as HTMLTextAreaElement;
     if (notesTextarea) {
       notesTextarea.value = '';
+    }
+
+    // Reset metadata form
+    const metadataInputs = ['session-date', 'session-number', 'campaign-name', 'session-locations', 'characters-present', 'session-tags', 'session-notes'];
+    metadataInputs.forEach(id => {
+      const element = document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement;
+      if (element) {
+        element.value = '';
+      }
+    });
+
+    // Reset export options
+    const obsidianCheckbox = document.getElementById('use-obsidian-format') as HTMLInputElement;
+    if (obsidianCheckbox) {
+      obsidianCheckbox.checked = false;
+    }
+
+    const filenameInput = document.getElementById('custom-filename') as HTMLInputElement;
+    if (filenameInput) {
+      filenameInput.value = '';
     }
     
     this.showScreen('upload-screen');

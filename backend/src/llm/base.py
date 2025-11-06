@@ -49,7 +49,7 @@ class BaseLLMClient(ABC):
         """
         pass
 
-    def generate_summary_with_metadata(self, transcript: str, system_prompt: str) -> Dict[str, Any]:
+    def generate_summary_with_metadata(self, transcript: str, system_prompt: str, language: str = "en") -> Dict[str, Any]:
         """
         Generate session summary and metadata suggestions in single optimized call.
 
@@ -61,7 +61,7 @@ class BaseLLMClient(ABC):
             Dictionary containing summary and metadata suggestions
         """
         # Build the enhanced prompt using centralized prompt builder
-        enhanced_prompt = build_enhanced_prompt(system_prompt, transcript)
+        enhanced_prompt = build_enhanced_prompt(system_prompt, transcript, language)
 
         # Call the LLM (implemented by subclass)
         full_response = self._call_llm(enhanced_prompt, temperature=0.3)
@@ -71,21 +71,23 @@ class BaseLLMClient(ABC):
 
         return {
             "summary": summary,
-            "metadata": metadata
+            "metadata": metadata,
+            "raw_response": full_response
         }
 
-    def analyze_metadata(self, transcript: str) -> Dict[str, List[str]]:
+    def analyze_metadata(self, transcript: str, language: str = "en") -> Dict[str, List[str]]:
         """
         Analyze transcript and suggest metadata tags, characters, and locations.
 
         Args:
             transcript: The session transcript
+            language: Language code (en, de)
 
         Returns:
             Dictionary with suggested metadata
         """
         # Build metadata analysis prompt
-        analysis_prompt = get_metadata_analysis_prompt(transcript)
+        analysis_prompt = get_metadata_analysis_prompt(transcript, language)
 
         try:
             # Call the LLM with lower temperature for consistent JSON

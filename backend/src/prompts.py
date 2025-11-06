@@ -73,20 +73,37 @@ METADATA_JSON_STRUCTURE = {
     "key_events": []
 }
 
-METADATA_GUIDELINES = """Metadata guidelines:
+METADATA_GUIDELINES: Dict[str, str] = {
+    "en": """Metadata guidelines:
 - suggested_tags: Activity types (combat, social, exploration, investigation, puzzle, travel) and tone (dramatic, comedic, tense, mystery, political)
 - mentioned_characters: Names of NPCs, characters, or entities mentioned multiple times
 - mentioned_locations: Place names mentioned in the session
 - session_tone: Overall mood/tone descriptors
 - key_events: Major story beats or important occurrences
 
-Only include items that are clearly mentioned and significant. Limit each array to 5-8 most relevant items."""
+Only include items that are clearly mentioned and significant. Limit each array to 5-8 most relevant items.""",
+    "de": """Metadaten-Richtlinien:
+- suggested_tags: Aktivitätstypen (Kampf, sozial, Erkundung, Ermittlung, Rätsel, Reise) und Stimmung (dramatisch, komisch, angespannt, mysteriös, politisch)
+- mentioned_characters: Namen von NPCs, Charakteren oder Entitäten, die mehrfach erwähnt werden
+- mentioned_locations: Ortsnamen, die in der Sitzung erwähnt werden
+- session_tone: Gesamtstimmungs-/Tonbeschreibungen
+- key_events: Wichtige Handlungsmomente oder wichtige Ereignisse
+
+Nur Elemente einbeziehen, die klar erwähnt und bedeutsam sind. Jedes Array auf 5-8 relevanteste Elemente begrenzen."""
+}
+
+def get_metadata_guidelines(language: str = "en") -> str:
+    """Get metadata guidelines in the specified language."""
+    return METADATA_GUIDELINES.get(language, METADATA_GUIDELINES["en"])
 
 # ============================================================================
 # FORMAT INSTRUCTIONS
 # ============================================================================
 
-SUMMARY_FORMAT_TEMPLATE = """**Summary of Events:**
+RESPONSE_SEPARATOR = "---METADATA---"
+
+SUMMARY_FORMAT_TEMPLATES = {
+    "en": """**Summary of Events:**
 - [Major plot development or revelation]
 - [Key combat outcome or story change]
 - [Important discovery or event]
@@ -94,13 +111,54 @@ SUMMARY_FORMAT_TEMPLATE = """**Summary of Events:**
 **Key Decisions & Next Steps:**
 - [A choice the party made]
 - [A goal or action item for the next session]
-- [Unresolved situation requiring future action]"""
+- [Unresolved situation requiring future action]""",
+    "de": """**Zusammenfassung der Ereignisse:**
+- [Große Handlungsentwicklung oder Enthüllung]
+- [Wichtiges Kampfergebnis oder Wendepunkt]
+- [Wichtige Entdeckung oder Ereignis]
 
-RESPONSE_SEPARATOR = "---METADATA---"
+**Wichtige Entscheidungen & Nächste Schritte:**
+- [Eine Entscheidung der Gruppe]
+- [Ein Ziel oder eine Aufgabe für die nächste Sitzung]
+- [Offene Situation, die weitere Aktion erfordert]"""
+}
 
-ENHANCED_PROMPT_INSTRUCTIONS = f"""CRITICAL: Follow this EXACT format structure:
+ENHANCED_INSTRUCTIONS_TEXT: Dict[str, str] = {
+    "en": {
+        "critical": "CRITICAL: Follow this EXACT format structure:",
+        "instructions": "INSTRUCTIONS:",
+        "step1": "1. First write the summary using the EXACT format above",
+        "step2": f'2. Then add "{RESPONSE_SEPARATOR}" as a separator',
+        "step3": "3. Then add the JSON metadata block",
+        "step4": "4. Do NOT deviate from this structure"
+    },
+    "de": {
+        "critical": "KRITISCH: Befolge diese EXAKTE Formatstruktur:",
+        "instructions": "ANWEISUNGEN:",
+        "step1": "1. Schreibe zuerst die Zusammenfassung im EXAKTEN Format oben",
+        "step2": f'2. Füge dann "{RESPONSE_SEPARATOR}" als Trennzeichen hinzu',
+        "step3": "3. Füge dann den JSON-Metadatenblock hinzu",
+        "step4": "4. Weiche NICHT von dieser Struktur ab"
+    }
+}
 
-{SUMMARY_FORMAT_TEMPLATE}
+def get_enhanced_instructions(language: str = "en") -> str:
+    """
+    Get the enhanced formatting instructions with localized section headers.
+
+    Args:
+        language: Language code (en, de)
+
+    Returns:
+        Instruction string including the localized summary template and separator/JSON block
+    """
+    template = SUMMARY_FORMAT_TEMPLATES.get(language, SUMMARY_FORMAT_TEMPLATES["en"])
+    instructions = ENHANCED_INSTRUCTIONS_TEXT.get(language, ENHANCED_INSTRUCTIONS_TEXT["en"])
+    metadata_guidelines = get_metadata_guidelines(language)
+    
+    return f"""{instructions["critical"]}
+
+{template}
 
 {RESPONSE_SEPARATOR}
 {{
@@ -111,13 +169,18 @@ ENHANCED_PROMPT_INSTRUCTIONS = f"""CRITICAL: Follow this EXACT format structure:
     "key_events": []
 }}
 
-INSTRUCTIONS:
-1. First write the summary using the EXACT format above with "**Summary of Events:**" and "**Key Decisions & Next Steps:**"
-2. Then add "{RESPONSE_SEPARATOR}" as a separator
-3. Then add the JSON metadata block
-4. Do NOT deviate from this structure
+{instructions["instructions"]}
+{instructions["step1"]}
+{instructions["step2"]}
+{instructions["step3"]}
+{instructions["step4"]}
 
-{METADATA_GUIDELINES}"""
+{metadata_guidelines}"""
+
+TRANSCRIPT_LABELS: Dict[str, str] = {
+    "en": "Transcript:",
+    "de": "Transkript:"
+}
 
 # ============================================================================
 # PROMPT BUILDER FUNCTIONS
@@ -149,64 +212,84 @@ def get_available_languages() -> Dict[str, str]:
     }
 
 
-def build_enhanced_prompt(base_prompt: str, transcript: str) -> str:
+def build_enhanced_prompt(base_prompt: str, transcript: str, language: str = "en") -> str:
     """
     Build the full enhanced prompt with format instructions and metadata guidelines.
 
     Args:
         base_prompt: The base system prompt
         transcript: The session transcript to analyze
+        language: Language code (en, de)
 
     Returns:
         Complete prompt string ready for LLM
     """
+    transcript_label = TRANSCRIPT_LABELS.get(language, TRANSCRIPT_LABELS["en"])
     return f"""{base_prompt}
 
-{ENHANCED_PROMPT_INSTRUCTIONS}
+{get_enhanced_instructions(language)}
 
-Transcript:
+{transcript_label}
 {transcript}"""
 
 
-def build_simple_prompt(base_prompt: str, transcript: str) -> str:
+def build_simple_prompt(base_prompt: str, transcript: str, language: str = "en") -> str:
     """
     Build a simple prompt without metadata extraction.
 
     Args:
         base_prompt: The base system prompt
         transcript: The session transcript to analyze
+        language: Language code (en, de)
 
     Returns:
         Simple prompt string
     """
+    transcript_label = TRANSCRIPT_LABELS.get(language, TRANSCRIPT_LABELS["en"])
     return f"""{base_prompt}
 
-Transcript:
+{transcript_label}
 {transcript}"""
 
 
-def get_metadata_analysis_prompt(transcript: str) -> str:
+METADATA_ANALYSIS_PROMPTS: Dict[str, str] = {
+    "en": """Analyze this TTRPG transcript and extract metadata. Return ONLY valid JSON with this exact structure:""",
+    "de": """Analysiere dieses TTRPG-Transkript und extrahiere Metadaten. Gib NUR gültiges JSON mit dieser exakten Struktur zurück:"""
+}
+
+JSON_RESPONSE_LABELS: Dict[str, str] = {
+    "en": "JSON Response:",
+    "de": "JSON-Antwort:"
+}
+
+def get_metadata_analysis_prompt(transcript: str, language: str = "en") -> str:
     """
     Build a prompt specifically for metadata extraction.
 
     Args:
         transcript: The session transcript to analyze
+        language: Language code (en, de)
 
     Returns:
         Metadata analysis prompt
     """
     import json
 
-    return f"""Analyze this TTRPG transcript and extract metadata. Return ONLY valid JSON with this exact structure:
+    prompt_text = METADATA_ANALYSIS_PROMPTS.get(language, METADATA_ANALYSIS_PROMPTS["en"])
+    transcript_label = TRANSCRIPT_LABELS.get(language, TRANSCRIPT_LABELS["en"])
+    json_label = JSON_RESPONSE_LABELS.get(language, JSON_RESPONSE_LABELS["en"])
+    metadata_guidelines = get_metadata_guidelines(language)
+
+    return f"""{prompt_text}
 
 {json.dumps(METADATA_JSON_STRUCTURE, indent=4)}
 
-{METADATA_GUIDELINES}
+{metadata_guidelines}
 
-Transcript:
+{transcript_label}
 {transcript}
 
-JSON Response:"""
+{json_label}"""
 
 
 def get_empty_metadata() -> Dict[str, list]:

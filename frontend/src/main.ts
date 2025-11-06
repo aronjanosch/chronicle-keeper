@@ -757,6 +757,7 @@ class ChronicleKeeperApp {
 
     const generateBtn = document.getElementById('generate-notes-btn') as HTMLButtonElement;
     const llmEngine = document.querySelector('input[name="llm-engine-wizard"]:checked') as HTMLInputElement;
+    const ollamaModelSelect = document.getElementById('ollama-model-select-wizard') as HTMLSelectElement;
 
     generateBtn.disabled = true;
 
@@ -776,7 +777,9 @@ class ChronicleKeeperApp {
         },
         body: JSON.stringify({
           session_id: this.currentSessionId,
-          llm_engine: llmEngine.value
+          llm_engine: llmEngine.value,
+          // pass current selection even if not saved globally
+          ollama_model: ollamaModelSelect?.value
         }),
       });
 

@@ -65,6 +65,7 @@ class GenerateNotesRequest(BaseModel):
     session_id: str
     llm_engine: str  # "local" or "cloud"
     custom_prompt: Optional[str] = None
+    ollama_model: Optional[str] = None
 
 class ExportRequest(BaseModel):
     content: str
@@ -222,29 +223,35 @@ async def generate_notes(request: GenerateNotesRequest):
         # Generate summary and metadata using selected LLM
         if request.llm_engine == "cloud":
             gemini_client = GeminiClient(settings.get("gemini_api_key"))
-            result = gemini_client.generate_summary_with_metadata(transcript, system_prompt)
+            result = gemini_client.generate_summary_with_metadata(transcript, system_prompt, current_language)
         else:
-            ollama_model = settings.get("ollama_model", "llama3.2")
+            # Allow per-request override of Ollama model; fall back to saved settings
+            ollama_model = request.ollama_model or settings.get("ollama_model", "llama3.2")
             ollama_base_url = config_manager.get_ollama_base_url()
             ollama_client = OllamaClient(base_url=ollama_base_url, model=ollama_model)
-            result = ollama_client.generate_summary_with_metadata(transcript, system_prompt)
+            result = ollama_client.generate_summary_with_metadata(transcript, system_prompt, current_language)
         
         summary = result["summary"]
         metadata_suggestions = result["metadata"]
         
-        # DEBUG: Export LLM interaction
+        # DEBUG: Export LLM interaction (include raw response to show how tags were parsed)
+        transcript_label = "Transcript" if current_language == "en" else "Transkript"
         debug_manager.export_llm_interaction(
             request.session_id,
             request.llm_engine,
-            f"{system_prompt}\n\nTranscript to analyze:\n{transcript}",
-            summary,
+            f"{system_prompt}\n\n{transcript_label}:\n{transcript}",
+            result.get("raw_response", summary),
             {
                 "language": current_language,
                 "llm_engine": request.llm_engine,
-                "ollama_model": settings.get("ollama_model") if request.llm_engine == "local" else None,
+                "ollama_model": (request.ollama_model or settings.get("ollama_model")) if request.llm_engine == "local" else None,
                 "has_gemini_key": bool(settings.get("gemini_api_key")) if request.llm_engine == "cloud" else None
             },
-            metadata_suggestions
+            metadata_suggestions,
+            parsed={
+                "summary": summary,
+                "metadata": metadata_suggestions
+            }
         )
         
         # Store the summary in the session
@@ -475,16 +482,17 @@ async def analyze_metadata(request: AnalyzeMetadataRequest):
         
         # Get settings for LLM configuration
         settings = config_manager.get_settings()
+        current_language = config_manager.get_current_language()
         
         # Analyze metadata using selected LLM
         if request.llm_engine == "cloud":
             gemini_client = GeminiClient(settings.get("gemini_api_key"))
-            metadata_suggestions = gemini_client.analyze_metadata(transcript)
+            metadata_suggestions = gemini_client.analyze_metadata(transcript, current_language)
         else:
             ollama_model = settings.get("ollama_model", "llama3.2")
             ollama_base_url = config_manager.get_ollama_base_url()
             ollama_client = OllamaClient(base_url=ollama_base_url, model=ollama_model)
-            metadata_suggestions = ollama_client.analyze_metadata(transcript)
+            metadata_suggestions = ollama_client.analyze_metadata(transcript, current_language)
         
         # DEBUG: Export metadata analysis
         debug_manager.export_metadata_analysis(
@@ -665,6 +673,19 @@ async def test_ollama_connection(request: TestOllamaConnectionRequest):
             "server_running": False,
             "message": f"Error: {str(e)}"
         }
+
+class StopOllamaModelRequest(BaseModel):
+    model: str
+
+@app.post("/ollama/stop")
+async def stop_ollama_model(req: StopOllamaModelRequest):
+    """Force-stop an Ollama model to free VRAM (fallback cleanup)."""
+    try:
+        import subprocess
+        subprocess.run(["ollama", "stop", req.model], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {"status": "success", "stopped": req.model}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to stop model: {str(e)}")
 
 @app.get("/health")
 async def health_check():

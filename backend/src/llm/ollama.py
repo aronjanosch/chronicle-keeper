@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class OllamaClient(BaseLLMClient):
-    def __init__(self, base_url: str = "http://127.0.0.1:11434", model: str = "llama3.2"):
+    def __init__(self, base_url: str = "http://127.0.0.1:11434", model: str = "llama3.2", keep_alive: int | str = 0):
         """
         Initialize Ollama client
 
@@ -29,6 +29,8 @@ class OllamaClient(BaseLLMClient):
         self.base_url = base_url
         self.model = model
         self.api_url = f"{base_url}/api"
+        # keep_alive: 0 (immediate unload), or duration string like "5m"
+        self.keep_alive = keep_alive
 
     def is_server_running(self) -> bool:
         """Check if Ollama server is running"""
@@ -143,6 +145,8 @@ class OllamaClient(BaseLLMClient):
                     "model": self.model,
                     "prompt": prompt,
                     "stream": False,
+                    # ensure model is unloaded immediately after request to free VRAM
+                    "keep_alive": self.keep_alive,
                     "options": {
                         "temperature": temperature,
                         "top_p": 0.9,

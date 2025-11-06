@@ -78,6 +78,7 @@ class SettingsModel(BaseModel):
     whisper_model: Optional[str] = "large-v2"
     system_prompt: str
     ollama_model: Optional[str] = "llama3.2"
+    ollama_base_url: Optional[str] = "http://127.0.0.1:11434"
 
 class SessionMetadata(BaseModel):
     session_id: str
@@ -109,6 +110,12 @@ class MetadataSuggestions(BaseModel):
 class AnalyzeMetadataRequest(BaseModel):
     session_id: str
     llm_engine: str = "local"
+
+class PullModelRequest(BaseModel):
+    model_name: str
+
+class TestOllamaConnectionRequest(BaseModel):
+    base_url: str
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_craig_zip(file: UploadFile = File(...)):
@@ -218,7 +225,8 @@ async def generate_notes(request: GenerateNotesRequest):
             result = gemini_client.generate_summary_with_metadata(transcript, system_prompt)
         else:
             ollama_model = settings.get("ollama_model", "llama3.2")
-            ollama_client = OllamaClient(model=ollama_model)
+            ollama_base_url = config_manager.get_ollama_base_url()
+            ollama_client = OllamaClient(base_url=ollama_base_url, model=ollama_model)
             result = ollama_client.generate_summary_with_metadata(transcript, system_prompt)
         
         summary = result["summary"]
@@ -282,7 +290,7 @@ async def get_settings():
     """Retrieve current settings"""
     settings = config_manager.get_settings()
     current_language = config_manager.get_current_language()
-    
+
     # Don't return the API key for security
     safe_settings = {
         "llm_preference": settings.get("llm_preference", "local"),
@@ -292,9 +300,11 @@ async def get_settings():
         "system_prompt": config_manager.get_current_prompt(),
         "has_gemini_key": bool(settings.get("gemini_api_key")),
         "ollama_model": settings.get("ollama_model", "llama3.2"),
+        "ollama_base_url": config_manager.get_ollama_base_url(),
         "available_languages": config_manager.get_available_languages(),
         "available_transcription_languages": config_manager.get_available_transcription_languages(),
-        "available_whisper_models": config_manager.get_available_whisper_models()
+        "available_whisper_models": config_manager.get_available_whisper_models(),
+        "available_ollama_models": config_manager.get_available_ollama_models()
     }
     return safe_settings
 
@@ -308,7 +318,8 @@ async def update_settings(settings: SettingsModel):
             "language": settings.language,
             "transcription_language": settings.transcription_language,
             "whisper_model": settings.whisper_model,
-            "ollama_model": settings.ollama_model
+            "ollama_model": settings.ollama_model,
+            "ollama_base_url": settings.ollama_base_url
         }
         
         # Handle system prompt - if it's the same as the new language default, 
@@ -471,7 +482,8 @@ async def analyze_metadata(request: AnalyzeMetadataRequest):
             metadata_suggestions = gemini_client.analyze_metadata(transcript)
         else:
             ollama_model = settings.get("ollama_model", "llama3.2")
-            ollama_client = OllamaClient(model=ollama_model)
+            ollama_base_url = config_manager.get_ollama_base_url()
+            ollama_client = OllamaClient(base_url=ollama_base_url, model=ollama_model)
             metadata_suggestions = ollama_client.analyze_metadata(transcript)
         
         # DEBUG: Export metadata analysis
@@ -490,27 +502,59 @@ async def analyze_metadata(request: AnalyzeMetadataRequest):
 
 @app.get("/ollama-models")
 async def get_ollama_models():
-    """Get available Ollama models"""
+    """Get currently installed Ollama models"""
     try:
-        ollama_client = OllamaClient()
-        
+        ollama_base_url = config_manager.get_ollama_base_url()
+        ollama_client = OllamaClient(base_url=ollama_base_url)
+
         if not ollama_client.is_server_running():
             return {"models": [], "server_running": False}
-        
+
         # Get available models by calling the Ollama API directly
         import requests
-        response = requests.get("http://127.0.0.1:11434/api/tags", timeout=5)
-        
+        response = requests.get(f"{ollama_base_url}/api/tags", timeout=5)
+
         if response.status_code == 200:
             data = response.json()
             models = [model["name"] for model in data.get("models", [])]
             return {"models": models, "server_running": True}
         else:
             return {"models": [], "server_running": True, "error": "Failed to fetch models"}
-            
+
     except Exception as e:
         logger.error(f"Error fetching Ollama models: {e}")
         return {"models": [], "server_running": False, "error": str(e)}
+
+@app.post("/ollama-models/pull")
+async def pull_ollama_model(request: PullModelRequest):
+    """Pull (download) a specific Ollama model"""
+    try:
+        model_name = request.model_name
+        ollama_base_url = config_manager.get_ollama_base_url()
+        ollama_client = OllamaClient(base_url=ollama_base_url, model=model_name)
+
+        # Ensure server is running
+        if not ollama_client.ensure_server_running():
+            raise HTTPException(status_code=503, detail="Ollama server could not be started")
+
+        # Check if model already exists
+        if ollama_client.is_model_available():
+            return {"status": "success", "message": f"Model '{model_name}' is already available", "already_exists": True}
+
+        # Pull the model
+        logger.info(f"Starting pull for model '{model_name}'...")
+        success = ollama_client.pull_model()
+
+        if success:
+            return {"status": "success", "message": f"Model '{model_name}' pulled successfully", "already_exists": False}
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to pull model '{model_name}'")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error pulling Ollama model: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to pull model: {str(e)}")
 
 @app.get("/prompts")
 async def get_prompts():
@@ -580,6 +624,47 @@ async def cleanup_debug_files(days_old: int = 7):
         return {"status": "success", "deleted_files": deleted_count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to cleanup files: {str(e)}")
+
+@app.post("/test-ollama-connection")
+async def test_ollama_connection(request: TestOllamaConnectionRequest):
+    """Test connection to an Ollama server"""
+    try:
+        import requests
+        response = requests.get(f"{request.base_url}/api/tags", timeout=5)
+
+        if response.status_code == 200:
+            data = response.json()
+            models = [model["name"] for model in data.get("models", [])]
+            return {
+                "status": "success",
+                "server_running": True,
+                "models_count": len(models),
+                "models": models[:5]  # Return first 5 models
+            }
+        else:
+            return {
+                "status": "error",
+                "server_running": False,
+                "message": f"Server responded with status {response.status_code}"
+            }
+    except requests.Timeout:
+        return {
+            "status": "error",
+            "server_running": False,
+            "message": "Connection timeout - server may be unreachable"
+        }
+    except requests.ConnectionError:
+        return {
+            "status": "error",
+            "server_running": False,
+            "message": "Connection error - check if server is running and URL is correct"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "server_running": False,
+            "message": f"Error: {str(e)}"
+        }
 
 @app.get("/health")
 async def health_check():

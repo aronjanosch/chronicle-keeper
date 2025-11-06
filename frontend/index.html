@@ -96,37 +96,102 @@
           </div>
         </section>
 
-        <!-- Step 4: Processing -->
-        <section id="processing-screen" class="screen">
+        <!-- Step 4: Transcription Settings -->
+        <section id="transcription-screen" class="screen">
           <div class="step-header">
-            <h2>Step 4: Generate Session Notes</h2>
-            <p>Choose your LLM engine and generate the session summary</p>
+            <h2>Step 4: Transcription Settings</h2>
+            <p>Configure Whisper model and language for audio transcription</p>
           </div>
-          <div class="processing-options">
-            <div class="llm-selection">
-              <label class="radio-label">
-                <input type="radio" name="llm-engine" value="local" checked>
-                <span class="radio-custom"></span>
-                Local LLM (Ollama)
-              </label>
-              <label class="radio-label">
-                <input type="radio" name="llm-engine" value="cloud">
-                <span class="radio-custom"></span>
-                Cloud LLM (Gemini)
+          <div class="transcription-settings">
+            <div class="setting-group">
+              <label for="whisper-model-select">Whisper Model:</label>
+              <select id="whisper-model-select" class="form-input">
+                <option value="tiny">Tiny (~39 MB, fastest, lowest quality)</option>
+                <option value="base">Base (~74 MB, fast, good quality)</option>
+                <option value="small">Small (~244 MB, balanced)</option>
+                <option value="medium">Medium (~769 MB, high quality)</option>
+                <option value="large-v2" selected>Large-v2 (~1550 MB, best quality, recommended for non-English)</option>
+              </select>
+              <p class="setting-hint">Larger models provide better accuracy but take longer to process</p>
+            </div>
+            <div class="setting-group">
+              <label for="transcription-language-select-wizard">Transcription Language:</label>
+              <select id="transcription-language-select-wizard" class="form-input">
+                <option value="auto">Auto-detect</option>
+                <option value="en">English</option>
+                <option value="de">German (Deutsch)</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+                <option value="it">Italian</option>
+                <option value="pt">Portuguese</option>
+                <option value="ru">Russian</option>
+                <option value="ja">Japanese</option>
+                <option value="ko">Korean</option>
+                <option value="zh">Chinese</option>
+              </select>
+              <p class="setting-hint">Choose the language spoken in your audio for better accuracy</p>
+            </div>
+            <div class="setting-group">
+              <label>
+                <input type="checkbox" id="save-transcription-settings">
+                Remember these settings for future sessions
               </label>
             </div>
-            <button id="generate-notes-btn" class="primary-button">🔄 Generate Notes</button>
           </div>
-          <div id="processing-status" class="processing-status hidden"></div>
           <div class="screen-actions">
             <button id="back-to-metadata" class="secondary-button">← Back</button>
+            <button id="continue-to-summarization" class="primary-button">Continue →</button>
           </div>
         </section>
 
-        <!-- Step 5: Review Suggestions -->
+        <!-- Step 5: Summarization Settings -->
+        <section id="summarization-screen" class="screen">
+          <div class="step-header">
+            <h2>Step 5: Summarization Settings</h2>
+            <p>Choose your LLM engine and model for generating the session summary</p>
+          </div>
+          <div class="summarization-settings">
+            <div class="setting-group">
+              <label>LLM Engine:</label>
+              <div class="llm-selection">
+                <label class="radio-label">
+                  <input type="radio" name="llm-engine-wizard" value="local" checked>
+                  <span class="radio-custom"></span>
+                  Local LLM (Ollama)
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="llm-engine-wizard" value="cloud">
+                  <span class="radio-custom"></span>
+                  Cloud LLM (Gemini)
+                </label>
+              </div>
+            </div>
+            <div class="setting-group" id="ollama-model-group">
+              <label for="ollama-model-select-wizard">Ollama Model:</label>
+              <select id="ollama-model-select-wizard" class="form-input">
+                <option value="llama3.2">llama3.2 (default)</option>
+              </select>
+              <button id="refresh-wizard-models-btn" class="secondary-button" style="margin-top: 0.5rem;">🔄 Refresh Models</button>
+              <p class="setting-hint">Larger models provide better summaries but require more resources</p>
+            </div>
+            <div class="setting-group">
+              <label>
+                <input type="checkbox" id="save-summarization-settings">
+                Remember these settings for future sessions
+              </label>
+            </div>
+          </div>
+          <button id="generate-notes-btn" class="primary-button large-button">🔄 Start Transcription & Summarization</button>
+          <div id="processing-status" class="processing-status hidden"></div>
+          <div class="screen-actions">
+            <button id="back-to-transcription" class="secondary-button">← Back</button>
+          </div>
+        </section>
+
+        <!-- Step 6: Review Suggestions -->
         <section id="suggestions-screen" class="screen">
           <div class="step-header">
-            <h2>Step 5: Review AI Suggestions</h2>
+            <h2>Step 6: Review AI Suggestions</h2>
             <p>Review and apply the AI-generated metadata suggestions to your session</p>
           </div>
           <div class="suggestions-review">
@@ -164,15 +229,15 @@
             </div>
           </div>
           <div class="screen-actions">
-            <button id="back-to-processing" class="secondary-button">← Back</button>
+            <button id="back-to-summarization" class="secondary-button">← Back</button>
             <button id="continue-to-export" class="primary-button">Continue to Export →</button>
           </div>
         </section>
 
-        <!-- Step 6: Export -->
+        <!-- Step 7: Export -->
         <section id="export-screen" class="screen">
           <div class="step-header">
-            <h2>Step 6: Export Notes</h2>
+            <h2>Step 7: Export Notes</h2>
             <p>Review and save your session notes</p>
           </div>
           <div class="export-options">
@@ -192,7 +257,7 @@
             <textarea id="notes-content" class="notes-textarea" readonly></textarea>
           </div>
           <div class="screen-actions">
-            <button id="back-to-processing" class="secondary-button">← Back</button>
+            <button id="back-to-suggestions" class="secondary-button">← Back</button>
             <button id="export-notes-btn" class="primary-button">💾 Export as Markdown</button>
             <button id="start-new-session" class="secondary-button">🆕 New Session</button>
           </div>
@@ -219,29 +284,13 @@
               </select>
             </div>
             <div class="setting-group">
-              <label for="transcription-language-select">Audio Transcription Language:</label>
-              <select id="transcription-language-select" class="form-input">
-                <option value="auto">Auto-detect</option>
-                <option value="en">English</option>
-                <option value="de">German (Deutsch)</option>
-                <option value="es">Spanish</option>
-                <option value="fr">French</option>
-                <option value="it">Italian</option>
-                <option value="pt">Portuguese</option>
-                <option value="ru">Russian</option>
-                <option value="ja">Japanese</option>
-                <option value="ko">Korean</option>
-                <option value="zh">Chinese</option>
-              </select>
-              <p style="font-size: 0.9em; color: #666; margin: 0.5rem 0;">Choose the language spoken in your audio recordings for better transcription accuracy</p>
-            </div>
-            <div class="setting-group">
-              <label for="ollama-model">Ollama Model:</label>
-              <select id="ollama-model" class="form-input">
-                <option value="llama3.2">llama3.2 (default)</option>
-              </select>
-              <button id="refresh-models-btn" class="secondary-button" style="margin-top: 0.5rem;">🔄 Refresh Models</button>
-              <div id="model-status" class="model-status hidden"></div>
+              <label for="ollama-base-url">Ollama Server URL:</label>
+              <input type="text" id="ollama-base-url" class="form-input" placeholder="http://127.0.0.1:11434">
+              <button id="test-ollama-connection-btn" class="secondary-button" style="margin-top: 0.5rem;">🔗 Test Connection</button>
+              <div id="connection-status" class="model-status hidden"></div>
+              <p style="font-size: 0.9em; color: #666; margin: 0.5rem 0;">
+                Enter the URL of your Ollama server. Use default for local, or enter network address (e.g., http://192.168.1.100:11434)
+              </p>
             </div>
             <div class="setting-group">
               <label for="system-prompt">System Prompt:</label>

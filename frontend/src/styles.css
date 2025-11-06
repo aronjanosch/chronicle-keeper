@@ -788,3 +788,25 @@ body {
   background: white;
   border-color: #667eea;
 }
+
+/* Transcription and Summarization Settings */
+.transcription-settings,
+.summarization-settings {
+  max-width: 600px;
+  margin: 0 auto 2rem;
+}
+
+.setting-hint {
+  font-size: 0.85rem;
+  color: #6c757d;
+  margin: 0.5rem 0 0 0;
+  font-style: italic;
+}
+
+.large-button {
+  width: 100%;
+  padding: 1rem 2rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}

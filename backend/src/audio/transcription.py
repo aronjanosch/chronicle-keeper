@@ -44,21 +44,25 @@ class WhisperTranscriber:
             # Clear CUDA cache before loading model
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-                
+
             # Use float32 on CUDA for better stability, int8 on CPU
             compute_type = "float32" if self.device == "cuda" else "int8"
-            
+
             try:
                 # Try to load without VAD first
                 import whisperx.asr
                 from faster_whisper import WhisperModel
-                
+
                 # Load faster-whisper model directly
+                # Model will be downloaded automatically if not available
+                logger.info(f"Loading Whisper model '{self.model_size}' (will download if not available)...")
                 whisper_model = WhisperModel(
                     self.model_size,
                     device=self.device,
-                    compute_type=compute_type
+                    compute_type=compute_type,
+                    download_root=None  # Use default cache location
                 )
+                logger.info(f"Whisper model '{self.model_size}' loaded successfully")
                 
                 # Create a minimal wrapper that skips VAD
                 class NoVADWhisperModel:

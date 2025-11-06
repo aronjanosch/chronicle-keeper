@@ -19,9 +19,13 @@ interface Settings {
   llm_preference?: 'local' | 'cloud';
   language?: string;
   transcription_language?: string;
+  whisper_model?: string;
   ollama_model?: string;
+  ollama_base_url?: string;
   available_languages?: Record<string, string>;
   available_transcription_languages?: Record<string, string>;
+  available_whisper_models?: Record<string, string>;
+  available_ollama_models?: Record<string, string>;
 }
 
 interface SessionMetadata {
@@ -67,7 +71,8 @@ class ChronicleKeeperApp {
     document.getElementById('close-settings')?.addEventListener('click', () => this.closeSettings());
     document.getElementById('save-settings')?.addEventListener('click', () => this.saveSettings());
     document.getElementById('cancel-settings')?.addEventListener('click', () => this.closeSettings());
-    document.getElementById('refresh-models-btn')?.addEventListener('click', () => this.refreshOllamaModels());
+    document.getElementById('refresh-wizard-models-btn')?.addEventListener('click', () => this.refreshWizardModels());
+    document.getElementById('test-ollama-connection-btn')?.addEventListener('click', () => this.testOllamaConnection());
 
     // File upload
     document.getElementById('file-select-btn')?.addEventListener('click', () => this.selectFile());
@@ -99,9 +104,12 @@ class ChronicleKeeperApp {
     document.getElementById('back-to-upload')?.addEventListener('click', () => this.showScreen('upload-screen'));
     document.getElementById('continue-to-metadata')?.addEventListener('click', () => this.proceedToMetadata());
     document.getElementById('back-to-speakers')?.addEventListener('click', () => this.showScreen('speakers-screen'));
-    document.getElementById('continue-to-processing')?.addEventListener('click', () => this.proceedToProcessing());
+    document.getElementById('continue-to-processing')?.addEventListener('click', () => this.proceedToTranscription());
     document.getElementById('back-to-metadata')?.addEventListener('click', () => this.showScreen('metadata-screen'));
-    document.getElementById('back-to-processing')?.addEventListener('click', () => this.showScreen('processing-screen'));
+    document.getElementById('continue-to-summarization')?.addEventListener('click', () => this.proceedToSummarization());
+    document.getElementById('back-to-transcription')?.addEventListener('click', () => this.showScreen('transcription-screen'));
+    document.getElementById('back-to-summarization')?.addEventListener('click', () => this.showScreen('summarization-screen'));
+    document.getElementById('back-to-suggestions')?.addEventListener('click', () => this.showScreen('suggestions-screen'));
     document.getElementById('continue-to-export')?.addEventListener('click', () => this.proceedToExport());
 
     // Processing
@@ -117,13 +125,12 @@ class ChronicleKeeperApp {
       const response = await window.fetch(`${API_BASE_URL}/settings`);
       if (response.ok) {
         const settings: Settings = await response.json();
-        
+
         const apiKeyInput = document.getElementById('gemini-api-key') as HTMLInputElement;
         const promptInput = document.getElementById('system-prompt') as HTMLTextAreaElement;
-        const ollamaModelSelect = document.getElementById('ollama-model') as HTMLSelectElement;
         const languageSelect = document.getElementById('language-select') as HTMLSelectElement;
-        const transcriptionLanguageSelect = document.getElementById('transcription-language-select') as HTMLSelectElement;
-        
+        const ollamaBaseUrlInput = document.getElementById('ollama-base-url') as HTMLInputElement;
+
         // Load available languages
         if (languageSelect && settings.available_languages) {
           languageSelect.innerHTML = '';
@@ -134,46 +141,23 @@ class ChronicleKeeperApp {
             languageSelect.appendChild(option);
           });
         }
-        
-        // Load available transcription languages
-        if (transcriptionLanguageSelect && settings.available_transcription_languages) {
-          transcriptionLanguageSelect.innerHTML = '';
-          Object.entries(settings.available_transcription_languages).forEach(([code, name]) => {
-            const option = document.createElement('option');
-            option.value = code;
-            option.textContent = name;
-            transcriptionLanguageSelect.appendChild(option);
-          });
-        }
-        
+
         if (languageSelect && settings.language) {
           languageSelect.value = settings.language;
         }
-        
-        if (transcriptionLanguageSelect && settings.transcription_language) {
-          transcriptionLanguageSelect.value = settings.transcription_language;
-        }
-        
+
         if (apiKeyInput && settings.gemini_api_key) {
           apiKeyInput.value = settings.gemini_api_key;
         }
-        
+
         if (promptInput && settings.system_prompt) {
           promptInput.value = settings.system_prompt;
         }
 
-        if (ollamaModelSelect && settings.ollama_model) {
-          ollamaModelSelect.value = settings.ollama_model;
+        if (ollamaBaseUrlInput && settings.ollama_base_url) {
+          ollamaBaseUrlInput.value = settings.ollama_base_url;
         }
 
-        // Set LLM preference
-        if (settings.llm_preference) {
-          const radioButton = document.querySelector(`input[name="llm-engine"][value="${settings.llm_preference}"]`) as HTMLInputElement;
-          if (radioButton) {
-            radioButton.checked = true;
-          }
-        }
-        
         // Set up language change handler
         if (languageSelect) {
           languageSelect.addEventListener('change', () => this.handleLanguageChange());
@@ -186,8 +170,6 @@ class ChronicleKeeperApp {
 
   private openSettings() {
     document.getElementById('settings-modal')?.classList.remove('hidden');
-    // Load Ollama models when opening settings
-    this.refreshOllamaModels();
   }
 
   private closeSettings() {
@@ -197,18 +179,14 @@ class ChronicleKeeperApp {
   private async saveSettings() {
     const apiKeyInput = document.getElementById('gemini-api-key') as HTMLInputElement;
     const promptInput = document.getElementById('system-prompt') as HTMLTextAreaElement;
-    const llmEngine = document.querySelector('input[name="llm-engine"]:checked') as HTMLInputElement;
-    const ollamaModelSelect = document.getElementById('ollama-model') as HTMLSelectElement;
     const languageSelect = document.getElementById('language-select') as HTMLSelectElement;
-    const transcriptionLanguageSelect = document.getElementById('transcription-language-select') as HTMLSelectElement;
+    const ollamaBaseUrlInput = document.getElementById('ollama-base-url') as HTMLInputElement;
 
     const settings: Settings = {
       gemini_api_key: apiKeyInput.value,
       system_prompt: promptInput.value,
-      llm_preference: llmEngine.value as 'local' | 'cloud',
       language: languageSelect.value,
-      transcription_language: transcriptionLanguageSelect.value,
-      ollama_model: ollamaModelSelect.value
+      ollama_base_url: ollamaBaseUrlInput.value
     };
 
     try {
@@ -554,7 +532,7 @@ class ChronicleKeeperApp {
     }
   }
 
-  private async proceedToProcessing() {
+  private async proceedToTranscription() {
     if (!this.currentSessionId) return;
 
     try {
@@ -593,7 +571,8 @@ class ChronicleKeeperApp {
       });
 
       if (response.ok) {
-        this.showScreen('processing-screen');
+        await this.loadTranscriptionSettings();
+        this.showScreen('transcription-screen');
       } else {
         const error = await response.json();
         alert(`Failed to save session metadata: ${error.detail}`);
@@ -604,13 +583,189 @@ class ChronicleKeeperApp {
     }
   }
 
+  private async loadTranscriptionSettings() {
+    try {
+      const response = await window.fetch(`${API_BASE_URL}/settings`);
+      if (response.ok) {
+        const settings: Settings = await response.json();
+
+        const whisperModelSelect = document.getElementById('whisper-model-select') as HTMLSelectElement;
+        const transcriptionLanguageSelect = document.getElementById('transcription-language-select-wizard') as HTMLSelectElement;
+
+        // Populate Whisper models if available
+        if (whisperModelSelect && settings.available_whisper_models) {
+          whisperModelSelect.innerHTML = '';
+          Object.entries(settings.available_whisper_models).forEach(([model, description]) => {
+            const option = document.createElement('option');
+            option.value = model;
+            option.textContent = description;
+            whisperModelSelect.appendChild(option);
+          });
+
+          // Set current value
+          if (settings.whisper_model) {
+            whisperModelSelect.value = settings.whisper_model;
+          }
+        }
+
+        // Set transcription language
+        if (transcriptionLanguageSelect && settings.transcription_language) {
+          transcriptionLanguageSelect.value = settings.transcription_language;
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load transcription settings:', error);
+    }
+  }
+
+  private async proceedToSummarization() {
+    // Optionally save transcription settings if checkbox is checked
+    const saveCheckbox = document.getElementById('save-transcription-settings') as HTMLInputElement;
+    if (saveCheckbox?.checked) {
+      await this.saveTranscriptionSettingsToBackend();
+    }
+
+    await this.loadSummarizationSettings();
+    this.showScreen('summarization-screen');
+  }
+
+  private async saveTranscriptionSettingsToBackend() {
+    try {
+      const whisperModelSelect = document.getElementById('whisper-model-select') as HTMLSelectElement;
+      const transcriptionLanguageSelect = document.getElementById('transcription-language-select-wizard') as HTMLSelectElement;
+
+      // Get current settings
+      const response = await window.fetch(`${API_BASE_URL}/settings`);
+      if (!response.ok) return;
+
+      const currentSettings: Settings = await response.json();
+
+      // Update only transcription-related settings
+      const updates = {
+        ...currentSettings,
+        whisper_model: whisperModelSelect?.value,
+        transcription_language: transcriptionLanguageSelect?.value
+      };
+
+      await window.fetch(`${API_BASE_URL}/settings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updates),
+      });
+    } catch (error) {
+      console.error('Failed to save transcription settings:', error);
+    }
+  }
+
+  private async loadSummarizationSettings() {
+    try {
+      const response = await window.fetch(`${API_BASE_URL}/settings`);
+      if (response.ok) {
+        const settings: Settings = await response.json();
+
+        // Set LLM preference
+        if (settings.llm_preference) {
+          const radioButton = document.querySelector(`input[name="llm-engine-wizard"][value="${settings.llm_preference}"]`) as HTMLInputElement;
+          if (radioButton) {
+            radioButton.checked = true;
+          }
+        }
+
+        // Load Ollama models
+        await this.refreshWizardModels();
+      }
+    } catch (error) {
+      console.error('Failed to load summarization settings:', error);
+    }
+  }
+
+  private async saveSummarizationSettingsToBackend() {
+    try {
+      const llmEngine = document.querySelector('input[name="llm-engine-wizard"]:checked') as HTMLInputElement;
+      const ollamaModelSelect = document.getElementById('ollama-model-select-wizard') as HTMLSelectElement;
+
+      // Get current settings
+      const response = await window.fetch(`${API_BASE_URL}/settings`);
+      if (!response.ok) return;
+
+      const currentSettings: Settings = await response.json();
+
+      // Update only summarization-related settings
+      const updates = {
+        ...currentSettings,
+        llm_preference: llmEngine?.value as 'local' | 'cloud',
+        ollama_model: ollamaModelSelect?.value
+      };
+
+      await window.fetch(`${API_BASE_URL}/settings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updates),
+      });
+    } catch (error) {
+      console.error('Failed to save summarization settings:', error);
+    }
+  }
+
+  private async refreshWizardModels() {
+    const modelSelect = document.getElementById('ollama-model-select-wizard') as HTMLSelectElement;
+    if (!modelSelect) return;
+
+    try {
+      const response = await window.fetch(`${API_BASE_URL}/ollama-models`);
+
+      if (response.ok) {
+        const data = await response.json();
+
+        if (!data.server_running) {
+          console.warn('Ollama server not running');
+          return;
+        }
+
+        if (data.models && data.models.length > 0) {
+          // Store current selection
+          const currentValue = modelSelect.value;
+
+          // Clear existing options
+          modelSelect.innerHTML = '';
+
+          // Add models as options
+          data.models.forEach((model: string) => {
+            const option = document.createElement('option');
+            option.value = model;
+            option.textContent = model;
+            modelSelect.appendChild(option);
+          });
+
+          // Restore previous selection if it exists
+          if (data.models.includes(currentValue)) {
+            modelSelect.value = currentValue;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to refresh wizard models:', error);
+    }
+  }
+
   private async generateNotes() {
     if (!this.currentSessionId) return;
 
     const generateBtn = document.getElementById('generate-notes-btn') as HTMLButtonElement;
-    const llmEngine = document.querySelector('input[name="llm-engine"]:checked') as HTMLInputElement;
+    const llmEngine = document.querySelector('input[name="llm-engine-wizard"]:checked') as HTMLInputElement;
 
     generateBtn.disabled = true;
+
+    // Optionally save summarization settings if checkbox is checked
+    const saveSummarizationCheckbox = document.getElementById('save-summarization-settings') as HTMLInputElement;
+    if (saveSummarizationCheckbox?.checked) {
+      await this.saveSummarizationSettingsToBackend();
+    }
+
     this.showProcessingStatus('Transcribing audio and generating notes... This may take several minutes.', 'loading');
 
     try {
@@ -914,73 +1069,53 @@ class ChronicleKeeperApp {
   }
   */
 
-  private async refreshOllamaModels() {
-    const refreshBtn = document.getElementById('refresh-models-btn') as HTMLButtonElement;
-    const modelSelect = document.getElementById('ollama-model') as HTMLSelectElement;
 
-    if (refreshBtn) refreshBtn.disabled = true;
-    this.showModelStatus('Loading available models...', 'loading');
+  private async testOllamaConnection() {
+    const urlInput = document.getElementById('ollama-base-url') as HTMLInputElement;
+    const testBtn = document.getElementById('test-ollama-connection-btn') as HTMLButtonElement;
+    const statusEl = document.getElementById('connection-status');
+
+    if (!urlInput || !statusEl) return;
+
+    const baseUrl = urlInput.value.trim() || 'http://127.0.0.1:11434';
+
+    testBtn.disabled = true;
+    statusEl.textContent = 'Testing connection...';
+    statusEl.className = 'model-status loading';
+    statusEl.classList.remove('hidden');
 
     try {
-      const response = await window.fetch(`${API_BASE_URL}/ollama-models`);
-      
+      const response = await window.fetch(`${API_BASE_URL}/test-ollama-connection`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ base_url: baseUrl }),
+      });
+
       if (response.ok) {
         const data = await response.json();
-        
-        if (!data.server_running) {
-          this.showModelStatus('Ollama server not running', 'error');
-          return;
-        }
 
-        if (data.models && data.models.length > 0) {
-          // Store current selection
-          const currentValue = modelSelect.value;
-          
-          // Clear existing options
-          modelSelect.innerHTML = '';
-          
-          // Add models as options
-          data.models.forEach((model: string) => {
-            const option = document.createElement('option');
-            option.value = model;
-            option.textContent = model;
-            modelSelect.appendChild(option);
-          });
-          
-          // Restore previous selection if it exists
-          if (data.models.includes(currentValue)) {
-            modelSelect.value = currentValue;
-          }
-          
-          this.showModelStatus(`Found ${data.models.length} models`, 'success');
+        if (data.status === 'success') {
+          statusEl.textContent = `✓ Connected! Found ${data.models_count} models`;
+          statusEl.className = 'model-status success';
         } else {
-          this.showModelStatus('No models found. Try pulling a model first.', 'error');
+          statusEl.textContent = `✗ ${data.message || 'Connection failed'}`;
+          statusEl.className = 'model-status error';
         }
       } else {
-        this.showModelStatus('Failed to fetch models', 'error');
+        statusEl.textContent = '✗ Failed to test connection';
+        statusEl.className = 'model-status error';
       }
     } catch (error) {
-      console.error('Failed to refresh models:', error);
-      this.showModelStatus('Failed to connect to backend', 'error');
+      console.error('Connection test error:', error);
+      statusEl.textContent = '✗ Network error';
+      statusEl.className = 'model-status error';
     } finally {
-      if (refreshBtn) refreshBtn.disabled = false;
-      setTimeout(() => this.hideModelStatus(), 3000);
-    }
-  }
-
-  private showModelStatus(message: string, type: 'loading' | 'success' | 'error') {
-    const statusEl = document.getElementById('model-status');
-    if (statusEl) {
-      statusEl.textContent = message;
-      statusEl.className = `model-status ${type}`;
-      statusEl.classList.remove('hidden');
-    }
-  }
-
-  private hideModelStatus() {
-    const statusEl = document.getElementById('model-status');
-    if (statusEl) {
-      statusEl.classList.add('hidden');
+      testBtn.disabled = false;
+      setTimeout(() => {
+        statusEl.classList.add('hidden');
+      }, 5000);
     }
   }
 

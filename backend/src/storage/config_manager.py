@@ -66,6 +66,7 @@ class ConfigManager:
             },
             "system_prompt": self.get_default_prompt("en"),
             "ollama_model": "llama3.2",
+            "ollama_base_url": "http://127.0.0.1:11434",
             "created_at": str(Path().cwd()),
             "version": "1.0.0",
             "campaigns": {
@@ -285,3 +286,24 @@ class ConfigManager:
             "template": "default",
             "file_naming": "Session {session_number:02d} - {session_date}"
         })
+
+    def get_ollama_model(self) -> str:
+        """Get current Ollama model setting"""
+        return self.get_setting("ollama_model", "llama3.2")
+
+    def get_ollama_base_url(self) -> str:
+        """Get current Ollama base URL setting"""
+        return self.get_setting("ollama_base_url", "http://127.0.0.1:11434")
+
+    def get_available_ollama_models(self) -> Dict[str, str]:
+        """Get recommended Ollama models with descriptions"""
+        return {
+            "llama3.2": "Llama 3.2 (~2 GB, recommended, good balance)",
+            "llama3.2:1b": "Llama 3.2 1B (~1.3 GB, fast, lower quality)",
+            "llama3.1": "Llama 3.1 (~4.7 GB, higher quality)",
+            "llama3.1:70b": "Llama 3.1 70B (~40 GB, best quality, requires powerful GPU)",
+            "mistral": "Mistral (~4.1 GB, good alternative)",
+            "mistral-small": "Mistral Small (~8.9 GB, balanced performance)",
+            "gemma2": "Gemma 2 (~5.4 GB, Google's model)",
+            "qwen2.5": "Qwen 2.5 (~4.7 GB, multilingual support)"
+        }

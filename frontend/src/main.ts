@@ -199,14 +199,14 @@ class ChronicleKeeperApp {
       });
 
       if (response.ok) {
-        this.showStatus('Settings saved successfully!', 'success');
+        this.showStatus('notification', 'Settings saved successfully!', 'success');
         this.closeSettings();
       } else {
-        this.showStatus('Failed to save settings', 'error');
+        this.showStatus('notification', 'Failed to save settings', 'error');
       }
     } catch (error) {
       console.error('Failed to save settings:', error);
-      this.showStatus('Failed to save settings', 'error');
+      this.showStatus('notification', 'Failed to save settings', 'error');
     }
   }
 
@@ -853,15 +853,15 @@ class ChronicleKeeperApp {
         
         // Clean up the URL object
         URL.revokeObjectURL(url);
-        
-        this.showStatus('Notes exported successfully!', 'success');
+
+        this.showStatus('notification', 'Notes exported successfully!', 'success');
       } else {
         const error = await response.json();
-        this.showStatus(`Export failed: ${error.detail}`, 'error');
+        this.showStatus('notification', `Export failed: ${error.detail}`, 'error');
       }
     } catch (error) {
       console.error('Export error:', error);
-      this.showStatus('Export failed', 'error');
+      this.showStatus('notification', 'Export failed', 'error');
     }
   }
 
@@ -911,128 +911,54 @@ class ChronicleKeeperApp {
     document.getElementById(screenId)?.classList.add('active');
   }
 
-  private showUploadStatus(message: string, type: 'loading' | 'success' | 'error') {
-    const statusEl = document.getElementById('upload-status');
+  /**
+   * Unified status display method
+   * @param elementId - ID of the status element (or 'notification' for temporary popup)
+   * @param message - Status message to display
+   * @param type - Type of status: loading, success, or error
+   */
+  private showStatus(elementId: string, message: string, type: 'loading' | 'success' | 'error') {
+    // Handle temporary notification (no specific element)
+    if (elementId === 'notification') {
+      const notification = document.createElement('div');
+      notification.className = `upload-status ${type}`;
+      notification.textContent = message;
+      notification.style.position = 'fixed';
+      notification.style.top = '20px';
+      notification.style.right = '20px';
+      notification.style.zIndex = '9999';
+      notification.style.minWidth = '300px';
+
+      document.body.appendChild(notification);
+
+      setTimeout(() => {
+        document.body.removeChild(notification);
+      }, 3000);
+      return;
+    }
+
+    // Handle persistent status in specific element
+    const statusEl = document.getElementById(elementId);
     if (statusEl) {
       statusEl.textContent = message;
-      statusEl.className = `upload-status ${type}`;
+      statusEl.className = `${elementId.replace('-status', '')}-status ${type}`;
       statusEl.classList.remove('hidden');
     }
+  }
+
+  // Convenience wrappers for backward compatibility
+  private showUploadStatus(message: string, type: 'loading' | 'success' | 'error') {
+    this.showStatus('upload-status', message, type);
   }
 
   private showProcessingStatus(message: string, type: 'loading' | 'success' | 'error') {
-    const statusEl = document.getElementById('processing-status');
-    if (statusEl) {
-      statusEl.textContent = message;
-      statusEl.className = `processing-status ${type}`;
-      statusEl.classList.remove('hidden');
-    }
-  }
-
-  private showStatus(message: string, type: 'loading' | 'success' | 'error') {
-    // Create temporary status notification
-    const notification = document.createElement('div');
-    notification.className = `upload-status ${type}`;
-    notification.textContent = message;
-    notification.style.position = 'fixed';
-    notification.style.top = '20px';
-    notification.style.right = '20px';
-    notification.style.zIndex = '9999';
-    notification.style.minWidth = '300px';
-    
-    document.body.appendChild(notification);
-    
-    setTimeout(() => {
-      document.body.removeChild(notification);
-    }, 3000);
+    this.showStatus('processing-status', message, type);
   }
 
   private hideStatus() {
     document.getElementById('upload-status')?.classList.add('hidden');
     document.getElementById('processing-status')?.classList.add('hidden');
   }
-
-  /* private async _analyzeMetadata() {
-    if (!this.currentSessionId) return;
-
-    const analyzeBtn = document.getElementById('analyze-metadata-btn') as HTMLButtonElement;
-    const llmEngine = document.querySelector('input[name="llm-engine"]:checked') as HTMLInputElement;
-
-    analyzeBtn.disabled = true;
-    this._showAnalyzeStatus('Analyzing transcript for metadata suggestions...', 'loading');
-
-    try {
-      const response = await window.fetch(`${API_BASE_URL}/analyze-metadata`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          session_id: this.currentSessionId,
-          llm_engine: llmEngine?.value || 'local'
-        }),
-      });
-
-      if (response.ok) {
-        const suggestions: MetadataSuggestions = await response.json();
-        this._displaySuggestions(suggestions);
-        this._showAnalyzeStatus('Analysis complete!', 'success');
-        setTimeout(() => this._hideAnalyzeStatus(), 3000);
-      } else {
-        const error = await response.json();
-        this._showAnalyzeStatus(`Analysis failed: ${error.detail}`, 'error');
-      }
-    } catch (error) {
-      console.error('Failed to analyze metadata:', error);
-      this._showAnalyzeStatus('Analysis failed: Network error', 'error');
-    } finally {
-      analyzeBtn.disabled = false;
-    }
-  } */
-
-  /* Commented out - unused for now
-  private _displaySuggestions(suggestions: MetadataSuggestions) {
-    // Display suggested tags
-    this._displayChipSuggestions('tags-suggestions', suggestions.suggested_tags, 'session-tags');
-    this._toggleSuggestionContainer('suggested-tags', suggestions.suggested_tags.length > 0);
-
-    // Display mentioned characters
-    this._displayChipSuggestions('characters-suggestions', suggestions.mentioned_characters, 'characters-present');
-    this._toggleSuggestionContainer('suggested-characters', suggestions.mentioned_characters.length > 0);
-
-    // Display mentioned locations
-    this._displayChipSuggestions('locations-suggestions', suggestions.mentioned_locations, 'session-locations');
-    this._toggleSuggestionContainer('suggested-locations', suggestions.mentioned_locations.length > 0);
-  }
-  */
-
-  /* Commented out - unused for now
-  private _displayChipSuggestions(containerId: string, suggestions: string[], targetInputId: string) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-
-    container.innerHTML = '';
-
-    suggestions.forEach(suggestion => {
-      const chip = document.createElement('span');
-      chip.className = 'suggestion-chip';
-      chip.textContent = suggestion;
-      chip.addEventListener('click', () => this.addSuggestionToInput(suggestion, targetInputId));
-      container.appendChild(chip);
-    });
-  }
-
-  private _toggleSuggestionContainer(containerId: string, show: boolean) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-
-    if (show) {
-      container.classList.remove('hidden');
-    } else {
-      container.classList.add('hidden');
-    }
-  }
-  */
 
   private addSuggestionToInput(suggestion: string, inputId: string) {
     const input = document.getElementById(inputId) as HTMLInputElement;
@@ -1050,24 +976,6 @@ class ChronicleKeeperApp {
     // Add visual feedback (note: event is not available in arrow functions, so this won't work perfectly)
     // We'll leave it as is since the main functionality works
   }
-
-  /* Commented out - unused for now
-  private _showAnalyzeStatus(message: string, type: 'loading' | 'success' | 'error') {
-    const statusEl = document.getElementById('analyze-status');
-    if (statusEl) {
-      statusEl.textContent = message;
-      statusEl.className = `analyze-status ${type}`;
-      statusEl.classList.remove('hidden');
-    }
-  }
-
-  private _hideAnalyzeStatus() {
-    const statusEl = document.getElementById('analyze-status');
-    if (statusEl) {
-      statusEl.classList.add('hidden');
-    }
-  }
-  */
 
 
   private async testOllamaConnection() {

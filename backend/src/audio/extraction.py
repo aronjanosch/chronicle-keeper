@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import List, Dict
 import tempfile
 
+from constants import SESSION_BASE_PATH, SUPPORTED_AUDIO_EXTENSIONS
+
 def extract_craig_zip(zip_path: str, session_id: str) -> List[Dict[str, str]]:
     """
     Extract Craig Bot ZIP file and return track information
@@ -17,18 +19,18 @@ def extract_craig_zip(zip_path: str, session_id: str) -> List[Dict[str, str]]:
         List of track dictionaries with id, filename, and file_path
     """
     # Create session directory
-    session_dir = Path(f"/tmp/chronicle_sessions/{session_id}")
+    session_dir = Path(SESSION_BASE_PATH) / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
-    
+
     tracks = []
-    
+
     try:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             # Extract all files
             zip_ref.extractall(session_dir)
-            
+
             # Find audio files
-            audio_extensions = {'.flac', '.wav', '.mp3', '.m4a', '.ogg'}
+            audio_extensions = SUPPORTED_AUDIO_EXTENSIONS
             
             for file_path in session_dir.rglob('*'):
                 if file_path.is_file() and file_path.suffix.lower() in audio_extensions:
@@ -85,10 +87,10 @@ def get_audio_duration(file_path: str) -> float:
 def cleanup_session(session_id: str):
     """
     Clean up temporary session files
-    
+
     Args:
         session_id: Session identifier to clean up
     """
-    session_dir = Path(f"/tmp/chronicle_sessions/{session_id}")
+    session_dir = Path(SESSION_BASE_PATH) / session_id
     if session_dir.exists():
         shutil.rmtree(session_dir)

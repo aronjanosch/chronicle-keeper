@@ -17,6 +17,7 @@ from prompts import (
     get_metadata_analysis_prompt,
     RESPONSE_SEPARATOR
 )
+from constants import TEMPERATURE_METADATA
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ class BaseLLMClient(ABC):
         enhanced_prompt = build_enhanced_prompt(system_prompt, transcript)
 
         # Call the LLM (implemented by subclass)
-        full_response = self._call_llm(enhanced_prompt, temperature=0.3)
+        full_response = self._call_llm(enhanced_prompt, temperature=TEMPERATURE_METADATA)
 
         # Parse using the explicit separator
         metadata, summary = self._parse_with_separator(full_response)
@@ -89,7 +90,7 @@ class BaseLLMClient(ABC):
 
         try:
             # Call the LLM with lower temperature for consistent JSON
-            result_text = self._call_llm(analysis_prompt, temperature=0.3)
+            result_text = self._call_llm(analysis_prompt, temperature=TEMPERATURE_METADATA)
 
             # Try to extract JSON from the response
             metadata = self._extract_json_from_text(result_text)

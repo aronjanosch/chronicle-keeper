@@ -338,23 +338,35 @@ async def update_settings(settings: SettingsModel):
 
 @app.post("/debug-upload", response_model=UploadResponse)
 async def debug_upload_example():
-    """Debug endpoint to use example recording without uploading"""
-    example_zip = "/home/aron/Projects/chronicle-keeper/example-recordings/craig-yNq4gbpXrgTL-lpRQVws6tu6ccFzCF1E-XbJB5QTdQe.flac.zip"
-    
+    """
+    Debug endpoint to use example recording without uploading.
+
+    Configure example recording path via CHRONICLE_EXAMPLE_ZIP environment variable.
+    Example: export CHRONICLE_EXAMPLE_ZIP="/path/to/example/recording.zip"
+    """
+    example_zip = os.getenv(
+        'CHRONICLE_EXAMPLE_ZIP',
+        str(Path.home() / 'chronicle-examples' / 'sample.zip')
+    )
+
     if not os.path.exists(example_zip):
-        raise HTTPException(status_code=404, detail="Example recording not found")
-    
+        raise HTTPException(
+            status_code=404,
+            detail=f"Example recording not found at: {example_zip}. "
+                   f"Set CHRONICLE_EXAMPLE_ZIP environment variable to configure."
+        )
+
     session_id = str(uuid.uuid4())
     logger.debug(f"Debug upload - Generated session ID: {session_id}")
-    
+
     try:
         logger.debug("Starting debug ZIP extraction...")
         tracks = extract_craig_zip(example_zip, session_id)
         logger.debug(f"Extracted {len(tracks)} tracks from example recording")
-        
+
         session_manager.create_session(session_id, tracks)
         logger.debug(f"Created debug session {session_id} with {len(tracks)} tracks")
-        
+
         return UploadResponse(tracks=tracks, session_id=session_id)
     except Exception as e:
         logger.error(f"Error processing example ZIP: {str(e)}", exc_info=True)

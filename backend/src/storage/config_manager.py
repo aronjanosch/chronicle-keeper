@@ -14,6 +14,18 @@ import logging
 # Import centralized prompts
 from src.prompts import get_base_prompt, get_available_languages, get_empty_metadata
 
+# Import centralized constants
+from src.constants import (
+    DEFAULT_WHISPER_MODEL,
+    DEFAULT_TRANSCRIPTION_SETTINGS,
+    AVAILABLE_WHISPER_MODELS,
+    AVAILABLE_OLLAMA_MODELS,
+    AVAILABLE_TRANSCRIPTION_LANGUAGES,
+    DEFAULT_OLLAMA_MODEL,
+    DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_OBSIDIAN_FILENAME_PATTERN
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,17 +68,11 @@ class ConfigManager:
             "llm_preference": "local",
             "language": "en",
             "transcription_language": "auto",
-            "whisper_model": "large-v2",
-            "transcription_settings": {
-                "no_speech_threshold": 0.6,
-                "logprob_threshold": -1.0,
-                "compression_ratio_threshold": 2.4,
-                "condition_on_previous_text": False,
-                "filter_hallucinations": True
-            },
+            "whisper_model": DEFAULT_WHISPER_MODEL,
+            "transcription_settings": DEFAULT_TRANSCRIPTION_SETTINGS,
             "system_prompt": self.get_default_prompt("en"),
-            "ollama_model": "llama3.2",
-            "ollama_base_url": "http://127.0.0.1:11434",
+            "ollama_model": DEFAULT_OLLAMA_MODEL,
+            "ollama_base_url": DEFAULT_OLLAMA_BASE_URL,
             "created_at": str(Path().cwd()),
             "version": "1.0.0",
             "campaigns": {
@@ -83,7 +89,7 @@ class ConfigManager:
                 "vault_path": "",
                 "use_frontmatter": True,
                 "template": "default",
-                "file_naming": "Session {session_number:02d} - {session_date}"
+                "file_naming": DEFAULT_OBSIDIAN_FILENAME_PATTERN
             }
         }
 
@@ -159,19 +165,7 @@ class ConfigManager:
 
     def get_available_transcription_languages(self) -> Dict[str, str]:
         """Get available transcription languages with their display names"""
-        return {
-            "auto": "Auto-detect",
-            "en": "English",
-            "de": "German (Deutsch)",
-            "es": "Spanish",
-            "fr": "French",
-            "it": "Italian",
-            "pt": "Portuguese",
-            "ru": "Russian",
-            "ja": "Japanese",
-            "ko": "Korean",
-            "zh": "Chinese"
-        }
+        return AVAILABLE_TRANSCRIPTION_LANGUAGES
 
     def get_transcription_language(self) -> str:
         """Get current transcription language setting"""
@@ -179,28 +173,15 @@ class ConfigManager:
 
     def get_whisper_model(self) -> str:
         """Get current Whisper model setting"""
-        return self.get_setting("whisper_model", "large-v2")
+        return self.get_setting("whisper_model", DEFAULT_WHISPER_MODEL)
 
     def get_available_whisper_models(self) -> Dict[str, str]:
         """Get available Whisper models with descriptions"""
-        return {
-            "tiny": "Tiny (~39 MB, fastest, lowest quality)",
-            "base": "Base (~74 MB, fast, good quality)",
-            "small": "Small (~244 MB, slower, better quality)",
-            "medium": "Medium (~769 MB, slow, high quality)",
-            "large-v2": "Large-v2 (~1550 MB, slowest, best quality - recommended for non-English)"
-        }
+        return AVAILABLE_WHISPER_MODELS
 
     def get_transcription_settings(self) -> Dict[str, Any]:
         """Get transcription anti-hallucination settings"""
-        default_settings = {
-            "no_speech_threshold": 0.6,
-            "logprob_threshold": -1.0,
-            "compression_ratio_threshold": 2.4,
-            "condition_on_previous_text": False,
-            "filter_hallucinations": True
-        }
-        return self.get_setting("transcription_settings", default_settings)
+        return self.get_setting("transcription_settings", DEFAULT_TRANSCRIPTION_SETTINGS)
 
     def get_current_prompt(self) -> str:
         """Get current system prompt based on language setting"""
@@ -289,21 +270,12 @@ class ConfigManager:
 
     def get_ollama_model(self) -> str:
         """Get current Ollama model setting"""
-        return self.get_setting("ollama_model", "llama3.2")
+        return self.get_setting("ollama_model", DEFAULT_OLLAMA_MODEL)
 
     def get_ollama_base_url(self) -> str:
         """Get current Ollama base URL setting"""
-        return self.get_setting("ollama_base_url", "http://127.0.0.1:11434")
+        return self.get_setting("ollama_base_url", DEFAULT_OLLAMA_BASE_URL)
 
     def get_available_ollama_models(self) -> Dict[str, str]:
         """Get recommended Ollama models with descriptions"""
-        return {
-            "llama3.2": "Llama 3.2 (~2 GB, recommended, good balance)",
-            "llama3.2:1b": "Llama 3.2 1B (~1.3 GB, fast, lower quality)",
-            "llama3.1": "Llama 3.1 (~4.7 GB, higher quality)",
-            "llama3.1:70b": "Llama 3.1 70B (~40 GB, best quality, requires powerful GPU)",
-            "mistral": "Mistral (~4.1 GB, good alternative)",
-            "mistral-small": "Mistral Small (~8.9 GB, balanced performance)",
-            "gemma2": "Gemma 2 (~5.4 GB, Google's model)",
-            "qwen2.5": "Qwen 2.5 (~4.7 GB, multilingual support)"
-        }
+        return AVAILABLE_OLLAMA_MODELS

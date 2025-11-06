@@ -49,86 +49,14 @@ class WhisperTranscriber:
             compute_type = "float32" if self.device == "cuda" else "int8"
 
             try:
-                # Try to load without VAD first
-                import whisperx.asr
-                from faster_whisper import WhisperModel
-
-                # Load faster-whisper model directly
-                # Model will be downloaded automatically if not available
-                logger.info(f"Loading Whisper model '{self.model_size}' (will download if not available)...")
-                whisper_model = WhisperModel(
+                # Load WhisperX model (restores WhisperX pipeline and VAD-based segmentation)
+                logger.info(f"Loading WhisperX model '{self.model_size}' on {self.device} (compute_type={compute_type})...")
+                self.model = whisperx.load_model(
                     self.model_size,
-                    device=self.device,
+                    self.device,
                     compute_type=compute_type,
-                    download_root=None  # Use default cache location
+                    local_files_only=False
                 )
-                logger.info(f"Whisper model '{self.model_size}' loaded successfully")
-                
-                # Create a minimal wrapper that skips VAD
-                class NoVADWhisperModel:
-                    def __init__(self, model, settings):
-                        self.model = model
-                        self.settings = settings
-
-                    def transcribe(self, audio, batch_size=16, language=None):
-                        # Transcribe without VAD preprocessing, but with anti-hallucination parameters
-                        transcribe_kwargs = {
-                            "beam_size": 5,
-                            # Anti-hallucination parameters from settings
-                            "no_speech_threshold": self.settings.get("no_speech_threshold", 0.6),
-                            "log_prob_threshold": self.settings.get("logprob_threshold", -1.0),  # Note: faster-whisper uses log_prob_threshold
-                            "compression_ratio_threshold": self.settings.get("compression_ratio_threshold", 2.4),
-                            "condition_on_previous_text": self.settings.get("condition_on_previous_text", False),
-                        }
-                        if language and language != "auto":
-                            transcribe_kwargs["language"] = language
-
-                        segments, info = self.model.transcribe(audio, **transcribe_kwargs)
-                        
-                        # Convert to WhisperX format and filter hallucinations
-                        result_segments = []
-                        for segment in segments:
-                            # Apply hallucination filtering if enabled
-                            if self.settings.get("filter_hallucinations", True):
-                                # Skip segments with high no_speech probability (likely hallucinations)
-                                if segment.no_speech_prob > 0.9:
-                                    logger.debug(f"Filtered segment with high no_speech_prob={segment.no_speech_prob:.2f}: {segment.text[:50]}")
-                                    continue
-
-                                # Skip segments with known hallucination patterns
-                                text_lower = segment.text.lower().strip()
-                                hallucination_patterns = [
-                                    "untertitel",  # German subtitle markers
-                                    "amara.org",
-                                    "zdf",
-                                    "das war's für heute",  # YouTube outro patterns
-                                    "lasst einen daumen",
-                                    "abonniert meinen kanal",
-                                    "bis zum nächsten mal",
-                                    "sous-titres",  # French
-                                    "soustitreur.com",
-                                    "copyright wdr",
-                                    "im auftrag des",
-                                ]
-
-                                if any(pattern in text_lower for pattern in hallucination_patterns):
-                                    logger.debug(f"Filtered hallucinated segment: {segment.text[:50]}")
-                                    continue
-
-                            result_segments.append({
-                                "start": segment.start,
-                                "end": segment.end,
-                                "text": segment.text,
-                                "no_speech_prob": segment.no_speech_prob,  # Include for debugging
-                                "avg_logprob": segment.avg_logprob,  # Include for debugging
-                            })
-
-                        return {
-                            "segments": result_segments,
-                            "language": info.language
-                        }
-
-                self.model = NoVADWhisperModel(whisper_model, self.transcription_settings)
             except Exception as e:
                 logger.error(f"Failed to load model with CUDA, falling back to CPU: {e}")
                 # Fallback to CPU if CUDA fails

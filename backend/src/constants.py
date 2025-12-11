@@ -31,7 +31,9 @@ TEMPERATURE_METADATA = 0.3  # Lower for consistent structured output
 TEMPERATURE_DEFAULT = 0.3  # Default for most operations
 
 # Token limits
-DEFAULT_MAX_TOKENS = 2048
+# NOTE: No longer enforcing output token limits - letting LLMs decide appropriate summary length
+# based on the content and prompt instructions. This ensures longer sessions naturally get
+# more detailed summaries without artificial constraints.
 
 # ============================================================================
 # TRANSCRIPTION CONFIGURATION

@@ -44,14 +44,13 @@ class GeminiClient(BaseLLMClient):
 
         Args:
             prompt: The full prompt to send
-            **kwargs: Additional parameters (temperature, max_tokens, etc.)
+            **kwargs: Additional parameters (temperature, etc.)
 
         Returns:
             Raw response text from Gemini
         """
         # Extract optional parameters
         temperature = kwargs.get('temperature', 0.7)
-        max_tokens = kwargs.get('max_tokens', 2048)
 
         try:
             response = self.client.models.generate_content(
@@ -61,7 +60,7 @@ class GeminiClient(BaseLLMClient):
                     "temperature": temperature,
                     "top_p": 0.9,
                     "top_k": 40,
-                    "max_output_tokens": max_tokens,
+                    # No max_output_tokens - let the model decide appropriate length
                 }
             )
 
@@ -86,7 +85,7 @@ class GeminiClient(BaseLLMClient):
         from prompts import build_simple_prompt
         full_prompt = build_simple_prompt(system_prompt, transcript)
 
-        return self._call_llm(full_prompt, temperature=0.7, max_tokens=2048)
+        return self._call_llm(full_prompt, temperature=0.7)
 
     def generate_summary_with_metadata(self, transcript: str, system_prompt: str, language: str = "en") -> Dict[str, Any]:
         """
@@ -150,7 +149,7 @@ class GeminiClient(BaseLLMClient):
         try:
             from prompts import build_simple_prompt
             full_prompt = build_simple_prompt(system_prompt, transcript, language)
-            summary = self._call_llm(full_prompt, temperature=0.7, max_tokens=2048)
+            summary = self._call_llm(full_prompt, temperature=0.7)
 
             return {
                 "summary": summary,

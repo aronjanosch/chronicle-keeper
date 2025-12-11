@@ -139,7 +139,6 @@ class OllamaClient(BaseLLMClient):
 
         # Extract optional parameters
         temperature = kwargs.get('temperature', 0.7)
-        max_tokens = kwargs.get('max_tokens', 2048)
 
         try:
             response = requests.post(
@@ -153,10 +152,10 @@ class OllamaClient(BaseLLMClient):
                     "options": {
                         "temperature": temperature,
                         "top_p": 0.9,
-                        "max_tokens": max_tokens
+                        # No num_predict limit - let the model decide appropriate length
                     }
                 },
-                timeout=120  # 2 minute timeout
+                timeout=300  # 5 minute timeout (increased for longer outputs)
             )
 
             if response.status_code == 200:
@@ -184,7 +183,7 @@ class OllamaClient(BaseLLMClient):
         from prompts import build_simple_prompt
         full_prompt = build_simple_prompt(system_prompt, transcript)
 
-        return self._call_llm(full_prompt, temperature=0.7, max_tokens=2048)
+        return self._call_llm(full_prompt, temperature=0.7)
 
     def generate_summary_with_metadata(self, transcript: str, system_prompt: str, language: str = "en") -> Dict[str, Any]:
         """
@@ -218,7 +217,7 @@ class OllamaClient(BaseLLMClient):
                 format=SummaryResponse.model_json_schema(),
                 options={
                     'temperature': 0.3,  # Lower temperature for consistent structured output
-                    'num_predict': 2048,
+                    # No num_predict limit - let the model decide appropriate length
                 }
             )
 
@@ -252,7 +251,7 @@ class OllamaClient(BaseLLMClient):
         try:
             from prompts import build_simple_prompt
             full_prompt = build_simple_prompt(system_prompt, transcript, language)
-            summary = self._call_llm(full_prompt, temperature=0.7, max_tokens=2048)
+            summary = self._call_llm(full_prompt, temperature=0.7)
 
             return {
                 "summary": summary,

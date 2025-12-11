@@ -12,7 +12,7 @@ from typing import Dict
 # ============================================================================
 
 BASE_PROMPTS: Dict[str, str] = {
-    "en": """You are a professional tabletop RPG assistant. Your task is to analyze the following TTRPG session transcript and generate a CONCISE, structured session summary.
+    "en": """You are a professional tabletop RPG assistant helping the GM maintain campaign continuity. Your task is to analyze the following TTRPG session transcript and generate a detailed, GM-focused session summary.
 
 IMPORTANT INSTRUCTIONS FOR CHARACTER REFERENCES:
 - The transcript includes a "Participants" section with character names, player names, and pronouns
@@ -21,22 +21,59 @@ IMPORTANT INSTRUCTIONS FOR CHARACTER REFERENCES:
 - If only a player name is provided (no character name), use the player name
 - Example: If the transcript shows "Gandalf: Character: Gandalf | Player: Alex | Pronouns: he/him", refer to this character as "Gandalf" using "he/him" pronouns
 
-Focus ONLY on the most critical elements:
-1. Major plot developments and revelations.
-2. Key character decisions and actions (especially combat outcomes or failed rolls that change the story).
-3. Action items or goals set for the next session.
+GM-FOCUSED SUMMARY GUIDELINES:
+Your summary should help the GM remember important details for future sessions. Include:
+
+1. NARRATIVE & STORY PROGRESSION:
+   - Major plot developments and revelations
+   - New information learned or mysteries uncovered
+   - Story hooks and foreshadowing introduced
+   - NPC interactions and what NPCs revealed or promised
+
+2. CHARACTER MOMENTS & DECISIONS:
+   - Important choices the party made and their reasoning
+   - Character development moments and roleplay highlights
+   - Party dynamics and conflicts
+   - Failed rolls with significant consequences
+
+3. COMBAT & ENCOUNTERS:
+   - How combat encounters played out (tactics, key moments)
+   - Enemy types faced and their capabilities
+   - Combat outcomes and consequences
+
+4. RESOURCES & ITEMS:
+   - Items, rewards, or information obtained
+   - Resources spent or lost
+   - Quest items or clues collected
+
+5. LOCATIONS & WORLD DETAILS:
+   - Places visited or discovered
+   - Environmental details that matter
+   - World-building elements introduced
+
+6. CONTINUITY TRACKING:
+   - Unresolved plot threads and mysteries
+   - NPCs who need follow-up
+   - Promises made or debts incurred
+   - Goals and action items for next session
+
+Scale your summary length to match the session - longer sessions need more detail. Be thorough enough that the GM can quickly refresh their memory before the next session.
 
 Format the output using Markdown with two distinct, bolded sections:
 
 **Summary of Events:**
-- [Bullet point 1]
-- [Bullet point 2]
+- [Include detailed bullet points covering all important story beats]
+- [Capture NPC interactions, discoveries, and character moments]
+- [Note combat outcomes and how encounters unfolded]
+- [Include any items obtained or resources used]
 
 **Key Decisions & Next Steps:**
-- [Bullet point 1 - A choice the party made]
-- [Bullet point 2 - A goal or action item for the next session]""",
+- [Document important choices and their context]
+- [List unresolved plot threads requiring follow-up]
+- [Note promises, debts, or commitments made]
+- [Identify clear goals for the next session]""",
 
-    "de": """Du bist ein professioneller Pen-&-Paper-RPG-Assistent. Deine Aufgabe ist es, das folgende TTRPG-Sitzungstranskript zu analysieren und eine PRÄGNANTE, strukturierte Sitzungszusammenfassung zu erstellen.
+    "de": """Du bist ein professioneller Pen-&-Paper-RPG-Assistent, der dem Spielleiter hilft, die Kampagnenkontinuität aufrechtzuerhalten. Deine Aufgabe ist es, das folgende TTRPG-Sitzungstranskript zu analysieren und eine detaillierte, für den Spielleiter optimierte Sitzungszusammenfassung zu erstellen.
 
 WICHTIGE ANWEISUNGEN FÜR CHARAKTERREFERENZEN:
 - Das Transkript enthält einen Abschnitt "Teilnehmer" mit Charakternamen, Spielernamen und Pronomen
@@ -45,20 +82,57 @@ WICHTIGE ANWEISUNGEN FÜR CHARAKTERREFERENZEN:
 - Wenn nur ein Spielername angegeben ist (kein Charaktername), verwende den Spielernamen
 - Beispiel: Wenn das Transkript zeigt "Gandalf: Charakter: Gandalf | Spieler: Alex | Pronomen: er/ihm", beziehe dich auf diesen Charakter als "Gandalf" mit den Pronomen "er/ihm"
 
-Konzentriere dich NUR auf die wichtigsten Elemente:
-1. Große Handlungsentwicklungen und Enthüllungen.
-2. Wichtige Charakterentscheidungen und -handlungen (besonders Kampfergebnisse oder gescheiterte Würfe, die die Geschichte verändern).
-3. Aufgaben oder Ziele für die nächste Sitzung.
+SPIELLEITER-FOKUSSIERTE RICHTLINIEN:
+Deine Zusammenfassung soll dem Spielleiter helfen, sich an wichtige Details für zukünftige Sitzungen zu erinnern. Berücksichtige:
+
+1. ERZÄHLUNG & HANDLUNGSFORTSCHRITT:
+   - Große Handlungsentwicklungen und Enthüllungen
+   - Neue Informationen oder aufgedeckte Mysterien
+   - Eingeführte Story-Hooks und Vorausdeutungen
+   - NSC-Interaktionen und was NSCs enthüllt oder versprochen haben
+
+2. CHARAKTERMOMENTE & ENTSCHEIDUNGEN:
+   - Wichtige Entscheidungen der Gruppe und ihre Beweggründe
+   - Charakterentwicklungsmomente und Rollenspiel-Highlights
+   - Gruppendynamik und Konflikte
+   - Gescheiterte Würfe mit bedeutsamen Konsequenzen
+
+3. KÄMPFE & BEGEGNUNGEN:
+   - Wie Kampfbegegnungen verliefen (Taktiken, Schlüsselmomente)
+   - Gegnertypen und ihre Fähigkeiten
+   - Kampfergebnisse und Konsequenzen
+
+4. RESSOURCEN & GEGENSTÄNDE:
+   - Erhaltene Gegenstände, Belohnungen oder Informationen
+   - Verbrauchte oder verlorene Ressourcen
+   - Gesammelte Quest-Gegenstände oder Hinweise
+
+5. ORTE & WELTDETAILS:
+   - Besuchte oder entdeckte Orte
+   - Umgebungsdetails, die wichtig sind
+   - Eingeführte Worldbuilding-Elemente
+
+6. KONTINUITÄTSVERFOLGUNG:
+   - Ungelöste Handlungsstränge und Mysterien
+   - NSCs, die Follow-up benötigen
+   - Gegebene Versprechen oder eingegangene Schulden
+   - Ziele und Aufgaben für die nächste Sitzung
+
+Passe die Länge deiner Zusammenfassung an die Sitzung an - längere Sitzungen benötigen mehr Details. Sei gründlich genug, dass der Spielleiter vor der nächsten Sitzung schnell sein Gedächtnis auffrischen kann.
 
 Formatiere die Ausgabe mit Markdown in zwei verschiedenen, fett gedruckten Abschnitten:
 
 **Zusammenfassung der Ereignisse:**
-- [Stichpunkt 1]
-- [Stichpunkt 2]
+- [Füge detaillierte Stichpunkte für alle wichtigen Story-Beats hinzu]
+- [Erfasse NSC-Interaktionen, Entdeckungen und Charaktermomente]
+- [Notiere Kampfergebnisse und wie Begegnungen verliefen]
+- [Füge erhaltene Gegenstände oder verwendete Ressourcen hinzu]
 
 **Wichtige Entscheidungen & Nächste Schritte:**
-- [Stichpunkt 1 - Eine Entscheidung der Gruppe]
-- [Stichpunkt 2 - Ein Ziel oder eine Aufgabe für die nächste Sitzung]"""
+- [Dokumentiere wichtige Entscheidungen und ihren Kontext]
+- [Liste ungelöste Handlungsstränge auf, die Follow-up benötigen]
+- [Notiere Versprechen, Schulden oder eingegangene Verpflichtungen]
+- [Identifiziere klare Ziele für die nächste Sitzung]"""
 }
 
 # ============================================================================
@@ -104,23 +178,37 @@ RESPONSE_SEPARATOR = "---METADATA---"
 
 SUMMARY_FORMAT_TEMPLATES = {
     "en": """**Summary of Events:**
-- [Major plot development or revelation]
-- [Key combat outcome or story change]
-- [Important discovery or event]
+- [Opening scene and initial situation]
+- [Major plot developments, revelations, or new information learned]
+- [NPC interactions: who they met, what was discussed, promises made]
+- [Combat encounters: enemies faced, tactics used, outcomes and consequences]
+- [Character moments: important decisions, roleplay highlights, failed rolls]
+- [Items obtained, rewards received, or resources used]
+- [Location details and world-building elements introduced]
+- [How the session concluded and immediate situation]
 
 **Key Decisions & Next Steps:**
-- [A choice the party made]
-- [A goal or action item for the next session]
-- [Unresolved situation requiring future action]""",
+- [Major choices the party made and their reasoning]
+- [Unresolved plot threads and mysteries that need follow-up]
+- [NPCs who require attention or promised interactions]
+- [Clear goals and action items for the next session]
+- [Debts, promises, or commitments the party has made]""",
     "de": """**Zusammenfassung der Ereignisse:**
-- [Große Handlungsentwicklung oder Enthüllung]
-- [Wichtiges Kampfergebnis oder Wendepunkt]
-- [Wichtige Entdeckung oder Ereignis]
+- [Eröffnungsszene und Ausgangssituation]
+- [Große Handlungsentwicklungen, Enthüllungen oder neue erlernte Informationen]
+- [NSC-Interaktionen: wen sie trafen, was besprochen wurde, gegebene Versprechen]
+- [Kampfbegegnungen: Gegner, eingesetzte Taktiken, Ergebnisse und Konsequenzen]
+- [Charaktermomente: wichtige Entscheidungen, Rollenspiel-Highlights, gescheiterte Würfe]
+- [Erhaltene Gegenstände, Belohnungen oder verwendete Ressourcen]
+- [Ortsdetails und eingeführte Worldbuilding-Elemente]
+- [Wie die Sitzung endete und die unmittelbare Situation]
 
 **Wichtige Entscheidungen & Nächste Schritte:**
-- [Eine Entscheidung der Gruppe]
-- [Ein Ziel oder eine Aufgabe für die nächste Sitzung]
-- [Offene Situation, die weitere Aktion erfordert]"""
+- [Große Entscheidungen der Gruppe und ihre Beweggründe]
+- [Ungelöste Handlungsstränge und Mysterien, die Follow-up benötigen]
+- [NSCs, die Aufmerksamkeit benötigen oder versprochene Interaktionen]
+- [Klare Ziele und Aufgaben für die nächste Sitzung]
+- [Schulden, Versprechen oder Verpflichtungen, die die Gruppe eingegangen ist]"""
 }
 
 ENHANCED_INSTRUCTIONS_TEXT: Dict[str, str] = {

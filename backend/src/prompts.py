@@ -23,45 +23,34 @@ FOCUS: Only GM-relevant details - what's important for continuity and next sessi
 
 STRUCTURE: Follow this Markdown structure with ### headings:
 
-## Summary of Events:
+## Session Summary
 
-### Opening Scene and Initial Situation:
-[2-3 sentences: How did the session start?]
+### What Happened
+[Opening scene, major plot developments, and how it ended - combined narrative flow]
 
-### Major Plot Developments:
-[Only core story points]
+### Combat & Challenges
+[Enemy types, tactics, outcomes - MAX 3-4 SENTENCES, NO combat report!]
 
-### NPC Interactions:
-[Who, what, promises made?]
+### NPCs & Relationships
+[Who they met, what was discussed, promises made]
 
-### Combat Encounters:
-[MAX 3-4 SENTENCES: Enemy types, decisive moments, lasting consequences. NO combat report!]
+### Character Highlights
+[Memorable moments, key decisions, critical fails/successes]
 
-### Character Moments:
-[Only significant moments with consequences]
+### Loot & Resources
+- Items gained: [list items received]
+- Resources used: [list resources spent]
 
-### Items and Resources:
-[Bullet points]
+## Looking Forward
 
-### How the Session Ended:
-[Current situation, cliffhanger]
+### Decisions Made
+[Major choices and reasoning]
 
-## Key Decisions & Next Steps:
-
-### Major Group Decisions:
-[Core decisions + reasoning]
-
-### Unresolved Threads:
-[Story hooks]
-
-### Important NPCs:
-[Who needs follow-up?]
-
-### Goals for Next Session:
-[Concrete next steps]
-
-### Commitments and Obligations:
-[What the party owes/promised]""",
+### Open Threads
+- Unresolved plots: [story hooks]
+- Important NPCs: [who needs follow-up]
+- Goals for next session: [concrete next steps]
+- Commitments: [what the party owes/promised]""",
 
     "de": """Du bist ein RPG-Assistent für den Spielleiter. Erstelle eine prägnante, strukturierte Sitzungszusammenfassung.
 
@@ -71,45 +60,34 @@ FOKUS: Nur GM-relevante Details - was ist wichtig für Kontinuität und nächste
 
 STRUKTUR: Folge dieser Markdown-Struktur mit ### Überschriften:
 
-## Zusammenfassung der Ereignisse:
+## Sitzungszusammenfassung
 
-### Eröffnungsszene und Ausgangssituation:
-[2-3 Sätze: Wie begann die Sitzung?]
+### Was geschah
+[Eröffnungsszene, große Entwicklungen und wie es endete - zusammenhängender Handlungsfluss]
 
-### Große Handlungsentwicklungen, Enthüllungen oder neue Informationen:
-[Nur Story-Kernpunkte]
+### Kämpfe & Herausforderungen
+[Gegnertypen, Taktiken, Ergebnisse - MAX 3-4 SÄTZE, KEIN Kampfbericht!]
 
-### NPC-Interaktionen: wen sie trafen, was besprochen wurde, gegebene Versprechen:
-[Wer, was, welche Versprechen?]
+### NPCs & Beziehungen
+[Wen sie trafen, was besprochen wurde, gemachte Versprechen]
 
-### Kampfbegegnungen: Gegner, eingesetzte Taktiken, Ergebnisse und Konsequenzen:
-[MAX 3-4 SÄTZE: Gegnertypen, entscheidende Momente, bleibende Konsequenzen. KEIN Kampfbericht!]
+### Charakter-Highlights
+[Denkwürdige Momente, wichtige Entscheidungen, kritische Fehlschläge/Erfolge]
 
-### Charaktermomente: wichtige Entscheidungen, Rollenspiel-Highlights, gescheiterte Würfe:
-[Nur bedeutsame Momente mit Konsequenzen]
+### Beute & Ressourcen
+- Erhaltene Gegenstände: [Liste erhaltene Items]
+- Verwendete Ressourcen: [Liste verbrauchte Ressourcen]
 
-### Erhaltene Gegenstände, Belohnungen oder verwendete Ressourcen:
-[Stichpunkte]
+## Vorausschau
 
-### Wie die Sitzung endete und die unmittelbare Situation:
-[Aktuelle Lage, Cliffhanger]
+### Getroffene Entscheidungen
+[Wichtige Entscheidungen und Begründungen]
 
-## Wichtige Entscheidungen & Nächste Schritte:
-
-### Große Entscheidungen der Gruppe und ihre Beweggründe:
-[Kernentscheidungen + Begründung]
-
-### Ungelöste Handlungsstränge und Mysterien, die Follow-up benötigen:
-[Story-Hooks]
-
-### NPCs, die Aufmerksamkeit benötigen oder versprochene Interaktionen:
-[Wer braucht Follow-up?]
-
-### Klare Ziele und Aufgaben für die nächste Sitzung:
-[Konkrete nächste Schritte]
-
-### Schulden, Versprechen oder Verpflichtungen, die die Gruppe eingegangen ist:
-[Was schuldet/verspricht die Gruppe?]"""
+### Offene Fäden
+- Ungelöste Handlungsstränge: [Story-Hooks]
+- Wichtige NPCs: [wer braucht Follow-up]
+- Ziele für nächste Sitzung: [konkrete nächste Schritte]
+- Verpflichtungen: [was die Gruppe schuldet/versprochen hat]"""
 }
 
 # ============================================================================

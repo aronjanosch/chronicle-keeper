@@ -161,7 +161,7 @@ def set_campaign_metadata(
     session_number: int | None = None,
     title: str | None = None,
     date: str | None = None,
-    tags: list[str] | None = None,
+    metadata: dict | None = None,
     notes: str | None = None,
 ) -> dict[str, Any]:
     """Set campaign/session metadata for a session."""
@@ -178,20 +178,20 @@ def set_campaign_metadata(
         "session_number": session_number,
         "title": title,
         "date": date,
-        "tags": tags or [],
         "notes": notes or "",
     }
+    data["metadata"] = metadata or data.get("metadata") or {}
     upsert_session_metadata(
         session_id=session_id,
         campaign_id=campaign_id,
         session_number=session_number,
         title=title,
         date=date,
-        tags=tags,
+        metadata=metadata,
         notes=notes,
     )
     data = _relocate_session_folder(session_id, data)
-    return data["campaign"]
+    return {**data["campaign"], "metadata": data.get("metadata", {})}
 
 
 def get_session_path(session_id: str) -> Path:
@@ -345,6 +345,7 @@ def list_campaign_sessions(campaign_id: str) -> list[dict[str, Any]]:
                     "session_number": item.get("session_number"),
                     "title": item.get("title"),
                     "date": item.get("date"),
+                    "metadata": item.get("metadata") or {},
                     "has_transcription": bool(transcripts),
                     "has_summary": bool(summaries),
                 }
@@ -395,11 +396,13 @@ def get_campaign_metadata(session_id: str) -> dict[str, Any]:
             "session_number": db_metadata.get("session_number"),
             "title": db_metadata.get("title"),
             "date": db_metadata.get("date"),
-            "tags": db_metadata.get("tags") or [],
+            "metadata": db_metadata.get("metadata") or {},
             "notes": db_metadata.get("notes") or "",
         }
     session = load_session(session_id)
-    return session.get("campaign", {})
+    result = dict(session.get("campaign", {}))
+    result["metadata"] = session.get("metadata", {})
+    return result
 
 
 def _sync_session_metadata(session_id: str, data: dict[str, Any]) -> None:
@@ -412,7 +415,7 @@ def _sync_session_metadata(session_id: str, data: dict[str, Any]) -> None:
         session_number=campaign.get("session_number"),
         title=campaign.get("title"),
         date=campaign.get("date"),
-        tags=campaign.get("tags"),
+        metadata=data.get("metadata"),
         notes=campaign.get("notes"),
     )
 

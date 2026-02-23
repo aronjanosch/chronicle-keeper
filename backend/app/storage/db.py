@@ -36,7 +36,7 @@ SCHEMA_STATEMENTS = [
         session_number INTEGER,
         title TEXT,
         date TEXT,
-        tags_json TEXT NOT NULL DEFAULT '[]',
+        metadata_json TEXT NOT NULL DEFAULT '{}',
         notes TEXT,
         FOREIGN KEY (campaign_id) REFERENCES campaigns(campaign_id)
     )

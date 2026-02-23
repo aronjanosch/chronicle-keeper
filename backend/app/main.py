@@ -145,7 +145,7 @@ def update_session_metadata(request: SessionMetadataRequest):
             session_number=session_number,
             title=request.title,
             date=request.date,
-            tags=request.tags,
+            metadata=request.metadata,
             notes=request.notes,
         )
         if should_increment and request.campaign_id:
@@ -416,6 +416,7 @@ def create_campaign_session_route(
             session_number=campaign.get("session_number"),
             title=campaign.get("title"),
             date=campaign.get("date"),
+            metadata=session.get("metadata") or {},
             has_transcription=bool(list_artifacts(sid, "transcript")),
             has_summary=bool(list_artifacts(sid, "summary")),
         )

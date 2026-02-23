@@ -133,6 +133,9 @@
               <button id="open-summarize-modal" type="button" class="btn primary">
                 Summarize
               </button>
+              <button id="export-obsidian" type="button" class="btn secondary">
+                Export
+              </button>
             </div>
           </div>
 
@@ -168,6 +171,34 @@
                 <tbody id="session-overview-speakers"></tbody>
               </table>
               <p id="session-speakers-empty" class="muted hidden">No speakers mapped yet.</p>
+            </div>
+          </div>
+
+          <div class="grid two">
+            <div id="session-events-card" class="card hidden">
+              <h3>Key Events</h3>
+              <ul id="session-events-list" class="events-list"></ul>
+            </div>
+            <div id="session-metadata-card" class="card hidden">
+              <h3>Properties</h3>
+              <div class="metadata-section">
+                <div class="metadata-row" data-category="characters">
+                  <span class="metadata-label">Characters</span>
+                  <div class="metadata-chips" id="meta-characters"></div>
+                </div>
+                <div class="metadata-row" data-category="locations">
+                  <span class="metadata-label">Locations</span>
+                  <div class="metadata-chips" id="meta-locations"></div>
+                </div>
+                <div class="metadata-row" data-category="items">
+                  <span class="metadata-label">Items</span>
+                  <div class="metadata-chips" id="meta-items"></div>
+                </div>
+                <div class="metadata-row" data-category="tags">
+                  <span class="metadata-label">Tags</span>
+                  <div class="metadata-chips" id="meta-tags"></div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -388,8 +419,8 @@
                 </div>
                 <div class="field">
                   <label for="session-meta-tags">Tags</label>
-                  <input id="session-meta-tags" type="text" placeholder="Coming soon" disabled />
-                  <p class="field-hint">Tag suggestions will appear after summaries later.</p>
+                  <input id="session-meta-tags" type="text" placeholder="Comma-separated" />
+                  <p class="field-hint">More metadata can be added after summarization.</p>
                 </div>
                 <div class="field">
                   <label for="session-meta-notes">Notes</label>
@@ -474,8 +505,20 @@
                 <textarea id="session-edit-notes" rows="4"></textarea>
               </div>
               <div class="field">
+                <label for="session-edit-characters">Characters</label>
+                <input id="session-edit-characters" type="text" placeholder="Comma-separated" />
+              </div>
+              <div class="field">
+                <label for="session-edit-locations">Locations</label>
+                <input id="session-edit-locations" type="text" placeholder="Comma-separated" />
+              </div>
+              <div class="field">
+                <label for="session-edit-items">Items</label>
+                <input id="session-edit-items" type="text" placeholder="Comma-separated" />
+              </div>
+              <div class="field">
                 <label for="session-edit-tags">Tags</label>
-                <input id="session-edit-tags" type="text" placeholder="Coming soon" disabled />
+                <input id="session-edit-tags" type="text" placeholder="Comma-separated" />
               </div>
               <div id="session-edit-status" class="status hidden"></div>
             </div>
@@ -547,6 +590,11 @@
               <div class="modal-preview">
                 <h4>Preview</h4>
                 <pre id="modal-summary-preview" class="modal-preview-text"></pre>
+              </div>
+              <div id="metadata-suggestions" class="metadata-suggestions hidden">
+                <h4>Extracted metadata</h4>
+                <div id="metadata-suggestions-content" class="metadata-section"></div>
+                <button id="accept-metadata" type="button" class="btn secondary">Accept all</button>
               </div>
             </div>
             <div class="modal-footer">

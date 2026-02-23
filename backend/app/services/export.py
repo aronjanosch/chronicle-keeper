@@ -56,7 +56,6 @@ def export_session(
                 "session_date": campaign_info.get("date"),
                 "characters": extracted_metadata.get("characters"),
                 "locations": extracted_metadata.get("locations"),
-                "events": extracted_metadata.get("events"),
                 "items": extracted_metadata.get("items"),
                 "tags": extracted_metadata.get("tags"),
             }

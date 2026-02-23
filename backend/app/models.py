@@ -53,7 +53,7 @@ class SessionMetadataRequest(BaseModel):
     session_number: int | None = None
     title: str | None = None
     date: str | None = None
-    tags: list[str] | None = None
+    metadata: dict | None = None
     notes: str | None = None
 
 
@@ -258,6 +258,7 @@ class CampaignSessionInfo(BaseModel):
     session_number: int | None = None
     title: str | None = None
     date: str | None = None
+    metadata: dict | None = None
     has_transcription: bool
     has_summary: bool
 

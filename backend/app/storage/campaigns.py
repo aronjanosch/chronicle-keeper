@@ -227,23 +227,30 @@ def increment_session_number(campaign_id: str | None = None) -> int:
     return next_number
 
 
-def _normalize_tags(tags: Any) -> list[str]:
-    if not tags:
-        return []
-    if isinstance(tags, list):
-        raw = tags
-    elif isinstance(tags, str):
-        raw = [item.strip() for item in tags.split(",")]
-    else:
-        return []
-    normalized = []
-    for item in raw:
-        if item is None:
-            continue
-        value = str(item).strip()
-        if value:
-            normalized.append(value)
-    return normalized
+METADATA_CATEGORIES = ("characters", "locations", "events", "items", "tags")
+
+
+def _normalize_metadata(metadata: Any) -> dict[str, list[str]]:
+    """Normalize metadata into {category: [str, ...]} format."""
+    if not metadata:
+        return {cat: [] for cat in METADATA_CATEGORIES}
+    if isinstance(metadata, dict):
+        result: dict[str, list[str]] = {}
+        for cat in METADATA_CATEGORIES:
+            raw = metadata.get(cat)
+            if isinstance(raw, list):
+                result[cat] = [str(v).strip() for v in raw if v and str(v).strip()]
+            elif isinstance(raw, str):
+                result[cat] = [v.strip() for v in raw.split(",") if v.strip()]
+            else:
+                result[cat] = []
+        return result
+    # Legacy: if it's a plain list, treat as tags
+    if isinstance(metadata, list):
+        normalized = {cat: [] for cat in METADATA_CATEGORIES}
+        normalized["tags"] = [str(v).strip() for v in metadata if v and str(v).strip()]
+        return normalized
+    return {cat: [] for cat in METADATA_CATEGORIES}
 
 
 def upsert_session_metadata(
@@ -252,10 +259,10 @@ def upsert_session_metadata(
     session_number: int | None,
     title: str | None,
     date: str | None,
-    tags: list[str] | None,
-    notes: str | None,
+    metadata: dict | list | None = None,
+    notes: str | None = None,
 ) -> None:
-    tags_json = json.dumps(_normalize_tags(tags))
+    metadata_json = json.dumps(_normalize_metadata(metadata))
     with get_connection() as connection:
         connection.execute(
             """
@@ -265,7 +272,7 @@ def upsert_session_metadata(
                 session_number,
                 title,
                 date,
-                tags_json,
+                metadata_json,
                 notes
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
@@ -273,7 +280,7 @@ def upsert_session_metadata(
                 session_number=excluded.session_number,
                 title=excluded.title,
                 date=excluded.date,
-                tags_json=excluded.tags_json,
+                metadata_json=excluded.metadata_json,
                 notes=excluded.notes
             """,
             (
@@ -282,7 +289,7 @@ def upsert_session_metadata(
                 session_number,
                 title,
                 date,
-                tags_json,
+                metadata_json,
                 notes,
             ),
         )
@@ -297,18 +304,28 @@ def get_session_metadata(session_id: str) -> dict[str, Any] | None:
         ).fetchone()
     if not row:
         return None
-    try:
-        tags = json.loads(row["tags_json"] or "[]")
-    except json.JSONDecodeError:
-        tags = []
+    row_dict = dict(row)
+    # Support both old tags_json and new metadata_json columns
+    raw_metadata: Any = None
+    if "metadata_json" in row_dict:
+        try:
+            raw_metadata = json.loads(row_dict["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            raw_metadata = {}
+    elif "tags_json" in row_dict:
+        try:
+            tags = json.loads(row_dict["tags_json"] or "[]")
+        except json.JSONDecodeError:
+            tags = []
+        raw_metadata = tags  # will be normalized as legacy list
     return {
-        "session_id": row["session_id"],
-        "campaign_id": row["campaign_id"],
-        "session_number": row["session_number"],
-        "title": row["title"],
-        "date": row["date"],
-        "tags": _normalize_tags(tags),
-        "notes": row["notes"] or "",
+        "session_id": row_dict["session_id"],
+        "campaign_id": row_dict["campaign_id"],
+        "session_number": row_dict["session_number"],
+        "title": row_dict["title"],
+        "date": row_dict["date"],
+        "metadata": _normalize_metadata(raw_metadata),
+        "notes": row_dict["notes"] or "",
     }
 
 
@@ -316,7 +333,7 @@ def list_sessions_for_campaign(campaign_id: str) -> list[dict[str, Any]]:
     with get_connection() as connection:
         rows = connection.execute(
             """
-            SELECT session_id, session_number, title, date, tags_json, notes
+            SELECT session_id, session_number, title, date, metadata_json, notes
             FROM sessions
             WHERE campaign_id = ?
             ORDER BY session_number DESC
@@ -325,18 +342,26 @@ def list_sessions_for_campaign(campaign_id: str) -> list[dict[str, Any]]:
         ).fetchall()
     sessions: list[dict[str, Any]] = []
     for row in rows:
-        try:
-            tags = json.loads(row["tags_json"] or "[]")
-        except json.JSONDecodeError:
-            tags = []
+        row_dict = dict(row)
+        raw_metadata: Any = None
+        if "metadata_json" in row_dict:
+            try:
+                raw_metadata = json.loads(row_dict["metadata_json"] or "{}")
+            except json.JSONDecodeError:
+                raw_metadata = {}
+        elif "tags_json" in row_dict:
+            try:
+                raw_metadata = json.loads(row_dict["tags_json"] or "[]")
+            except json.JSONDecodeError:
+                raw_metadata = []
         sessions.append(
             {
-                "session_id": row["session_id"],
-                "session_number": row["session_number"],
-                "title": row["title"],
-                "date": row["date"],
-                "tags": _normalize_tags(tags),
-                "notes": row["notes"] or "",
+                "session_id": row_dict["session_id"],
+                "session_number": row_dict["session_number"],
+                "title": row_dict["title"],
+                "date": row_dict["date"],
+                "metadata": _normalize_metadata(raw_metadata),
+                "notes": row_dict["notes"] or "",
             }
         )
     return sessions

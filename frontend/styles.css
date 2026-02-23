@@ -676,6 +676,109 @@ textarea#export-preview {
   color: var(--accent);
 }
 
+.metadata-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.metadata-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.metadata-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.metadata-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.metadata-chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  border: 1px solid;
+}
+
+.metadata-row[data-category="characters"] .metadata-chip {
+  background: rgba(124, 107, 255, 0.12);
+  border-color: rgba(124, 107, 255, 0.3);
+  color: #b0a4ff;
+}
+
+.metadata-row[data-category="locations"] .metadata-chip {
+  background: rgba(73, 214, 168, 0.12);
+  border-color: rgba(73, 214, 168, 0.3);
+  color: #49d6a8;
+}
+
+.metadata-row[data-category="events"] .metadata-chip {
+  background: rgba(240, 195, 106, 0.12);
+  border-color: rgba(240, 195, 106, 0.3);
+  color: #f0c36a;
+}
+
+.metadata-row[data-category="items"] .metadata-chip {
+  background: rgba(99, 179, 237, 0.12);
+  border-color: rgba(99, 179, 237, 0.3);
+  color: #63b3ed;
+}
+
+.metadata-row[data-category="tags"] .metadata-chip {
+  background: rgba(237, 137, 168, 0.12);
+  border-color: rgba(237, 137, 168, 0.3);
+  color: #ed89a8;
+}
+
+.events-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.events-list li {
+  padding: 8px 12px;
+  background: var(--bg-card-strong);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.metadata-suggestions {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.metadata-suggestions.hidden {
+  display: none;
+}
+
+.metadata-suggestions h4 {
+  margin-bottom: 8px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.metadata-suggestions .btn {
+  margin-top: 8px;
+}
+
 .footer {
   text-align: center;
   padding: 1.5rem 0 0;

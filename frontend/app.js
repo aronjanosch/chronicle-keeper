@@ -355,12 +355,53 @@ function renderSessionOverview() {
   qs("session-number-display").textContent = campaign.session_number || "-";
   qs("session-notes-display").textContent = campaign.notes || "No notes yet.";
 
+  renderSessionMetadata();
   renderSessionSpeakers();
   renderSessionTranscripts();
   renderSessionSummaries();
 
   qs("open-transcribe-modal").disabled = !session.tracks?.length;
   qs("open-summarize-modal").disabled = !state.transcripts.length;
+  qs("export-obsidian").disabled = !state.summaries.length;
+}
+
+function renderSessionMetadata() {
+  const metadata = state.currentSession?.metadata || {};
+
+  // Events — separate card as a list
+  const events = metadata.events || [];
+  const eventsCard = qs("session-events-card");
+  const eventsList = qs("session-events-list");
+  if (eventsList) {
+    eventsList.innerHTML = "";
+    events.forEach((value) => {
+      const li = document.createElement("li");
+      li.textContent = value;
+      eventsList.appendChild(li);
+    });
+  }
+  if (eventsCard) eventsCard.classList.toggle("hidden", !events.length);
+
+  // Properties — chips for characters, locations, items, tags
+  const categories = ["characters", "locations", "items", "tags"];
+  const card = qs("session-metadata-card");
+  let hasAny = false;
+
+  categories.forEach((cat) => {
+    const container = qs(`meta-${cat}`);
+    if (!container) return;
+    container.innerHTML = "";
+    const values = metadata[cat] || [];
+    values.forEach((value) => {
+      const chip = document.createElement("span");
+      chip.className = "metadata-chip";
+      chip.textContent = value;
+      container.appendChild(chip);
+    });
+    if (values.length) hasAny = true;
+  });
+
+  if (card) card.classList.toggle("hidden", !hasAny);
 }
 
 function renderSessionSpeakers() {
@@ -446,22 +487,42 @@ function populateSessionEdit() {
   const session = state.currentSession;
   if (!session) return;
   const campaign = session.campaign || {};
+  const metadata = session.metadata || {};
   qs("session-edit-title").value = campaign.title || "";
   qs("session-edit-date").value = campaign.date || "";
   qs("session-edit-number").value = campaign.session_number || "";
   qs("session-edit-notes").value = campaign.notes || "";
+  qs("session-edit-characters").value = (metadata.characters || []).join(", ");
+  qs("session-edit-locations").value = (metadata.locations || []).join(", ");
+  qs("session-edit-items").value = (metadata.items || []).join(", ");
+  qs("session-edit-tags").value = (metadata.tags || []).join(", ");
+}
+
+function collectMetadataFromInputs(prefix) {
+  const parse = (id) =>
+    qs(id).value.split(",").map((s) => s.trim()).filter(Boolean);
+  // Preserve existing events (LLM-generated, not user-editable here)
+  const existing = state.currentSession?.metadata || {};
+  return {
+    characters: parse(`${prefix}-characters`),
+    locations: parse(`${prefix}-locations`),
+    events: existing.events || [],
+    items: parse(`${prefix}-items`),
+    tags: parse(`${prefix}-tags`),
+  };
 }
 
 async function saveSessionEdit() {
   const session = state.currentSession;
   if (!session) return;
+  const metadata = collectMetadataFromInputs("session-edit");
   const payload = {
     session_id: session.session_id,
     campaign_id: session.campaign?.campaign_id || null,
     session_number: Number(qs("session-edit-number").value) || null,
     title: qs("session-edit-title").value.trim() || null,
     date: qs("session-edit-date").value || null,
-    tags: session.campaign?.tags || [],
+    metadata,
     notes: qs("session-edit-notes").value.trim() || null,
   };
   await apiFetch("/session-metadata", {
@@ -655,13 +716,14 @@ async function openSessionWizard() {
 
 async function saveSessionMetadata() {
   if (!state.sessionWizard.sessionId) return false;
+  const tagsRaw = qs("session-meta-tags").value.split(",").map((s) => s.trim()).filter(Boolean);
   const payload = {
     session_id: state.sessionWizard.sessionId,
     campaign_id: state.currentCampaign?.campaign_id || null,
     session_number: Number(qs("session-meta-number").value) || null,
     title: qs("session-meta-title").value.trim() || null,
     date: qs("session-meta-date").value || null,
-    tags: [],
+    metadata: { characters: [], locations: [], events: [], items: [], tags: tagsRaw },
     notes: qs("session-meta-notes").value.trim() || null,
   };
   await apiFetch("/session-metadata", {
@@ -833,6 +895,41 @@ async function saveConfig() {
   setStatus(qs("settings-result"), "Settings saved");
 }
 
+function renderMetadataSuggestions(metadata) {
+  const container = qs("metadata-suggestions");
+  const content = qs("metadata-suggestions-content");
+  if (!metadata || !content) {
+    container.classList.add("hidden");
+    return;
+  }
+  const categories = ["characters", "locations", "events", "items", "tags"];
+  const hasAny = categories.some((cat) => (metadata[cat] || []).length > 0);
+  if (!hasAny) {
+    container.classList.add("hidden");
+    return;
+  }
+  content.innerHTML = "";
+  categories.forEach((cat) => {
+    const values = metadata[cat] || [];
+    if (!values.length) return;
+    const row = document.createElement("div");
+    row.className = "metadata-row";
+    row.dataset.category = cat;
+    row.innerHTML = `<span class="metadata-label">${cat}</span>`;
+    const chips = document.createElement("div");
+    chips.className = "metadata-chips";
+    values.forEach((v) => {
+      const chip = document.createElement("span");
+      chip.className = "metadata-chip";
+      chip.textContent = v;
+      chips.appendChild(chip);
+    });
+    row.appendChild(chips);
+    content.appendChild(row);
+  });
+  container.classList.remove("hidden");
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   loadApiBase();
   showScreen("start");
@@ -977,6 +1074,7 @@ document.addEventListener("DOMContentLoaded", () => {
   qs("open-summarize-modal").addEventListener("click", async () => {
     qs("modal-summary-status").textContent = "";
     qs("modal-summary-preview").textContent = "";
+    qs("metadata-suggestions").classList.add("hidden");
     populateTranscriptSelect();
     await loadPromptPresets();
     populatePromptPresetSelect();
@@ -1017,6 +1115,7 @@ document.addEventListener("DOMContentLoaded", () => {
   qs("run-summarize").addEventListener("click", async () => {
     if (!state.currentSession?.session_id) return;
     setStatus(qs("modal-summary-status"), "Summarizing...");
+    qs("metadata-suggestions").classList.add("hidden");
     const payload = {
       session_id: state.currentSession.session_id,
       transcript_path: state.selectedTranscriptPath || null,
@@ -1035,6 +1134,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       qs("modal-summary-preview").textContent = data.summary || "";
       setStatus(qs("modal-summary-status"), "Summary ready");
+      renderMetadataSuggestions(data.metadata);
       await loadSession(state.currentSession.session_id);
       await refreshCampaignSessions();
     } catch (error) {
@@ -1044,6 +1144,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   qs("modal-transcript-select").addEventListener("change", () => {
     state.selectedTranscriptPath = qs("modal-transcript-select").value || null;
+  });
+
+  qs("accept-metadata").addEventListener("click", () => {
+    // Metadata has already been merged server-side during summarization;
+    // just close the suggestions panel and confirm to the user.
+    qs("metadata-suggestions").classList.add("hidden");
+    setStatus(qs("modal-summary-status"), "Metadata saved to session");
   });
 
   qs("save-settings").addEventListener("click", async () => {
@@ -1179,6 +1286,32 @@ document.addEventListener("DOMContentLoaded", () => {
       await saveSessionEdit();
     } catch (error) {
       setStatus(qs("session-edit-status"), error.message, true);
+    }
+  });
+
+  qs("export-obsidian").addEventListener("click", async () => {
+    if (!state.currentSession?.session_id) return;
+    try {
+      const data = await apiFetch("/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: state.currentSession.session_id,
+          use_obsidian_format: true,
+        }),
+      });
+      // Trigger download
+      const blob = new Blob([data.content], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = data.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      alert(error.message);
     }
   });
 });

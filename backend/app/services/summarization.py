@@ -186,7 +186,21 @@ def summarize_session(
         "provider": provider,
         "model": model_name,
     }
-    session["metadata"] = metadata or {}
+    # Merge LLM-extracted metadata into existing metadata (don't overwrite user edits)
+    existing_metadata = session.get("metadata") or {}
+    if metadata:
+        for key, values in metadata.items():
+            if not isinstance(values, list):
+                continue
+            existing_values = existing_metadata.get(key, [])
+            if not isinstance(existing_values, list):
+                existing_values = []
+            merged = list(existing_values)
+            for v in values:
+                if v and v not in merged:
+                    merged.append(v)
+            existing_metadata[key] = merged
+    session["metadata"] = existing_metadata
     save_session(session_id, session)
 
     return SummarizeResult(

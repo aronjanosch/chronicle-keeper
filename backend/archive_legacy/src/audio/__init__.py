@@ -1,1 +1,0 @@
-# Audio processing module for Chronicle Keeper

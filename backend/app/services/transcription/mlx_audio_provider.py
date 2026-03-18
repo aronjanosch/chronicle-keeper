@@ -9,7 +9,6 @@ Unified provider that supports multiple STT models through the mlx-audio library
 
 from __future__ import annotations
 
-import gc
 import json
 from pathlib import Path
 
@@ -203,9 +202,13 @@ class MLXAudioProvider(TranscriptionProvider):
             if self._model is not None:
                 del self._model
                 self._model = None
-                gc.collect()
+                # Do not call gc.collect() here: it can block for a long time after
+                # large transcriptions (Metal/GPU cleanup), which prevents the HTTP
+                # response from being sent. The model will be reclaimed when the
+                # method returns and references go out of scope.
 
         all_segments.sort(key=lambda s: s.start)
+        log.info("Transcription complete: %d segments", len(all_segments))
         return TranscriptionResult(
             segments=all_segments,
             language=language,

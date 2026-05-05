@@ -13,22 +13,22 @@ PROVIDERS = {
         "display_name": "MLX Audio",
         "description": "Apple Silicon optimized - multiple STT models via mlx-audio",
         "supports_diarization": False,
-        "default_model": "mlx-community/whisper-large-v3-turbo-asr-fp16",
+        "default_model": "mlx-community/parakeet-tdt-0.6b-v3",
         "models": [
+            {
+                "id": "mlx-community/parakeet-tdt-0.6b-v3",
+                "name": "Parakeet TDT 0.6B v3",
+                "description": "NVIDIA's accurate STT, 25 EU languages (recommended default)",
+            },
             {
                 "id": "mlx-community/whisper-large-v3-turbo-asr-fp16",
                 "name": "Whisper Large v3 Turbo",
-                "description": "Fast and accurate, 99+ languages (recommended)",
+                "description": "Fast and accurate, 99+ languages",
             },
             {
                 "id": "mlx-community/whisper-large-v3-asr-fp16",
                 "name": "Whisper Large v3",
                 "description": "Best Whisper accuracy, 99+ languages",
-            },
-            {
-                "id": "mlx-community/parakeet-tdt-0.6b-v3",
-                "name": "Parakeet TDT 0.6B v3",
-                "description": "NVIDIA's accurate STT, 25 EU languages",
             },
             {
                 "id": "mlx-community/parakeet-tdt-0.6b-v2",
@@ -96,6 +96,14 @@ def get_default_provider() -> str:
     return "onnx-asr"
 
 
+def resolve_transcription_provider(preference: str | None) -> str:
+    """Resolve stored preference (e.g. auto) to a concrete provider name."""
+    pref = (preference or "auto").strip().lower()
+    if pref in PROVIDERS:
+        return pref
+    return get_default_provider()
+
+
 def get_provider(name: str, **kwargs):
     provider = PROVIDERS.get(name)
     if not provider:
@@ -104,14 +112,20 @@ def get_provider(name: str, **kwargs):
 
 
 def get_available_providers() -> list[dict]:
+    """List providers with platform-recommended engine first in the list."""
+    auto_first = get_default_provider()
+    names = sorted(
+        PROVIDERS.keys(),
+        key=lambda n: (0 if n == auto_first else 1, n),
+    )
     return [
         {
             "name": name,
-            "display_name": info["display_name"],
-            "description": info["description"],
-            "supports_diarization": info["supports_diarization"],
-            "default_model": info["default_model"],
-            "models": info["models"],
+            "display_name": PROVIDERS[name]["display_name"],
+            "description": PROVIDERS[name]["description"],
+            "supports_diarization": PROVIDERS[name]["supports_diarization"],
+            "default_model": PROVIDERS[name]["default_model"],
+            "models": PROVIDERS[name]["models"],
         }
-        for name, info in PROVIDERS.items()
+        for name in names
     ]

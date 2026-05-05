@@ -23,8 +23,37 @@ from app.storage.artifacts import (
 )
 from app.storage.config import get_config
 
-
 STAGING_DIR_NAME = "_sessions"
+
+
+class OutputRootError(Exception):
+    """Configured output_root cannot be created or is not writable on this machine."""
+
+
+def _suggested_output_root() -> Path:
+    return Path.home() / "Documents" / "chronicle-keeper"
+
+
+def _mkdir_output_root(path: Path) -> Path:
+    """Create output root (and parents). Raise OutputRootError on failure."""
+    expanded = path.expanduser()
+    try:
+        expanded.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        suggested = _suggested_output_root()
+        raise OutputRootError(
+            f"Cannot create session data folder {expanded}: {exc}. "
+            f"Update Settings → session data folder (or CK_OUTPUT_ROOT) to a path on this computer "
+            f"(for example: {suggested})."
+        ) from exc
+    return expanded
+
+
+def validate_output_root(path_str: str) -> None:
+    """Raise OutputRootError if the given path cannot be used as output_root."""
+    if not (path_str or "").strip():
+        raise OutputRootError("Session data folder path cannot be empty.")
+    _mkdir_output_root(Path(path_str))
 
 
 def get_output_root() -> Path:
@@ -35,9 +64,7 @@ def get_output_root() -> Path:
 
 def ensure_output_root() -> Path:
     """Ensure output root exists."""
-    output_root = get_output_root()
-    output_root.mkdir(parents=True, exist_ok=True)
-    return output_root
+    return _mkdir_output_root(get_output_root())
 
 
 def get_staging_root() -> Path:

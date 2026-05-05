@@ -8,15 +8,19 @@ import json
 from pathlib import Path
 from typing import Any
 
-import requests
-from google import genai
+import litellm
 
 from app.logging_config import get_logger
 from app.prompts import build_metadata_prompt, build_summary_prompt
+from app.services.llm_providers import REGISTRY_BY_ID, REGISTRY_IDS, get_provider_key
 from app.services.sessions import get_session_path, load_session, save_session
 from app.storage.artifacts import insert_artifact
 from app.storage.campaigns import get_campaign
-from app.storage.config import get_summarization_config
+from app.storage.config import SummarizationConfig, get_summarization_config
+
+litellm.suppress_debug_info = True
+if hasattr(litellm, "turn_off_message_logging"):
+    litellm.turn_off_message_logging = True
 
 log = get_logger("summarization")
 
@@ -52,31 +56,90 @@ def _log_response(provider: str, text: str) -> None:
     log.debug("[%s] response (%d chars):\n%s", provider, len(text), _truncate(text))
 
 
-def _call_ollama(prompt: str, *, model: str, base_url: str, timeout: int) -> str:
-    url = f"{base_url.rstrip('/')}/api/generate"
-    log.info("Ollama request  model=%s url=%s", model, url)
-    _log_prompt("ollama", prompt)
-    response = requests.post(
-        url,
-        json={"model": model, "prompt": prompt, "stream": False},
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    result = (response.json().get("response") or "").strip()
-    _log_response("ollama", result)
-    return result
+def _coerce_litellm_model_id(raw: str) -> str:
+    """Add provider prefix for bare Google model ids; pass through routes that already include a slash."""
+    m = raw.strip()
+    if not m:
+        return "gemini/gemini-2.5-flash"
+    if "/" in m:
+        return m
+    if m.startswith("gemini") or m.startswith("models/"):
+        return f"gemini/{m.removeprefix('models/')}"
+    return m
 
 
-def _call_gemini(prompt: str, *, api_key: str, model: str) -> str:
-    if not api_key:
-        raise SummarizationError("Gemini API key is required.")
-    log.info("Gemini request  model=%s", model)
-    _log_prompt("gemini", prompt)
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(model=model, contents=prompt)
-    result = (response.text or "").strip()
-    _log_response("gemini", result)
-    return result
+def _resolve_litellm(
+    config: SummarizationConfig,
+    *,
+    model_override: str | None,
+    base_url_override: str | None,
+) -> tuple[str, str, str | None, int]:
+    """Return (litellm_model, api_key, api_base_or_none, timeout_seconds)."""
+    timeout = config.litellm_timeout_seconds
+    base = (base_url_override or config.litellm_api_base or "").strip() or None
+    raw = (model_override or config.litellm_model or "").strip()
+    litellm_model = _coerce_litellm_model_id(raw)
+    api_key = (config.litellm_api_key or "").strip()
+    return litellm_model, api_key, base, timeout
+
+
+def _extract_completion_text(response: Any) -> str:
+    if not response or not getattr(response, "choices", None):
+        return ""
+    msg = response.choices[0].message
+    content = getattr(msg, "content", None)
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                t = block.get("text")
+                if t:
+                    parts.append(str(t))
+            else:
+                t = getattr(block, "text", None)
+                if t:
+                    parts.append(str(t))
+        return "".join(parts).strip()
+    return (str(content) if content else "").strip()
+
+
+def _litellm_error_message(exc: Exception) -> str:
+    msg = str(exc).strip()
+    if msg:
+        return f"Cloud LLM request failed: {msg}"
+    return "Cloud LLM request failed."
+
+
+def _call_litellm(
+    prompt: str,
+    *,
+    model: str,
+    api_key: str,
+    api_base: str | None,
+    timeout: int,
+    log_label: str,
+) -> str:
+    log.info("%s request  model=%s api_base=%s", log_label, model, api_base or "(default)")
+    _log_prompt(log_label, prompt)
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "timeout": float(timeout),
+    }
+    if api_key:
+        kwargs["api_key"] = api_key
+    if api_base:
+        kwargs["api_base"] = api_base
+    try:
+        response = litellm.completion(**kwargs)
+    except Exception as exc:
+        log.exception("LiteLLM request failed")
+        raise SummarizationError(_litellm_error_message(exc)) from exc
+    text = _extract_completion_text(response)
+    _log_response(log_label, text)
+    return text
 
 
 def _parse_metadata(raw_text: str) -> dict[str, Any] | None:
@@ -132,37 +195,67 @@ def summarize_session(
         context=context,
         language=language,
         system_prompt=system_prompt,
-        session_context=session_context if any(
-            v for k, v in session_context.items() if k != "speakers" and v
-        ) or session_context.get("speakers") else None,
+        session_context=session_context
+        if any(v for k, v in session_context.items() if k != "speakers" and v) or session_context.get("speakers")
+        else None,
     )
 
     provider = (provider or config.summary_provider).lower()
-    if provider == "ollama":
-        model_name = model or config.ollama_model
-        base_url = base_url or config.ollama_base_url
-        summary_text = _call_ollama(
+    if provider in REGISTRY_IDS:
+        reg = REGISTRY_BY_ID[provider]
+        saved = get_provider_key(provider) or {}
+        api_key = saved.get("api_key", "")
+        if not api_key and reg["needs_key"]:
+            raise SummarizationError(
+                f"No API key saved for {reg['name']}. Add it in Settings → LLM providers."
+            )
+        resolved_base = base_url or saved.get("api_base") or reg.get("default_api_base")
+        model_id = model or saved.get("default_model") or reg["default_model"]
+        litellm_model = f"{reg['litellm_prefix']}/{model_id}"
+        summary_text = _call_litellm(
             summary_prompt,
-            model=model_name,
-            base_url=base_url,
-            timeout=config.ollama_timeout_seconds,
+            model=litellm_model,
+            api_key=api_key,
+            api_base=resolved_base,
+            timeout=config.litellm_timeout_seconds,
+            log_label=provider,
         )
-        metadata_text = _call_ollama(
+        metadata_text = _call_litellm(
             build_metadata_prompt(summary_text, language=language),
-            model=model_name,
-            base_url=base_url,
-            timeout=config.ollama_timeout_seconds,
+            model=litellm_model,
+            api_key=api_key,
+            api_base=resolved_base,
+            timeout=config.litellm_timeout_seconds,
+            log_label=provider,
         )
-    elif provider == "gemini":
-        model_name = model or config.gemini_model
-        summary_text = _call_gemini(summary_prompt, api_key=config.gemini_api_key, model=model_name)
-        metadata_text = _call_gemini(
+        model_name = litellm_model
+    elif provider == "litellm":
+        lm_model, api_key, api_base, lm_timeout = _resolve_litellm(
+            config, model_override=model, base_url_override=base_url
+        )
+        if not api_key:
+            raise SummarizationError(
+                "API key is required for custom LiteLLM. Set it in Settings → LLM providers."
+            )
+        summary_text = _call_litellm(
+            summary_prompt,
+            model=lm_model,
+            api_key=api_key,
+            api_base=api_base,
+            timeout=lm_timeout,
+            log_label="litellm",
+        )
+        metadata_text = _call_litellm(
             build_metadata_prompt(summary_text, language=language),
-            api_key=config.gemini_api_key,
-            model=model_name,
+            model=lm_model,
+            api_key=api_key,
+            api_base=api_base,
+            timeout=lm_timeout,
+            log_label="litellm",
         )
+        model_name = lm_model
     else:
-        raise SummarizationError(f"Unknown provider: {provider}")
+        raise SummarizationError(f"Unknown provider: {provider!r}")
 
     metadata = _parse_metadata(metadata_text)
 

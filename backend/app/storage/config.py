@@ -12,15 +12,17 @@ from app.storage.db import get_connection
 
 CONFIG_TYPES: dict[str, Callable[[str], Any]] = {
     "output_root": str,
+    "transcription_provider": str,
     "summary_provider": str,
     "ollama_base_url": str,
     "ollama_model": str,
     "ollama_timeout_seconds": int,
-    "gemini_api_key": str,
-    "gemini_model": str,
+    "litellm_model": str,
+    "litellm_api_key": str,
+    "litellm_api_base": str,
+    "litellm_timeout_seconds": int,
     "default_language": str,
     "whisperx_model": str,
-    "hf_token": str,
     "current_campaign_id": str,
 }
 
@@ -29,15 +31,17 @@ DEFAULT_CONFIG: dict[str, str] = {
         "CK_OUTPUT_ROOT",
         str(Path.home() / "Documents" / "chronicle-keeper"),
     ),
+    "transcription_provider": os.getenv("CK_TRANSCRIPTION_PROVIDER", "auto"),
     "summary_provider": os.getenv("CK_SUMMARY_PROVIDER", "ollama"),
     "ollama_base_url": os.getenv("CK_OLLAMA_BASE_URL", "http://localhost:11434"),
     "ollama_model": os.getenv("CK_OLLAMA_MODEL", "llama3.2:latest"),
     "ollama_timeout_seconds": os.getenv("CK_OLLAMA_TIMEOUT", "120"),
-    "gemini_api_key": os.getenv("CK_GEMINI_API_KEY", ""),
-    "gemini_model": os.getenv("CK_GEMINI_MODEL", "gemini-2.5-flash"),
+    "litellm_model": os.getenv("CK_LITELLM_MODEL", "gemini/gemini-2.5-flash"),
+    "litellm_api_key": os.getenv("CK_LITELLM_API_KEY", ""),
+    "litellm_api_base": os.getenv("CK_LITELLM_API_BASE", ""),
+    "litellm_timeout_seconds": os.getenv("CK_LITELLM_TIMEOUT", "120"),
     "default_language": os.getenv("CK_DEFAULT_LANGUAGE", "en"),
-    "whisperx_model": os.getenv("CK_WHISPERX_MODEL", "large-v2"),
-    "hf_token": os.getenv("CK_HF_TOKEN", ""),
+    "whisperx_model": os.getenv("CK_WHISPERX_MODEL", "nemo-parakeet-tdt-0.6b-v3"),
     "current_campaign_id": "",
 }
 
@@ -50,8 +54,10 @@ class SummarizationConfig:
     ollama_base_url: str
     ollama_model: str
     ollama_timeout_seconds: int
-    gemini_api_key: str
-    gemini_model: str
+    litellm_model: str
+    litellm_api_key: str
+    litellm_api_base: str
+    litellm_timeout_seconds: int
     default_language: str
 
 
@@ -60,7 +66,8 @@ class TranscriptionConfig:
     """Runtime configuration for transcription providers."""
 
     whisperx_model: str
-    hf_token: str
+    transcription_provider: str
+    default_language: str
 
 
 def _ensure_defaults(connection: sqlite3.Connection) -> None:
@@ -101,6 +108,9 @@ def get_config() -> dict[str, Any]:
         if key not in config:
             config[key] = CONFIG_TYPES[key](default)
 
+    if str(config.get("summary_provider", "")).lower() == "gemini":
+        config["summary_provider"] = "litellm"
+
     return config
 
 
@@ -112,8 +122,10 @@ def get_summarization_config() -> SummarizationConfig:
         ollama_base_url=config["ollama_base_url"],
         ollama_model=config["ollama_model"],
         ollama_timeout_seconds=config["ollama_timeout_seconds"],
-        gemini_api_key=config["gemini_api_key"],
-        gemini_model=config["gemini_model"],
+        litellm_model=config["litellm_model"],
+        litellm_api_key=config["litellm_api_key"],
+        litellm_api_base=config["litellm_api_base"],
+        litellm_timeout_seconds=config["litellm_timeout_seconds"],
         default_language=config["default_language"],
     )
 
@@ -123,7 +135,8 @@ def get_transcription_config() -> TranscriptionConfig:
     config = get_config()
     return TranscriptionConfig(
         whisperx_model=config["whisperx_model"],
-        hf_token=config["hf_token"],
+        transcription_provider=config.get("transcription_provider", "auto"),
+        default_language=config["default_language"],
     )
 
 

@@ -61,6 +61,15 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_artifacts_session
     ON artifacts(session_id, kind)
     """,
+    """
+    CREATE TABLE IF NOT EXISTS provider_keys (
+        provider_id  TEXT PRIMARY KEY,
+        api_key      TEXT NOT NULL DEFAULT '',
+        api_base     TEXT NOT NULL DEFAULT '',
+        default_model TEXT NOT NULL DEFAULT '',
+        updated_at   TEXT NOT NULL DEFAULT ''
+    )
+    """,
 ]
 
 
@@ -85,3 +94,12 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
     for statement in SCHEMA_STATEMENTS:
         connection.execute(statement)
     connection.commit()
+
+    # Migration: add default_model column if not present
+    try:
+        connection.execute(
+            "ALTER TABLE provider_keys ADD COLUMN default_model TEXT NOT NULL DEFAULT ''"
+        )
+        connection.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists

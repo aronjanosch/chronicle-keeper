@@ -62,8 +62,10 @@ class TranscribeRequest(BaseModel):
 
     session_id: str
     language: str | None = Field(default=None, description="Language code override")
-    model: str | None = Field(default=None, description="Whisper model override")
-    hf_token: str | None = Field(default=None, description="HuggingFace token override")
+    model: str | None = Field(
+        default=None,
+        description="Speech-to-text model id for the selected provider (overrides saved default)",
+    )
     provider: str | None = Field(
         default=None,
         description="Transcription provider (mlx-audio or onnx-asr)",
@@ -179,11 +181,13 @@ class UpdateConfigRequest(BaseModel):
     ollama_base_url: str | None = None
     ollama_model: str | None = None
     ollama_timeout_seconds: int | None = None
-    gemini_api_key: str | None = None
-    gemini_model: str | None = None
+    litellm_model: str | None = None
+    litellm_api_key: str | None = None
+    litellm_api_base: str | None = None
+    litellm_timeout_seconds: int | None = None
     default_language: str | None = None
     whisperx_model: str | None = None
-    hf_token: str | None = None
+    transcription_provider: str | None = None
 
 
 class ConfigResponse(BaseModel):
@@ -194,11 +198,14 @@ class ConfigResponse(BaseModel):
     ollama_base_url: str
     ollama_model: str
     ollama_timeout_seconds: int
-    gemini_model: str
+    litellm_model: str
+    litellm_api_base: str
+    litellm_timeout_seconds: int
     default_language: str
     whisperx_model: str
-    has_gemini_key: bool
-    has_hf_token: bool
+    transcription_provider: str
+    transcription_provider_effective: str
+    has_litellm_key: bool
 
 
 class CampaignInfo(BaseModel):
@@ -275,3 +282,39 @@ class NextSessionNumberResponse(BaseModel):
     """Response for next session number lookup."""
 
     next_session_number: int
+
+
+class ProviderInfo(BaseModel):
+    """Registry provider with saved-key status."""
+
+    id: str
+    name: str
+    models: list[str]
+    default_model: str
+    needs_key: bool
+    default_api_base: str | None = None
+    has_key: bool
+    has_custom_base: bool
+    saved_model: str | None = None
+
+
+class ProviderKeyUpdate(BaseModel):
+    """Request to save an API key for a provider."""
+
+    api_key: str | None = None
+    api_base: str | None = None
+    default_model: str | None = None
+
+
+class ProviderTestRequest(BaseModel):
+    """Request to test a provider connection."""
+
+    model: str | None = None
+
+
+class ProviderTestResult(BaseModel):
+    """Result of a provider connection test."""
+
+    ok: bool
+    latency_ms: int
+    error: str | None = None

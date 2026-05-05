@@ -122,7 +122,7 @@ class MLXAudioProvider(TranscriptionProvider):
 
     def __init__(
         self,
-        model_name: str = "mlx-community/whisper-large-v3-turbo-asr-fp16",
+        model_name: str = "mlx-community/parakeet-tdt-0.6b-v3",
         **kwargs,
     ):
         self._model_name = model_name

@@ -13,8 +13,8 @@ dependencies = [
     "uvicorn>=0.37.0",
     "numpy==2.0.2",
     "ollama>=0.6.1",
-    "google-genai>=1.55.0",
     "mlx-audio[stt]>=0.3.1; sys_platform == 'darwin'",
     "onnx-asr[gpu,hub]; sys_platform == 'linux'",
     "onnx-asr[cpu,hub]; sys_platform == 'darwin' or sys_platform == 'win32'",
+    "litellm>=1.63.0",
 ]

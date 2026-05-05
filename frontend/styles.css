@@ -510,10 +510,53 @@ pre {
   display: none;
 }
 
+.settings-panel .settings-intro {
+  margin-bottom: 22px;
+}
+
+.settings-panel .settings-intro h2 {
+  margin-bottom: 8px;
+}
+
+.settings-section {
+  margin-bottom: 24px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-section:last-of-type {
+  border-bottom: none;
+  margin-bottom: 20px;
+}
+
+.settings-section-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+}
+
 .settings-grid {
   display: grid;
   gap: 16px;
-  margin-bottom: 16px;
+  margin-bottom: 0;
+}
+
+.settings-subgrid {
+  display: grid;
+  gap: 16px;
+  grid-column: 1 / -1;
+}
+
+.inline-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88em;
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+  background: var(--bg-card-strong);
+  color: var(--text-primary);
 }
 
 .wizard-screen {
@@ -802,4 +845,168 @@ textarea#export-preview {
     width: 100%;
     padding: 18px;
   }
+}
+
+.provider-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+.provider-card {
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  padding: 1rem;
+  background: var(--bg-card, #1a1f2b);
+}
+
+.provider-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.provider-card-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.provider-badge {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.provider-badge.has-key {
+  background: #064e3b;
+  color: #6ee7b7;
+}
+
+.provider-badge.no-key {
+  background: var(--bg-card-strong, #222837);
+  color: var(--text-secondary, #b3bccb);
+}
+
+.provider-card-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.provider-card-fields input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.provider-card-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  align-items: center;
+}
+
+.provider-card-status {
+  font-size: 0.8rem;
+  flex: 1;
+}
+
+.provider-card-status.ok { color: var(--success, #49d6a8); }
+.provider-card-status.err { color: #f87171; }
+
+/* Providers modal */
+.providers-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+}
+
+.providers-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s;
+}
+
+.providers-list-item:hover {
+  background: var(--bg-card-strong, #222837);
+  border-color: var(--border, rgba(255,255,255,0.08));
+}
+
+.providers-list-item-name {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.providers-list-item-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.providers-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.providers-detail-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 1rem;
+}
+
+.providers-detail-fields .field {
+  margin: 0;
+}
+
+.session-op-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.session-op-status::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.session-op-status.done::before {
+  border: 2px solid var(--success);
+  animation: none;
+}
+
+.session-op-status.err::before {
+  border: 2px solid #f87171;
+  animation: none;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }

@@ -31,6 +31,10 @@ from app.models import (
     LabelSpeakersRequest,
     LabelSpeakersResponse,
     NextSessionNumberResponse,
+    ProviderInfo,
+    ProviderKeyUpdate,
+    ProviderTestRequest,
+    ProviderTestResult,
     SessionInfo,
     SessionMetadataRequest,
     SummarizeRequest,
@@ -39,6 +43,13 @@ from app.models import (
     TranscribeResponse,
     UpdateConfigRequest,
     UploadResponse,
+)
+from app.services.llm_providers import (
+    PROVIDER_REGISTRY,
+    PROVIDER_REGISTRY_BY_ID,
+    get_provider_key,
+    list_provider_keys,
+    upsert_provider_key,
 )
 from app.services.campaigns import (
     create_campaign,
@@ -50,6 +61,7 @@ from app.services.campaigns import (
 from app.services.context_window import ContextWindowAnalyzer
 from app.services.export import export_session
 from app.services.sessions import (
+    OutputRootError,
     create_campaign_session,
     delete_session,
     delete_summary,
@@ -61,11 +73,12 @@ from app.services.sessions import (
     read_artifact_content,
     save_session,
     set_campaign_metadata,
+    validate_output_root,
 )
 from app.storage.artifacts import list_artifacts
 from app.services.summarization import SummarizationError, summarize_session
 from app.services.transcribe import transcribe_session
-from app.services.transcription import get_available_providers
+from app.services.transcription import get_available_providers, resolve_transcription_provider
 from app.services.upload import extract_craig_zip
 from app.storage.campaigns import increment_session_number
 from app.storage.config import get_config, update_config
@@ -88,6 +101,9 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def _unhandled_error(_request: fastapi.Request, exc: Exception):
     """Log full traceback for any unhandled exception, then return 500."""
+    if isinstance(exc, OutputRootError):
+        log.warning("Invalid output_root: %s", exc)
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
     log.exception("Unhandled error: %s", exc)
     return JSONResponse(status_code=500, content={"detail": str(exc)})
 
@@ -163,7 +179,6 @@ def transcribe(request: TranscribeRequest):
             session_id=request.session_id,
             language=request.language,
             model=request.model,
-            hf_token=request.hf_token,
             provider=request.provider,
         )
         return TranscribeResponse(**result)
@@ -244,34 +259,64 @@ def export_notes(request: ExportRequest):
 @app.get("/config", response_model=ConfigResponse)
 def read_config():
     config = get_config()
+    tpref = config.get("transcription_provider", "auto")
     return ConfigResponse(
         output_root=config["output_root"],
         summary_provider=config["summary_provider"],
         ollama_base_url=config["ollama_base_url"],
         ollama_model=config["ollama_model"],
         ollama_timeout_seconds=config["ollama_timeout_seconds"],
-        gemini_model=config["gemini_model"],
+        litellm_model=config["litellm_model"],
+        litellm_api_base=config["litellm_api_base"],
+        litellm_timeout_seconds=config["litellm_timeout_seconds"],
         default_language=config["default_language"],
         whisperx_model=config["whisperx_model"],
-        has_gemini_key=bool(config.get("gemini_api_key")),
-        has_hf_token=bool(config.get("hf_token")),
+        transcription_provider=tpref,
+        transcription_provider_effective=resolve_transcription_provider(tpref),
+        has_litellm_key=bool(config.get("litellm_api_key")),
     )
 
 
 @app.put("/config", response_model=ConfigResponse)
 def write_config(request: UpdateConfigRequest):
-    updated = update_config(request.model_dump(exclude_none=True))
+    payload = request.model_dump(exclude_none=True)
+    if "output_root" in payload:
+        validate_output_root(str(payload["output_root"]))
+    if "transcription_provider" in payload:
+        allowed = {"auto", "mlx-audio", "onnx-asr"}
+        tp = str(payload["transcription_provider"]).strip().lower()
+        if tp not in allowed:
+            raise fastapi.HTTPException(
+                status_code=400,
+                detail=f"transcription_provider must be one of: {', '.join(sorted(allowed))}",
+            )
+        payload["transcription_provider"] = tp
+    if "summary_provider" in payload:
+        from app.services.llm_providers import REGISTRY_IDS
+        sp = str(payload["summary_provider"]).strip().lower()
+        allowed = {"ollama", "litellm"} | REGISTRY_IDS
+        if sp not in allowed:
+            raise fastapi.HTTPException(
+                status_code=400,
+                detail=f"summary_provider must be one of: {', '.join(sorted(allowed))}",
+            )
+        payload["summary_provider"] = sp
+    updated = update_config(payload)
+    tpref = updated.get("transcription_provider", "auto")
     return ConfigResponse(
         output_root=updated["output_root"],
         summary_provider=updated["summary_provider"],
         ollama_base_url=updated["ollama_base_url"],
         ollama_model=updated["ollama_model"],
         ollama_timeout_seconds=updated["ollama_timeout_seconds"],
-        gemini_model=updated["gemini_model"],
+        litellm_model=updated["litellm_model"],
+        litellm_api_base=updated["litellm_api_base"],
+        litellm_timeout_seconds=updated["litellm_timeout_seconds"],
         default_language=updated["default_language"],
         whisperx_model=updated["whisperx_model"],
-        has_gemini_key=bool(updated.get("gemini_api_key")),
-        has_hf_token=bool(updated.get("hf_token")),
+        transcription_provider=tpref,
+        transcription_provider_effective=resolve_transcription_provider(tpref),
+        has_litellm_key=bool(updated.get("litellm_api_key")),
     )
 
 
@@ -358,6 +403,85 @@ def remove_session(session_id: str):
 @app.get("/providers")
 def read_providers():
     return get_available_providers()
+
+
+@app.get("/llm-providers", response_model=list[ProviderInfo])
+def read_llm_providers():
+    """Return registry of cloud LLM providers with saved-key status."""
+    saved = list_provider_keys()
+    return [
+        ProviderInfo(
+            id=p["id"],
+            name=p["name"],
+            models=p["models"],
+            default_model=p["default_model"],
+            needs_key=p["needs_key"],
+            default_api_base=p.get("default_api_base"),
+            has_key=bool(saved.get(p["id"], {}).get("api_key")),
+            has_custom_base=bool(saved.get(p["id"], {}).get("api_base")),
+            saved_model=saved.get(p["id"], {}).get("default_model") or None,
+        )
+        for p in PROVIDER_REGISTRY
+    ]
+
+
+@app.put("/llm-providers/{provider_id}", response_model=ProviderInfo)
+def write_provider_key(provider_id: str, request: ProviderKeyUpdate):
+    """Save or update the API key and optional base URL for a provider."""
+    provider = PROVIDER_REGISTRY_BY_ID.get(provider_id)
+    if provider is None:
+        raise fastapi.HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+    upsert_provider_key(
+        provider_id,
+        api_key=request.api_key or "",
+        api_base=request.api_base or "",
+        default_model=request.default_model or "",
+    )
+    saved = get_provider_key(provider_id) or {}
+    return ProviderInfo(
+        id=provider["id"],
+        name=provider["name"],
+        models=provider["models"],
+        default_model=provider["default_model"],
+        needs_key=provider["needs_key"],
+        default_api_base=provider.get("default_api_base"),
+        has_key=bool(saved.get("api_key")),
+        has_custom_base=bool(saved.get("api_base")),
+        saved_model=saved.get("default_model") or None,
+    )
+
+
+@app.post("/llm-providers/{provider_id}/test", response_model=ProviderTestResult)
+def test_llm_provider(provider_id: str, request: ProviderTestRequest):
+    """Test connectivity for a configured provider using a 1-token completion."""
+    import time
+    provider = PROVIDER_REGISTRY_BY_ID.get(provider_id)
+    if provider is None:
+        raise fastapi.HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+    saved = get_provider_key(provider_id) or {}
+    api_key = saved.get("api_key", "")
+    api_base = saved.get("api_base") or provider.get("default_api_base")
+    model_id = request.model or provider["default_model"]
+    litellm_model = f"{provider['litellm_prefix']}/{model_id}"
+    start = time.monotonic()
+    try:
+        import litellm as _litellm
+        kwargs: dict = {
+            "model": litellm_model,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 1,
+            "timeout": 15.0,
+        }
+        if api_key:
+            kwargs["api_key"] = api_key
+        if api_base:
+            kwargs["api_base"] = api_base
+        _litellm.completion(**kwargs)
+        latency_ms = int((time.monotonic() - start) * 1000)
+        return ProviderTestResult(ok=True, latency_ms=latency_ms)
+    except Exception as exc:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        return ProviderTestResult(ok=False, latency_ms=latency_ms, error=str(exc))
 
 
 @app.get("/campaigns", response_model=CampaignsResponse)

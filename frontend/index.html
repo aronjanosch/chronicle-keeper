@@ -138,6 +138,7 @@
               </button>
             </div>
           </div>
+          <div id="session-op-status" class="session-op-status hidden"></div>
 
           <div class="grid two">
             <div class="card">
@@ -234,59 +235,91 @@
         </section>
 
         <section id="settings-screen" class="screen main-screen">
-          <div class="panel">
-            <h2>Settings</h2>
-            <div class="settings-grid">
-              <div class="field">
-                <label for="setting-api-base">API Base</label>
-                <input id="setting-api-base" type="text" />
-                <p class="field-hint">Backend URL used by this app.</p>
-              </div>
-              <div class="field">
-                <label for="setting-output-root">Output folder</label>
-                <input id="setting-output-root" type="text" />
-                <p class="field-hint">Where session files are stored on disk.</p>
-              </div>
-              <div class="field">
-                <label for="setting-default-language">Default language</label>
-                <input id="setting-default-language" type="text" />
-              </div>
-              <div class="field">
-                <label for="setting-whisperx-model">WhisperX model</label>
-                <input id="setting-whisperx-model" type="text" />
-                <p class="field-hint">Default transcription model.</p>
-              </div>
-              <div class="field">
-                <label for="setting-hf-token">HF token</label>
-                <input id="setting-hf-token" type="password" />
-                <p class="field-hint">Optional for diarization.</p>
-              </div>
-              <div class="field">
-                <label for="setting-summary-provider">Summary provider</label>
-                <input id="setting-summary-provider" type="text" />
-              </div>
-              <div class="field">
-                <label for="setting-ollama-base-url">Ollama base URL</label>
-                <input id="setting-ollama-base-url" type="text" />
-              </div>
-              <div class="field">
-                <label for="setting-ollama-model">Ollama model</label>
-                <input id="setting-ollama-model" type="text" />
-              </div>
-              <div class="field">
-                <label for="setting-ollama-timeout">Ollama timeout (s)</label>
-                <input id="setting-ollama-timeout" type="number" />
-              </div>
-              <div class="field">
-                <label for="setting-gemini-model">Gemini model</label>
-                <input id="setting-gemini-model" type="text" />
-              </div>
-              <div class="field">
-                <label for="setting-gemini-api-key">Gemini API key</label>
-                <input id="setting-gemini-api-key" type="password" />
+          <div class="panel settings-panel">
+            <div class="settings-intro">
+              <h2>Settings</h2>
+              <p class="muted">
+                Backend URL and data folder are required once. Everything else pre-fills the Transcribe and Summarize
+                dialogs; change a field there only when you want a one-off override.
+              </p>
+            </div>
+
+            <div class="settings-section">
+              <h3 class="settings-section-title">App &amp; storage</h3>
+              <div class="settings-grid">
+                <div class="field">
+                  <label for="setting-api-base">Backend URL</label>
+                  <input id="setting-api-base" type="text" placeholder="http://127.0.0.1:8000" />
+                  <p class="field-hint">Where the Chronicle Keeper API is running. Stored in this browser only.</p>
+                </div>
+                <div class="field">
+                  <label for="setting-output-root">Session data folder</label>
+                  <input id="setting-output-root" type="text" />
+                  <p class="field-hint">
+                    Root directory for campaigns, sessions, transcripts, and exports. Use an absolute path the backend
+                    can read and write.
+                  </p>
+                </div>
               </div>
             </div>
-            <button id="save-settings" type="button" class="btn primary">Save Settings</button>
+
+            <div class="settings-section">
+              <h3 class="settings-section-title">Transcription defaults</h3>
+              <div class="settings-grid">
+                <div class="field">
+                  <label for="setting-transcription-provider">Transcription engine</label>
+                  <select id="setting-transcription-provider">
+                    <option value="auto">Auto (recommended for this computer)</option>
+                    <option value="onnx-asr">ONNX ASR (Linux / Windows / NVIDIA GPU)</option>
+                    <option value="mlx-audio">MLX Audio (Apple Silicon only)</option>
+                  </select>
+                  <p class="field-hint">
+                    Auto picks ONNX on most PCs and MLX on Apple&nbsp;Silicon Macs. Choose explicitly if you run the API
+                    elsewhere or want to compare engines.
+                  </p>
+                </div>
+                <div class="field">
+                  <label for="setting-default-language">Default language</label>
+                  <input id="setting-default-language" type="text" placeholder="en" />
+                  <p class="field-hint">
+                    Pre-fills Transcribe and is the language passed to the summarizer (BCP-47, e.g.
+                    <code class="inline-code">en</code>, <code class="inline-code">de</code>).
+                  </p>
+                </div>
+                <div class="field">
+                  <label for="setting-whisperx-model">Default speech-to-text model</label>
+                  <input
+                    id="setting-whisperx-model"
+                    type="text"
+                    placeholder="nemo-parakeet-tdt-0.6b-v3"
+                    spellcheck="false"
+                  />
+                  <p class="field-hint">
+                    Used when you transcribe without choosing a model in the session dialog. Must match an ID for your
+                    platform’s provider (Linux/Windows: ONNX, e.g.
+                    <code class="inline-code">nemo-parakeet-tdt-0.6b-v3</code>; Apple Silicon MLX:
+                    <code class="inline-code">mlx-community/parakeet-tdt-0.6b-v3</code>). If it does not match, the
+                    API falls back to that provider’s built-in default (Parakeet v3).
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3 class="settings-section-title">LLM providers</h3>
+              <div class="settings-grid">
+                <div class="field">
+                  <label for="setting-summary-provider">Default provider</label>
+                  <select id="setting-summary-provider">
+                    <option value="ollama">Ollama (local)</option>
+                  </select>
+                  <p class="field-hint">Pre-fills the Summarize dialog. Configure API keys and default models with the button below.</p>
+                </div>
+              </div>
+              <button id="open-providers-modal" type="button" class="btn ghost">Configure providers →</button>
+            </div>
+
+            <button id="save-settings" type="button" class="btn primary">Save settings</button>
             <div id="settings-result" class="status"></div>
           </div>
         </section>
@@ -542,8 +575,11 @@
                   <label for="modal-transcribe-model">Model</label>
                   <select id="modal-transcribe-model"></select>
                 </div>
-                <input id="modal-transcribe-language" type="text" placeholder="Language (en/de)" />
-                <input id="modal-transcribe-hf" type="password" placeholder="HF token (optional)" />
+                <div class="field">
+                  <label for="modal-transcribe-language">Language</label>
+                  <input id="modal-transcribe-language" type="text" placeholder="en, de, …" spellcheck="false" />
+                  <p class="field-hint">Defaults from Settings if left empty for this run.</p>
+                </div>
               </div>
               <div id="modal-transcribe-status" class="status"></div>
             </div>
@@ -568,23 +604,38 @@
               <button id="close-summarize-modal" type="button" class="btn ghost">Close</button>
             </div>
             <div class="modal-body">
-              <div class="grid two">
-                <select id="modal-transcript-select"></select>
-                <select id="modal-summary-provider">
-                  <option value="ollama">Ollama</option>
-                  <option value="gemini">Gemini</option>
-                </select>
-                <input id="modal-summary-model" type="text" placeholder="Model (optional)" />
-                <input id="modal-summary-base-url" type="text" placeholder="Ollama base URL (optional)" />
-                <input id="modal-summary-title" type="text" placeholder="Summary title (optional)" />
-                <input id="modal-summary-context" type="text" placeholder="Context (optional)" />
+              <div class="settings-grid">
+                <div class="field">
+                  <label for="modal-transcript-select">Transcript</label>
+                  <select id="modal-transcript-select"></select>
+                </div>
+                <div class="field">
+                  <label for="modal-summary-provider">Provider</label>
+                  <select id="modal-summary-provider">
+                    <option value="ollama">Ollama (local)</option>
+                  </select>
+                  <p class="field-hint">Change here for a single run only. Configure providers in Settings.</p>
+                </div>
+                <div class="field">
+                  <label for="modal-summary-model">Model</label>
+                  <input id="modal-summary-model" type="text" list="modal-summary-model-datalist" spellcheck="false" autocomplete="off" placeholder="Model name" />
+                  <datalist id="modal-summary-model-datalist"></datalist>
+                </div>
+                <div class="field">
+                  <label for="modal-summary-title">Title hint (optional)</label>
+                  <input id="modal-summary-title" type="text" placeholder="Override session title for this summary" />
+                </div>
+                <div class="field">
+                  <label for="modal-summary-context">Extra context (optional)</label>
+                  <input id="modal-summary-context" type="text" placeholder="Notes for the LLM (not saved as default)" />
+                </div>
               </div>
               <div class="field">
                 <label for="modal-prompt-preset">System prompt</label>
                 <select id="modal-prompt-preset">
                   <option value="">Loading presets…</option>
                 </select>
-                <textarea id="modal-system-prompt" rows="6" placeholder="System prompt sent to the LLM…"></textarea>
+                <textarea id="modal-system-prompt" rows="6" placeholder="Preset or custom instructions for this run…"></textarea>
               </div>
               <div id="modal-summary-status" class="status"></div>
               <div class="modal-preview">
@@ -599,6 +650,32 @@
             </div>
             <div class="modal-footer">
               <button id="run-summarize" type="button" class="btn primary">Run</button>
+            </div>
+          </div>
+
+          <!-- Providers modal -->
+          <div id="providers-modal" class="modal hidden" role="dialog" aria-modal="true">
+            <div class="modal-header">
+              <h3 id="providers-modal-title">LLM Providers</h3>
+              <button id="close-providers-modal" type="button" class="btn ghost btn-sm">✕</button>
+            </div>
+            <!-- List view -->
+            <div id="providers-list-view" class="modal-body">
+              <ul id="providers-list" class="providers-list"></ul>
+            </div>
+            <!-- Detail view -->
+            <div id="providers-detail-view" class="modal-body hidden">
+              <button id="providers-back" type="button" class="btn ghost btn-sm">← Back</button>
+              <div class="providers-detail-header">
+                <h4 id="providers-detail-name"></h4>
+                <span id="providers-detail-badge" class="provider-badge no-key">No key</span>
+              </div>
+              <div id="providers-detail-fields" class="providers-detail-fields"></div>
+              <div class="provider-card-actions">
+                <button id="providers-detail-save" type="button" class="btn secondary">Save</button>
+                <button id="providers-detail-test" type="button" class="btn ghost">Test</button>
+                <span id="providers-detail-status" class="provider-card-status"></span>
+              </div>
             </div>
           </div>
         </div>

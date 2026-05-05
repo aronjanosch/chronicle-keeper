@@ -1,5 +1,6 @@
 const state = {
   apiBase: "http://127.0.0.1:8000",
+  configFromApi: null,
   campaigns: [],
   campaignDetails: [],
   currentCampaign: null,
@@ -12,6 +13,7 @@ const state = {
   selectedTranscriptPath: null,
   providers: null,
   promptPresets: null,
+  llmProviders: null,
   campaignWizard: { step: 1, mode: "create" },
   sessionWizard: { step: 1, sessionId: null },
 };
@@ -43,6 +45,21 @@ function setStatus(el, message, isError = false) {
   const text = message || "";
   el.textContent = text;
   el.className = `status${isError ? " error" : ""}${text ? "" : " hidden"}`;
+}
+
+function setSessionOpStatus(message, state = "") {
+  const el = qs("session-op-status");
+  if (!el) return;
+  if (!message) {
+    el.classList.add("hidden");
+    el.textContent = "";
+    return;
+  }
+  el.textContent = message;
+  el.className = `session-op-status${state ? ` ${state}` : ""}`;
+  if (state === "done" || state === "err") {
+    setTimeout(() => setSessionOpStatus(null), 4000);
+  }
 }
 
 function apiUrl(path) {
@@ -850,17 +867,238 @@ function populatePromptPresetSelect() {
   };
 }
 
-async function loadConfig() {
+async function refreshConfigFromApi() {
   const config = await apiFetch("/config");
+  state.configFromApi = config;
+  return config;
+}
+
+function toggleSummarizeModalProviderFields() {
+  populateSummarizeModalModels();
+}
+
+function populateSummarizeModalModels() {
+  const providerSelect = qs("modal-summary-provider");
+  const modelInput = qs("modal-summary-model");
+  const datalist = qs("modal-summary-model-datalist");
+  if (!providerSelect || !modelInput) return;
+
+  const v = providerSelect.value;
+  const provider = (state.llmProviders || []).find((p) => p.id === v);
+
+  if (datalist) {
+    datalist.innerHTML = (provider?.models || []).map((m) => `<option value="${m}">`).join("");
+  }
+  if (provider) {
+    modelInput.value = provider.saved_model || provider.default_model;
+    modelInput.placeholder = provider.default_model;
+  } else {
+    modelInput.value = "";
+    modelInput.placeholder = "Model name";
+  }
+}
+
+function populateProviderSelect(selectId, providers) {
+  const sel = qs(selectId);
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = "";
+  providers.forEach((p) => {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    const label = p.needs_key ? (p.has_key ? `${p.name} ✓` : `${p.name} (no key)`) : p.name;
+    opt.textContent = label;
+    sel.appendChild(opt);
+  });
+  // restore selection if still valid
+  if ([...sel.options].some((o) => o.value === current)) sel.value = current;
+}
+
+async function openProvidersModal() {
+  if (!state.llmProviders) {
+    try { state.llmProviders = await apiFetch("/llm-providers"); } catch (_) {}
+  }
+  renderProvidersList();
+  showProvidersView("list");
+  openModal("providers-modal");
+}
+
+function renderProvidersList() {
+  const list = qs("providers-list");
+  if (!list) return;
+  list.innerHTML = "";
+  (state.llmProviders || []).forEach((p) => {
+    const li = document.createElement("li");
+    li.className = "providers-list-item";
+    li.dataset.id = p.id;
+    const modelLabel = p.saved_model || p.default_model;
+    const keyStatus = p.needs_key
+      ? (p.has_key ? '<span class="provider-badge has-key">Key saved</span>' : '<span class="provider-badge no-key">No key</span>')
+      : '<span class="provider-badge has-key">Local</span>';
+    li.innerHTML = `
+      <span class="providers-list-item-name">${p.name}</span>
+      <div class="providers-list-item-right">
+        <span class="muted">${modelLabel}</span>
+        ${keyStatus}
+        <span>›</span>
+      </div>
+    `;
+    li.addEventListener("click", () => showProviderDetail(p.id));
+    list.appendChild(li);
+  });
+}
+
+function showProvidersView(view) {
+  qs("providers-list-view").classList.toggle("hidden", view !== "list");
+  qs("providers-detail-view").classList.toggle("hidden", view !== "detail");
+  qs("providers-modal-title").textContent = view === "list" ? "LLM Providers" : "Configure provider";
+}
+
+function showProviderDetail(providerId) {
+  const p = (state.llmProviders || []).find((x) => x.id === providerId);
+  if (!p) return;
+  state._editingProvider = p;
+
+  qs("providers-detail-name").textContent = p.name;
+  const badge = qs("providers-detail-badge");
+  if (p.needs_key) {
+    badge.textContent = p.has_key ? "Key saved" : "No key";
+    badge.className = `provider-badge ${p.has_key ? "has-key" : "no-key"}`;
+  } else {
+    badge.textContent = "Local";
+    badge.className = "provider-badge has-key";
+  }
+  qs("providers-detail-status").textContent = "";
+
+  const fields = qs("providers-detail-fields");
+  const currentModel = p.saved_model || p.default_model;
+  const apiBasePlaceholder = p.default_api_base ? `Default: ${p.default_api_base}` : "Provider default";
+
+  let html = "";
+
+  const datalistId = `pdetail-models-${p.id}`;
+  const datalistOptions = p.models.map((m) => `<option value="${m}">`).join("");
+  const modelHint = p.id === "ollama"
+    ? '<p class="field-hint">Must match a model pulled in Ollama. Type any model name.</p>'
+    : '<p class="field-hint">Select a suggestion or type any model name.</p>';
+  html += `
+    <div class="field">
+      <label for="pdetail-model">Default model</label>
+      <input id="pdetail-model" type="text" list="${datalistId}" value="${currentModel}" spellcheck="false" autocomplete="off" />
+      <datalist id="${datalistId}">${datalistOptions}</datalist>
+      ${modelHint}
+    </div>
+  `;
+
+  // API base (always shown)
+  html += `
+    <div class="field">
+      <label for="pdetail-base">API base${p.default_api_base ? "" : " (optional)"}</label>
+      <input id="pdetail-base" type="text" value="" placeholder="${apiBasePlaceholder}" spellcheck="false" />
+    </div>
+  `;
+
+  // API key (only if provider needs one)
+  if (p.needs_key) {
+    html += `
+      <div class="field">
+        <label for="pdetail-key">API key${p.has_key ? " (saved — enter to replace)" : ""}</label>
+        <input id="pdetail-key" type="password" autocomplete="off" placeholder="${p.has_key ? "••••••••" : "Paste API key"}" />
+      </div>
+    `;
+  }
+
+  fields.innerHTML = html;
+  showProvidersView("detail");
+}
+
+async function saveCurrentProvider() {
+  const p = state._editingProvider;
+  if (!p) return;
+  const statusEl = qs("providers-detail-status");
+
+  const default_model = qs("pdetail-model")?.value.trim() || null;
+  const api_base = qs("pdetail-base")?.value.trim() || null;
+  const api_key = qs("pdetail-key")?.value.trim() || null;
+
+  try {
+    const result = await apiFetch(`/llm-providers/${p.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key, api_base, default_model }),
+    });
+    // Update state
+    state.llmProviders = (state.llmProviders || []).map((x) =>
+      x.id === p.id ? { ...x, has_key: result.has_key, has_custom_base: result.has_custom_base, saved_model: result.saved_model } : x
+    );
+    state._editingProvider = { ...p, has_key: result.has_key, has_custom_base: result.has_custom_base, saved_model: result.saved_model };
+    if (qs("pdetail-key")) qs("pdetail-key").value = "";
+    // Update badge
+    const badge = qs("providers-detail-badge");
+    if (p.needs_key) {
+      badge.textContent = result.has_key ? "Key saved" : "No key";
+      badge.className = `provider-badge ${result.has_key ? "has-key" : "no-key"}`;
+    }
+    if (statusEl) {
+      statusEl.textContent = "Saved";
+      statusEl.className = "provider-card-status ok";
+      setTimeout(() => { statusEl.textContent = ""; }, 2000);
+    }
+    // Refresh list view and selects
+    renderProvidersList();
+    populateProviderSelect("setting-summary-provider", state.llmProviders);
+    populateProviderSelect("modal-summary-provider", state.llmProviders);
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = err.message;
+      statusEl.className = "provider-card-status err";
+    }
+  }
+}
+
+async function testCurrentProvider() {
+  const p = state._editingProvider;
+  if (!p) return;
+  const statusEl = qs("providers-detail-status");
+  if (statusEl) { statusEl.textContent = "Testing…"; statusEl.className = "provider-card-status"; }
+  try {
+    const model = qs("pdetail-model")?.value.trim() || null;
+    const result = await apiFetch(`/llm-providers/${p.id}/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    });
+    if (statusEl) {
+      statusEl.textContent = result.ok ? `OK (${result.latency_ms}ms)` : (result.error || "Failed");
+      statusEl.className = `provider-card-status ${result.ok ? "ok" : "err"}`;
+    }
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = err.message;
+      statusEl.className = "provider-card-status err";
+    }
+  }
+}
+
+async function loadConfig() {
+  const config = await refreshConfigFromApi();
   qs("setting-api-base").value = state.apiBase;
   qs("setting-output-root").value = config.output_root || "";
-  qs("setting-summary-provider").value = config.summary_provider || "";
-  qs("setting-ollama-base-url").value = config.ollama_base_url || "";
-  qs("setting-ollama-model").value = config.ollama_model || "";
-  qs("setting-ollama-timeout").value = config.ollama_timeout_seconds || "";
-  qs("setting-gemini-model").value = config.gemini_model || "";
+  qs("setting-transcription-provider").value =
+    config.transcription_provider && config.transcription_provider !== ""
+      ? config.transcription_provider
+      : "auto";
   qs("setting-default-language").value = config.default_language || "";
   qs("setting-whisperx-model").value = config.whisperx_model || "";
+
+  // Populate default provider select from registry
+  if (!state.llmProviders) {
+    try { state.llmProviders = await apiFetch("/llm-providers"); } catch (_) {}
+  }
+  populateProviderSelect("setting-summary-provider", state.llmProviders || []);
+  const sp = (config.summary_provider || "ollama").toLowerCase();
+  const sel = qs("setting-summary-provider");
+  if (sel && [...sel.options].some((o) => o.value === sp)) sel.value = sp;
 }
 
 async function saveConfig() {
@@ -871,27 +1109,17 @@ async function saveConfig() {
   }
   const payload = {
     output_root: qs("setting-output-root").value.trim(),
-    summary_provider: qs("setting-summary-provider").value.trim(),
-    ollama_base_url: qs("setting-ollama-base-url").value.trim(),
-    ollama_model: qs("setting-ollama-model").value.trim(),
-    ollama_timeout_seconds: Number(qs("setting-ollama-timeout").value) || undefined,
-    gemini_model: qs("setting-gemini-model").value.trim(),
+    transcription_provider: qs("setting-transcription-provider").value.trim() || "auto",
+    summary_provider: qs("setting-summary-provider")?.value.trim() || "ollama",
     default_language: qs("setting-default-language").value.trim(),
     whisperx_model: qs("setting-whisperx-model").value.trim(),
   };
-
-  const geminiKey = qs("setting-gemini-api-key").value.trim();
-  const hfToken = qs("setting-hf-token").value.trim();
-  if (geminiKey) payload.gemini_api_key = geminiKey;
-  if (hfToken) payload.hf_token = hfToken;
-
-  await apiFetch("/config", {
+  const updated = await apiFetch("/config", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  qs("setting-gemini-api-key").value = "";
-  qs("setting-hf-token").value = "";
+  state.configFromApi = updated;
   setStatus(qs("settings-result"), "Settings saved");
 }
 
@@ -1040,6 +1268,7 @@ document.addEventListener("DOMContentLoaded", () => {
   qs("open-transcribe-modal").addEventListener("click", async () => {
     qs("modal-transcribe-status").textContent = "";
     try {
+      await refreshConfigFromApi();
       if (!state.providers) {
         state.providers = await apiFetch("/providers");
       }
@@ -1052,6 +1281,15 @@ document.addEventListener("DOMContentLoaded", () => {
         opt.textContent = p.display_name;
         providerSelect.appendChild(opt);
       });
+      const cfg = state.configFromApi || {};
+      const explicit = cfg.transcription_provider;
+      const wantProvider =
+        explicit && explicit !== "auto"
+          ? explicit
+          : cfg.transcription_provider_effective || explicit || "onnx-asr";
+      if ([...providerSelect.options].some((o) => o.value === wantProvider)) {
+        providerSelect.value = wantProvider;
+      }
       const populateModels = () => {
         const provider = state.providers.find((p) => p.name === providerSelect.value);
         modelSelect.innerHTML = "";
@@ -1060,12 +1298,16 @@ document.addEventListener("DOMContentLoaded", () => {
           const opt = document.createElement("option");
           opt.value = m.id;
           opt.textContent = m.name;
-          if (m.id === provider.default_model) opt.selected = true;
           modelSelect.appendChild(opt);
         });
+        const preferred = cfg.whisperx_model;
+        const preferredOk =
+          preferred && provider.models.some((m) => m.id === preferred);
+        modelSelect.value = preferredOk ? preferred : provider.default_model;
       };
       populateModels();
       providerSelect.onchange = populateModels;
+      qs("modal-transcribe-language").value = (cfg.default_language || "").trim();
     } catch (error) {
       setStatus(qs("modal-transcribe-status"), error.message, true);
     }
@@ -1075,6 +1317,23 @@ document.addEventListener("DOMContentLoaded", () => {
     qs("modal-summary-status").textContent = "";
     qs("modal-summary-preview").textContent = "";
     qs("metadata-suggestions").classList.add("hidden");
+    try { await refreshConfigFromApi(); } catch (_) {}
+
+    if (!state.llmProviders) {
+      try { state.llmProviders = await apiFetch("/llm-providers"); } catch (_) {}
+    }
+
+    const cfg = state.configFromApi || {};
+    populateProviderSelect("modal-summary-provider", state.llmProviders || []);
+    const savedProvider = (cfg.summary_provider || "ollama").toLowerCase();
+    const sel = qs("modal-summary-provider");
+    if (sel && [...sel.options].some((o) => o.value === savedProvider)) sel.value = savedProvider;
+
+    populateSummarizeModalModels();
+
+    const sessionTitle = state.currentSession?.campaign?.title;
+    qs("modal-summary-title").value = (sessionTitle || "").trim();
+    qs("modal-summary-context").value = "";
     populateTranscriptSelect();
     await loadPromptPresets();
     populatePromptPresetSelect();
@@ -1090,55 +1349,55 @@ document.addEventListener("DOMContentLoaded", () => {
 
   qs("run-transcribe").addEventListener("click", async () => {
     if (!state.currentSession?.session_id) return;
-    setStatus(qs("modal-transcribe-status"), "Transcribing...");
     const payload = {
       session_id: state.currentSession.session_id,
       provider: qs("modal-transcribe-provider").value || null,
       model: qs("modal-transcribe-model").value || null,
       language: qs("modal-transcribe-language").value.trim() || null,
-      hf_token: qs("modal-transcribe-hf").value.trim() || null,
     };
+    closeModal("transcribe-modal");
+    setSessionOpStatus("Transcribing…");
     try {
       await apiFetch("/transcribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      setStatus(qs("modal-transcribe-status"), "Transcription complete");
       await loadSession(state.currentSession.session_id);
       await refreshCampaignSessions();
+      setSessionOpStatus("Transcription complete", "done");
     } catch (error) {
-      setStatus(qs("modal-transcribe-status"), error.message, true);
+      setSessionOpStatus(error.message, "err");
     }
   });
 
   qs("run-summarize").addEventListener("click", async () => {
     if (!state.currentSession?.session_id) return;
-    setStatus(qs("modal-summary-status"), "Summarizing...");
-    qs("metadata-suggestions").classList.add("hidden");
+    const providerVal = qs("modal-summary-provider").value;
+    const modelVal = qs("modal-summary-model")?.value.trim() || null;
     const payload = {
       session_id: state.currentSession.session_id,
       transcript_path: state.selectedTranscriptPath || null,
-      provider: qs("modal-summary-provider").value,
-      model: qs("modal-summary-model").value.trim() || null,
-      base_url: qs("modal-summary-base-url").value.trim() || null,
+      provider: providerVal,
+      model: modelVal,
+      base_url: null,
       title: qs("modal-summary-title").value.trim() || null,
       context: qs("modal-summary-context").value.trim() || null,
       system_prompt: qs("modal-system-prompt").value.trim() || null,
     };
+    closeModal("summarize-modal");
+    setSessionOpStatus(`Summarizing with ${providerVal}…`);
     try {
       const data = await apiFetch("/summarize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      qs("modal-summary-preview").textContent = data.summary || "";
-      setStatus(qs("modal-summary-status"), "Summary ready");
-      renderMetadataSuggestions(data.metadata);
       await loadSession(state.currentSession.session_id);
       await refreshCampaignSessions();
+      setSessionOpStatus("Summary complete", "done");
     } catch (error) {
-      setStatus(qs("modal-summary-status"), error.message, true);
+      setSessionOpStatus(error.message, "err");
     }
   });
 
@@ -1161,10 +1420,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  qs("modal-summary-provider")?.addEventListener("change", toggleSummarizeModalProviderFields);
+  qs("open-providers-modal")?.addEventListener("click", () => openProvidersModal().catch(console.error));
+  qs("close-providers-modal")?.addEventListener("click", () => closeModal("providers-modal"));
+  qs("providers-back")?.addEventListener("click", () => showProvidersView("list"));
+  qs("providers-detail-save")?.addEventListener("click", () => saveCurrentProvider().catch(console.error));
+  qs("providers-detail-test")?.addEventListener("click", () => testCurrentProvider().catch(console.error));
+
   qsa(".nav-btn").forEach((button) => {
     button.addEventListener("click", () => {
       const screen = button.dataset.screen;
       if (screen) showScreen(screen);
+      if (screen === "settings") {
+        loadConfig().catch(console.error);
+      }
     });
   });
 

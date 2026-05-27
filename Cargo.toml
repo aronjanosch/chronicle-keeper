@@ -1,0 +1,5 @@
+[workspace]
+resolver = "2"
+members = ["crates/ck-core"]
+# src-tauri joins the workspace in Sprint 1 step 6; the spike stays standalone.
+exclude = ["src-tauri", "spike/transcribe-spike"]

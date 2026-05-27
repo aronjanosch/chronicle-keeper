@@ -1,2 +1,6 @@
 example-recordings/
 debug-exports/
+
+# Rust build artifacts
+/target/
+**/target/

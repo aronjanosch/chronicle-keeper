@@ -62,6 +62,10 @@ pub struct ConfigResponse {
     pub transcription_provider_effective: String,
     pub transcription_accelerator: String,
     pub has_litellm_key: bool,
+    /// Multi-device sync server base URL (empty = sync disabled).
+    pub sync_url: String,
+    /// Whether a sync bearer token is saved (the token itself is never echoed).
+    pub has_sync_token: bool,
 }
 
 /// Partial update payload — mirrors the Python `UpdateConfigRequest`.
@@ -80,6 +84,8 @@ pub struct UpdateConfigRequest {
     pub whisperx_model: Option<String>,
     pub transcription_provider: Option<String>,
     pub transcription_accelerator: Option<String>,
+    pub sync_url: Option<String>,
+    pub sync_token: Option<String>,
 }
 
 fn ensure_defaults(conn: &Connection) -> AppResult<()> {
@@ -150,6 +156,8 @@ pub fn to_response(map: &HashMap<String, String>) -> ConfigResponse {
             if a.is_empty() { "cpu".into() } else { a }
         },
         has_litellm_key: !get_str(map, "litellm_api_key").is_empty(),
+        sync_url: get_str(map, "sync_url"),
+        has_sync_token: !get_str(map, "sync_token").is_empty(),
     }
 }
 
@@ -194,5 +202,7 @@ pub fn apply_update(conn: &Connection, req: &UpdateConfigRequest) -> AppResult<(
     set("whisperx_model", req.whisperx_model.clone())?;
     set("transcription_provider", req.transcription_provider.as_ref().map(|s| s.trim().to_lowercase()))?;
     set("transcription_accelerator", req.transcription_accelerator.as_ref().map(|s| s.trim().to_lowercase()))?;
+    set("sync_url", req.sync_url.as_ref().map(|s| s.trim().trim_end_matches('/').to_string()))?;
+    set("sync_token", req.sync_token.clone())?;
     Ok(())
 }

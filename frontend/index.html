@@ -329,6 +329,23 @@
               <button id="open-providers-modal" type="button" class="btn ghost">Configure providers →</button>
             </div>
 
+            <div class="settings-section">
+              <h3 class="settings-section-title">Multi-device sync</h3>
+              <div class="settings-grid">
+                <div class="field">
+                  <label for="setting-sync-url">Sync server URL</label>
+                  <input id="setting-sync-url" type="text" placeholder="https://sync.example.com" />
+                  <p class="field-hint">Leave empty to keep everything local. Transcription always runs on this device — only your notes sync.</p>
+                </div>
+                <div class="field">
+                  <label for="setting-sync-token">Sync token</label>
+                  <input id="setting-sync-token" type="password" placeholder="(unchanged)" autocomplete="off" />
+                  <p class="field-hint">Bearer token shared with your sync server. Stored locally; never sent anywhere else.</p>
+                </div>
+              </div>
+              <div id="sync-status" class="status"></div>
+            </div>
+
             <button id="save-settings" type="button" class="btn primary">Save settings</button>
             <div id="settings-result" class="status"></div>
           </div>

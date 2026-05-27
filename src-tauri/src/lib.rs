@@ -38,9 +38,14 @@ pub fn run() {
     let base = format!("http://{bound}");
     tracing::info!("embedded ck-core on {base}");
 
+    // Background multi-device sync runs on the same runtime as the API server.
+    // No-op until the user configures a sync URL + token (see ck_core::sync).
+    let sync_state = state.clone();
+
     // Serve forever on the runtime in a background thread.
     std::thread::spawn(move || {
         rt.block_on(async move {
+            tokio::spawn(sync_loop(sync_state));
             if let Err(e) = ck_core::serve(listener, state).await {
                 tracing::error!("ck-core server stopped: {e:#}");
             }
@@ -63,6 +68,24 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Periodic offline-first sync: flush once on startup, then every 5 minutes.
+/// `sync_once` is a cheap no-op when no sync server is configured. Unsynced
+/// writes carry a persisted `dirty` flag, so anything missed on shutdown is
+/// pushed on the next launch — no explicit shutdown flush needed.
+async fn sync_loop(state: ck_core::state::AppState) {
+    if let Err(e) = ck_core::sync::sync_once(&state).await {
+        tracing::warn!("startup sync failed: {e}");
+    }
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));
+    tick.tick().await; // first tick is immediate — consume it
+    loop {
+        tick.tick().await;
+        if let Err(e) = ck_core::sync::sync_once(&state).await {
+            tracing::warn!("periodic sync failed: {e}");
+        }
+    }
 }
 
 fn random_token() -> String {

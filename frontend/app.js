@@ -1188,6 +1188,29 @@ async function loadConfig() {
   const sp = (config.summary_provider || "ollama").toLowerCase();
   const sel = qs("setting-summary-provider");
   if (sel && [...sel.options].some((o) => o.value === sp)) sel.value = sp;
+
+  // Multi-device sync
+  qs("setting-sync-url").value = config.sync_url || "";
+  // Token is write-only on the server; show a placeholder when one is saved.
+  const tokenInput = qs("setting-sync-token");
+  tokenInput.value = "";
+  tokenInput.placeholder = config.has_sync_token ? "•••••••• (saved)" : "(none)";
+  renderSyncStatus(config);
+}
+
+function renderSyncStatus(config) {
+  const el = qs("sync-status");
+  if (!el) return;
+  if (!config.sync_url) {
+    el.textContent = "Sync off — everything stays on this device.";
+    el.className = "status";
+  } else if (!config.has_sync_token) {
+    el.textContent = "Sync URL set but no token saved — add a token to enable sync.";
+    el.className = "status err";
+  } else {
+    el.textContent = `Sync on — ${config.sync_url}`;
+    el.className = "status done";
+  }
 }
 
 async function saveConfig() {
@@ -1203,13 +1226,24 @@ async function saveConfig() {
     summary_provider: qs("setting-summary-provider")?.value.trim() || "ollama",
     default_language: qs("setting-default-language").value.trim(),
     whisperx_model: qs("setting-whisperx-model").value.trim(),
+    sync_url: qs("setting-sync-url").value.trim(),
   };
+  // Only send the token when the user actually typed one — an empty field means
+  // "leave the saved token unchanged", not "clear it".
+  const syncToken = qs("setting-sync-token").value;
+  if (syncToken) payload.sync_token = syncToken;
   const updated = await apiFetch("/config", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   state.configFromApi = updated;
+  // Reflect the saved sync state (and reset the write-only token field).
+  if (updated) {
+    qs("setting-sync-token").value = "";
+    qs("setting-sync-token").placeholder = updated.has_sync_token ? "•••••••• (saved)" : "(none)";
+    renderSyncStatus(updated);
+  }
   setStatus(qs("settings-result"), "Settings saved");
 }
 

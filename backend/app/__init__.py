@@ -1,1 +1,0 @@
-"""Chronicle Keeper backend (simplified)."""

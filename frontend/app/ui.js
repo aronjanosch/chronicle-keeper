@@ -1,5 +1,6 @@
 // Shared atoms ported from the design's atoms.jsx + a few form/primitive helpers.
 import { html } from '../vendor/htm-preact-standalone.mjs';
+import { navigate } from './core.js';
 
 // ── Icon — monoline 16-grid SVGs ──────────────────────────────────
 const PATHS = {
@@ -123,7 +124,7 @@ export function BrandMark({ size = 28 }) {
 }
 
 // ── StagePill ─────────────────────────────────────────────────────
-const STAGE_LABELS = { upload: 'Uploaded', transcribe: 'Transcribed', summarize: 'Summarized', export: 'Exported' };
+const STAGE_LABELS = { upload: 'Uploaded', transcribe: 'Transcribed', summarize: 'Summarized' };
 export function StagePill({ stage, complete, current }) {
   const style = current
     ? { background: 'var(--burgundy-50)', color: 'var(--burgundy-700)', borderColor: 'rgba(122,46,31,.2)' }
@@ -255,8 +256,55 @@ export function Empty({ icon = 'scroll', title, children }) {
 }
 
 // ── Tiny markdown → vnode renderer (summaries) ────────────────────
-export function Markdown({ text }) {
-  return html`<div class="ck-prose" dangerouslySetInnerHTML=${{ __html: mdToHtml(text || '') }} />`;
+// `codex` (optional): [{ name, entry_id }] — occurrences of these names in the
+// rendered prose are wrapped as clickable links to the entry-detail view.
+export function Markdown({ text, codex }) {
+  let out = mdToHtml(text || '');
+  const hasCodex = Array.isArray(codex) && codex.length;
+  if (hasCodex) out = linkifyCodex(out, codex);
+  const onClick = hasCodex ? (e) => {
+    const a = e.target && e.target.closest && e.target.closest('.ck-codex-link');
+    if (a && a.dataset.entry) { e.preventDefault(); navigate('codexEntry', { entryId: a.dataset.entry }); }
+  } : undefined;
+  return html`<div class="ck-prose" onClick=${onClick} dangerouslySetInnerHTML=${{ __html: out }} />`;
+}
+
+function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Wrap codex name occurrences in <a class="ck-codex-link" data-entry="ID">.
+// Longest-name-first (avoid partial overlaps), unicode word boundaries, and a
+// tag-aware walk that skips text already inside <a>/<code>. Best-effort: if the
+// engine lacks lookbehind/unicode props, return the prose unchanged.
+function linkifyCodex(htmlStr, codex) {
+  const entries = codex.filter((e) => e && e.name && e.name.trim());
+  if (!entries.length) return htmlStr;
+  const sorted = [...entries].sort((a, b) => b.name.trim().length - a.name.trim().length);
+  const byLower = new Map();
+  for (const e of sorted) {
+    const k = e.name.trim().toLowerCase();
+    if (!byLower.has(k)) byLower.set(k, e.entry_id);
+  }
+  let re;
+  try {
+    const pattern = sorted.map((e) => escapeRegex(e.name.trim())).join('|');
+    re = new RegExp(`(?<![\\p{L}\\p{N}_])(${pattern})(?![\\p{L}\\p{N}_])`, 'giu');
+  } catch (_) { return htmlStr; }
+  const tokens = htmlStr.split(/(<[^>]+>)/);
+  let skip = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.startsWith('<')) {
+      if (/^<(a|code)[\s>]/i.test(t)) skip++;
+      else if (/^<\/(a|code)>/i.test(t)) skip = Math.max(0, skip - 1);
+      continue;
+    }
+    if (skip > 0 || !t) continue;
+    tokens[i] = t.replace(re, (m) => {
+      const id = byLower.get(m.toLowerCase());
+      return id ? `<a class="ck-codex-link" data-entry="${id}">${m}</a>` : m;
+    });
+  }
+  return tokens.join('');
 }
 function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

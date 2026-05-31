@@ -77,6 +77,12 @@ button { font-family: inherit; }
 }
 .ck-prose hr { border: 0; height: 1px; background: var(--rule); margin: 20px 0; }
 .ck-prose a { color: var(--burgundy); text-decoration: underline; text-underline-offset: 2px; }
+/* Codex name-links inside summaries: subtle dotted burgundy, not loud like real links. */
+.ck-prose a.ck-codex-link {
+  color: var(--burgundy); text-decoration: none;
+  border-bottom: 1px dotted var(--burgundy-300); cursor: pointer;
+}
+.ck-prose a.ck-codex-link:hover { border-bottom-color: var(--burgundy); }
 
 /* Monospace transcript block */
 .ck-pre {

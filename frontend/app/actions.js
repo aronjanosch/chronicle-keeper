@@ -69,6 +69,21 @@ export async function updateCampaign(patch) {
   const updated = decorateCampaign(await apiJson(`/campaigns/${id}`, 'PUT', patch));
   setState({ campaign: updated });
   await loadCampaigns();
+  // Roster edits auto-create `pc` codex entries server-side — refresh so they show.
+  if (patch && patch.players) await loadCodexEntries(id);
+}
+
+// Build/rebuild the campaign "story so far" recap from existing session
+// summaries (one LLM call, server-side). Updates the loaded campaign in place.
+export async function generateRecap() {
+  const id = store.campaign?.campaign_id;
+  if (!id) return;
+  setOp('Weaving the story so far…');
+  try {
+    const r = await apiJson(`/campaigns/${id}/recap`, 'POST', {});
+    setState({ campaign: { ...store.campaign, recap: r.recap, recap_updated_at: r.recap_updated_at } });
+    setOp(`Recap woven from ${r.sessions_used} session${r.sessions_used === 1 ? '' : 's'}`, 'done');
+  } catch (e) { setOp(e.message, 'err'); }
 }
 
 export async function deleteCampaign(id) {
@@ -87,9 +102,9 @@ export async function loadCodexEntries(campaignId) {
   return entries || [];
 }
 
-export async function createCodexEntry({ name, kind, body }) {
+export async function createCodexEntry({ name, kind, body, detail }) {
   const id = store.campaign.campaign_id;
-  await apiJson(`/campaigns/${id}/codex/entries`, 'POST', { name, kind, body: body || '' });
+  await apiJson(`/campaigns/${id}/codex/entries`, 'POST', { name, kind, body: body || '', detail: detail || '' });
   await loadCodexEntries(id);
 }
 
@@ -103,6 +118,21 @@ export async function deleteCodexEntry(entryId) {
   const id = store.campaign.campaign_id;
   await apiFetch(`/campaigns/${id}/codex/entries/${entryId}`, { method: 'DELETE' });
   await loadCodexEntries(id);
+}
+
+// Sessions whose saved metadata (characters/locations/items) name this entry.
+// Pure client-side over already-loaded campaignSessions — no telemetry, no new
+// backend. Case-insensitive exact match on a metadata value.
+export function mentionsOf(name) {
+  const needle = String(name || '').trim().toLowerCase();
+  if (!needle) return [];
+  return (store.campaignSessions || [])
+    .filter((s) => {
+      const md = s.metadata || {};
+      return ['characters', 'locations', 'items'].some((k) =>
+        (md[k] || []).some((v) => String(v).trim().toLowerCase() === needle));
+    })
+    .map((s) => ({ session_id: s.session_id, session_number: s.session_number, title: s.title }));
 }
 
 // Distill pasted notes into proposed entries (not saved yet — the user reviews).
@@ -134,16 +164,17 @@ export async function loadSession(id) {
     // Don't swallow artifact-load failures: an empty list from a real error
     // would render a misleading red "not transcribed" badge. Surface it.
     let loadErr = null;
-    const [transcripts, summaries] = await Promise.all([
+    const [transcripts, summaries, codexEntries] = await Promise.all([
       apiFetch(`/sessions/${id}/transcripts`).catch((e) => { loadErr = e; return []; }),
       apiFetch(`/sessions/${id}/summaries`).catch((e) => { loadErr = e; return []; }),
+      campId ? apiFetch(`/campaigns/${campId}/codex/entries`).catch(() => []) : Promise.resolve([]),
     ]);
     let summaryPreview = null;
     if ((summaries || []).length) {
       const latest = summaries[0];
       try { summaryPreview = { id: latest.id, text: await apiText(`/sessions/${id}/summaries/${latest.id}/content`) }; } catch (_) {}
     }
-    setState({ session, campaign, transcripts: transcripts || [], summaries: summaries || [], summaryPreview, loading: false });
+    setState({ session, campaign, transcripts: transcripts || [], summaries: summaries || [], summaryPreview, codexEntries: codexEntries || [], loading: false });
     if (loadErr) setOp(`Couldn't load this session's artifacts: ${loadErr.message}`, 'err');
     navigate('session', { id });
   } catch (e) { setState({ error: e.message, loading: false }); }

@@ -11,7 +11,7 @@ import { NewSessionScreen } from './screens/newSession.js';
 import { SummarizeScreen } from './screens/summarize.js';
 import { SettingsScreen } from './screens/settings.js';
 import { CodexScreen } from './screens/codex.js';
-import { PlaceholderScreen } from './screens/placeholder.js';
+import { CodexEntryScreen } from './screens/codexEntry.js';
 
 function OpBanner({ op }) {
   if (!op) return null;
@@ -42,7 +42,7 @@ function App() {
     case 'summarize': screen = html`<${SummarizeScreen} store=${store} />`; break;
     case 'settings': screen = html`<${SettingsScreen} store=${store} />`; break;
     case 'codex': screen = html`<${CodexScreen} store=${store} />`; break;
-    case 'sources': screen = html`<${PlaceholderScreen} store=${store} kind="sources" />`; break;
+    case 'codexEntry': screen = html`<${CodexEntryScreen} store=${store} />`; break;
     default: screen = html`<${LibraryScreen} store=${store} />`;
   }
   return html`<div style=${{ height: '100%' }}>

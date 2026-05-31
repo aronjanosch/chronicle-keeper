@@ -73,7 +73,6 @@ export function SessionScreen({ store }) {
     { key: 'u', label: 'Recording', done: tracks.length > 0, current: tracks.length === 0, detail: tracks.length ? `${tracks.length} track${tracks.length === 1 ? '' : 's'}` : 'No upload', meta: tracks.length ? '' : 'Upload a Craig ZIP' },
     { key: 't', label: 'Transcribed', done: hasT, current: tracks.length > 0 && !hasT, detail: hasT ? `${store.transcripts[0].provider} / ${store.transcripts[0].model}` : 'Pending', meta: hasT ? 'on-device' : '' },
     { key: 's', label: 'Summarized', done: hasS, current: hasT && !hasS, detail: hasS ? `${store.summaries[0].provider} / ${store.summaries[0].model}` : 'Pending', meta: hasS ? fmtDateTime(store.summaries[0].created_at) : '' },
-    { key: 'e', label: 'Exported', current: hasS, detail: hasS ? 'Ready for Obsidian' : 'Pending', meta: '' },
   ];
 
   const primary = !tracks.length
@@ -135,7 +134,7 @@ export function SessionScreen({ store }) {
         </div>
         <div style=${{ padding: '24px 28px' }}>
           ${store.summaryPreview
-            ? html`<${Markdown} text=${store.summaryPreview.text} />`
+            ? html`<${Markdown} text=${store.summaryPreview.text} codex=${store.codexEntries} />`
             : html`<${Empty} icon="feather" title=${hasT ? 'Not summarized yet' : 'No transcript yet'}>
                 ${hasT ? 'Generate a summary with your chosen LLM.' : 'Transcribe the recording, then summarize.'}
               </${Empty}>`}

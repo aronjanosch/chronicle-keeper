@@ -9,7 +9,7 @@ export const store = {
   apiToken: null,
   shellMode: false,       // true when the Tauri shell injected the API base (browser-dev → false)
 
-  // routing: { name: 'library'|'campaign'|'session'|'newSession'|'summarize'|'settings'|'codex'|'sources', params }
+  // routing: { name: 'library'|'campaign'|'session'|'newSession'|'summarize'|'settings'|'codex'|'codexEntry', params }
   route: { name: 'library', params: {} },
 
   // data

@@ -30,7 +30,7 @@ function codexCount(_campaign) {
 }
 
 function NavHead({ children }) {
-  return html`<div style=${{ padding: '14px 8px 4px', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${children}</div>`;
+  return html`<div style=${{ padding: '14px 8px 4px', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${children}</div>`;
 }
 
 export function Sidebar({ variant = 'library', active, campaign }) {
@@ -53,10 +53,8 @@ export function Sidebar({ variant = 'library', active, campaign }) {
       <${NavHead}>Library</${NavHead}>
       <${NavItem} icon="book" label="Campaigns" active=${active === 'campaigns'} onClick=${() => navigate('library')} />
       <${NavHead}>Workshop</${NavHead}>
-      <${NavItem} icon="folder" label="Sources" active=${active === 'sources'} onClick=${() => navigate('sources')} />
       <${NavItem} icon="cog" label="Settings" active=${active === 'settings'} onClick=${() => navigate('settings')} />
     ` : html`
-      <${NavHead}>Library</${NavHead}>
       <${NavItem} icon="chev-l" label="All campaigns" onClick=${() => navigate('library')} />
       <div style=${{ margin: '10px 4px 6px', padding: '10px', background: 'var(--surface)', border: '1px solid var(--rule-soft)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
         <${Sigil} ch=${campaign?.sigil || '?'} tone=${campaign?.tone || 'burgundy'} />
@@ -65,10 +63,10 @@ export function Sidebar({ variant = 'library', active, campaign }) {
           <div style=${{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 2 }}>${campaign?.system || '—'}</div>
         </div>
       </div>
+      <${NavHead}>${campaign?.name || 'Chronicle'}</${NavHead}>
       <${NavItem} icon="compass" label="Overview" active=${active === 'overview'} onClick=${() => navigate('campaign', { id: campaign?.campaign_id })} />
       <${NavItem} icon="book" label="Codex" count=${codexCount(campaign)} active=${active === 'codex'} onClick=${() => navigate('codex', { id: campaign?.campaign_id })} />
       <${NavHead}>Workshop</${NavHead}>
-      <${NavItem} icon="folder" label="Sources" active=${active === 'sources'} onClick=${() => navigate('sources')} />
       <${NavItem} icon="cog" label="Settings" active=${active === 'settings'} onClick=${() => navigate('settings')} />
     `}
 

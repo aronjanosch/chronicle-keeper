@@ -41,6 +41,7 @@
   --ink-blue-50:     #D9E1EB;
 
   --gilt:            #B8924A;     /* used very sparingly */
+  --gilt-50:         #F0DFB1;     /* tint for gilt-toned tiles (PCs, lore) */
 
   /* ── Type ─────────────────────────────────────────────────────── */
   --font-display: 'Spectral', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;

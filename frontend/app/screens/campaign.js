@@ -1,9 +1,55 @@
 // Screen 02 — Campaign Overview. Hero + party + codex teaser + sessions list.
-import { html } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, openModal, fmtDate, toneFor } from '../core.js';
-import { loadSession, deleteCampaign } from '../actions.js';
+import { html, useState } from '../../vendor/htm-preact-standalone.mjs';
+import { navigate, openModal, fmtDate, fmtDateTime, toneFor } from '../core.js';
+import { loadSession, deleteCampaign, generateRecap } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
-import { Icon, Sigil, Btn, StagePill, Empty } from '../ui.js';
+import { Icon, Sigil, Btn, StagePill, Empty, Markdown } from '../ui.js';
+import { KINDS, iconForKind } from './codex.js';
+
+// Collapsed height cap for the recap body. Tall recaps would otherwise push
+// the whole page down; we clamp + fade and offer an Expand toggle.
+const RECAP_COLLAPSED_MAX = 180;
+
+function StorySoFar({ campaign, sessions, codexEntries }) {
+  const [expanded, setExpanded] = useState(false);
+  const recap = (campaign.recap || '').trim();
+  const canBuild = sessions.some((s) => s.has_summary);
+  const codexLinks = (codexEntries || []).map((e) => ({ name: e.name, entry_id: e.entry_id }));
+  return html`<div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden', marginBottom: 24 }}>
+    <div style=${{ padding: '14px 18px 12px', display: 'flex', alignItems: 'baseline', gap: 10, borderBottom: '1px solid var(--rule-soft)' }}>
+      <h3 style=${{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 500, color: 'var(--ink)' }}>The Story So Far</h3>
+      <span style=${{ fontSize: 12, color: 'var(--ink-muted)' }}>· the whole arc at a glance</span>
+      <span style=${{ flex: 1 }} />
+      ${recap && campaign.recap_updated_at && html`<span style=${{ fontSize: 11, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>updated ${fmtDateTime(campaign.recap_updated_at)}</span>`}
+      <${Btn} kind=${recap ? 'ghost' : 'primary'} size="sm" icon="sparkle" disabled=${!canBuild}
+        title=${canBuild ? '' : 'Summarize at least one session first'}
+        onClick=${generateRecap}>${recap ? 'Regenerate' : 'Generate'}</${Btn}>
+    </div>
+    ${recap
+      ? html`<div style=${{ position: 'relative' }}>
+          <div style=${{
+            padding: '6px 20px 16px',
+            maxHeight: expanded ? 'none' : `${RECAP_COLLAPSED_MAX}px`,
+            overflowY: expanded ? 'visible' : 'auto',
+          }}><${Markdown} text=${recap} codex=${codexLinks} /></div>
+          ${!expanded && html`<div style=${{
+            position: 'absolute', left: 0, right: 0, bottom: 0, height: 56, pointerEvents: 'none',
+            background: 'linear-gradient(to bottom, transparent, var(--surface))',
+          }} />`}
+          <div style=${{ display: 'flex', justifyContent: 'center', padding: '0 0 12px' }}>
+            <${Btn} kind="ghost" size="sm" onClick=${() => setExpanded((v) => !v)}>
+              ${expanded ? 'Collapse' : 'Expand'}
+              <span style=${{ display: 'inline-flex', transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .14s' }}><${Icon} name="chev-d" size=${12} /></span>
+            </${Btn}>
+          </div>
+        </div>`
+      : html`<${Empty} icon="book" title=${canBuild ? 'No recap yet' : 'Nothing to recap yet'}>
+          ${canBuild
+            ? 'Weave every session summary into one running narrative the table can catch up on in a minute.'
+            : 'Summarize at least one session, then generate a story-so-far recap here.'}
+        </${Empty}>`}
+  </div>`;
+}
 
 function PartyMember({ player, onClick }) {
   const ch = player.character_name || '—';
@@ -25,7 +71,6 @@ function SessionRow({ s, onClick }) {
     { stage: 'upload', complete: up, current: !up },
     { stage: 'transcribe', complete: t, current: up && !t },
     { stage: 'summarize', complete: sm, current: t && !sm },
-    { stage: 'export', complete: false, current: sm },
   ];
   return html`<div onClick=${onClick} style=${{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 18px', borderBottom: '1px solid var(--rule-soft)', cursor: 'pointer' }}
     onMouseEnter=${(e) => { e.currentTarget.style.background = 'var(--paper)'; }}
@@ -55,12 +100,68 @@ function Stat({ value, label, italic }) {
   </div>`;
 }
 
+// Codex teaser on the overview — a glance at what the summarizer remembers.
+// Kind breakdown + the few most-recent entries; click through to the full codex.
+function CodexTeaser({ campaign, entries }) {
+  const open = () => navigate('codex', { id: campaign.campaign_id });
+  const total = entries.length;
+  // Kinds that actually have entries, in the canonical KINDS order.
+  const groups = KINDS
+    .map((k) => ({ ...k, n: entries.filter((e) => e.kind === k.value).length }))
+    .filter((g) => g.n);
+  // A handful of entries to preview, freshest first when we have timestamps.
+  const recent = [...entries]
+    .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')))
+    .slice(0, 5);
+
+  return html`<div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+    <div style=${{ padding: '14px 18px 10px', display: 'flex', alignItems: 'baseline', gap: 10, borderBottom: '1px solid var(--rule-soft)' }}>
+      <h3 style=${{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 500, color: 'var(--ink)' }}>Codex</h3>
+      <span style=${{ fontSize: 12, color: 'var(--ink-muted)' }}>· ${total ? `${total} ${total === 1 ? 'entry' : 'entries'} the LLM remembers` : "the LLM's memory"}</span>
+      <span style=${{ flex: 1 }} />
+      <${Btn} kind="ghost" size="sm" icon="chev-r" onClick=${open}>${total ? 'Open' : 'Build'}</${Btn}>
+    </div>
+    ${total
+      ? html`<div style=${{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12, flex: 1 }}>
+          <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            ${groups.map((g) => {
+              const col = g.tone === 'ink-blue' ? 'var(--ink-blue)' : `var(--${g.tone})`;
+              return html`<span key=${g.value} style=${{
+                display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 999,
+                background: `var(--${g.tone}-50)`, color: col, border: '1px solid rgba(0,0,0,.06)',
+                fontSize: 11.5, fontWeight: 500,
+              }}>
+                <${Icon} name=${iconForKind(g.value)} size=${11} /> ${g.plural}
+                <span style=${{ fontFamily: 'var(--font-mono)', opacity: 0.7 }}>${g.n}</span>
+              </span>`;
+            })}
+          </div>
+          <div style=${{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            ${recent.map((e) => html`<div key=${e.entry_id} onClick=${() => navigate('codexEntry', { entryId: e.entry_id })}
+              style=${{ display: 'flex', alignItems: 'center', gap: 9, padding: '6px 8px', borderRadius: 4, cursor: 'pointer' }}
+              onMouseEnter=${(ev) => { ev.currentTarget.style.background = 'var(--paper)'; }}
+              onMouseLeave=${(ev) => { ev.currentTarget.style.background = 'transparent'; }}>
+              <${Icon} name=${iconForKind(e.kind)} size=${13} className="ck-ink-muted" />
+              <span style=${{ fontFamily: 'var(--font-display)', fontSize: 14, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${e.name}</span>
+              ${e.body && html`<span style=${{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${e.body}</span>`}
+            </div>`)}
+          </div>
+        </div>`
+      : html`<div style=${{ flex: 1, display: 'flex' }}>
+          <${Empty} icon="book" title="Codex is empty">
+            What the summarizer remembers — NPCs, places, items, lore. Add entries, or just run a summary and names get pulled in automatically.
+          </${Empty}>
+        </div>`}
+  </div>`;
+}
+
 export function CampaignScreen({ store }) {
   const c = store.campaign;
   if (!c) return html`<div />`;
   const sessions = store.campaignSessions;
   const players = c.players || [];
   const latest = sessions[0];
+  const codexEntries = store.codexEntries || [];
 
   return html`<${Shell}
     sidebar=${html`<${Sidebar} variant="campaign" active="overview" campaign=${c} />`}
@@ -109,10 +210,12 @@ export function CampaignScreen({ store }) {
           <${StagePill} stage="upload" complete=${!!latest.has_tracks} current=${!latest.has_tracks} />
           <${StagePill} stage="transcribe" complete=${!!latest.has_transcription} current=${!!latest.has_tracks && !latest.has_transcription} />
           <${StagePill} stage="summarize" complete=${!!latest.has_summary} current=${!!latest.has_transcription && !latest.has_summary} />
-          <${StagePill} stage="export" current=${!!latest.has_summary} />
         </div>
       </div>`}
     </div>
+
+    <!-- Story so far -->
+    <${StorySoFar} campaign=${c} sessions=${sessions} codexEntries=${codexEntries} />
 
     <!-- Party + Codex teaser -->
     <div style=${{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
@@ -130,17 +233,7 @@ export function CampaignScreen({ store }) {
         </div>
       </div>
 
-      <div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        <div style=${{ padding: '14px 18px 10px', display: 'flex', alignItems: 'baseline', gap: 10, borderBottom: '1px solid var(--rule-soft)' }}>
-          <h3 style=${{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 500, color: 'var(--ink)' }}>Codex</h3>
-          <span style=${{ fontSize: 12, color: 'var(--ink-muted)' }}>· the LLM's memory</span>
-        </div>
-        <div style=${{ flex: 1, display: 'flex' }}>
-          <${Empty} icon="book" title="Codex — coming soon">
-            A read-only window into what the summarizer remembers, built from your Obsidian / Notion / markdown notes. Not yet wired up.
-          </${Empty}>
-        </div>
-      </div>
+      <${CodexTeaser} campaign=${c} entries=${codexEntries} />
     </div>
 
     <!-- Sessions -->

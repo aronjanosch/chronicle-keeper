@@ -10,7 +10,7 @@ import {
 } from './actions.js';
 
 const CODEX_KINDS = [
-  { value: 'npc', label: 'NPC' }, { value: 'place', label: 'Place' },
+  { value: 'pc', label: 'PC' }, { value: 'npc', label: 'NPC' }, { value: 'place', label: 'Place' },
   { value: 'faction', label: 'Faction' }, { value: 'item', label: 'Item' },
   { value: 'lore', label: 'Lore' },
 ];
@@ -292,9 +292,8 @@ function CodexImportModal() {
           const k = `${en.name.toLowerCase()}|${en.kind}`;
           if (idx.has(k)) {
             // Same entity seen twice (e.g. its own file + a mention elsewhere):
-            // keep the richer write-up.
-            const j = idx.get(k);
-            if ((en.body || '').length > (merged[j].body || '').length) merged[j] = en;
+            // last write wins — the later batch overrides body + detail.
+            merged[idx.get(k)] = en;
           } else {
             idx.set(k, merged.length); merged.push(en);
           }
@@ -308,7 +307,7 @@ function CodexImportModal() {
   }
   async function save() {
     const picked = (rows || []).filter((r) => r.on && r.name.trim())
-      .map(({ name, kind, body }) => ({ name: name.trim(), kind, body: body.trim() }));
+      .map(({ name, kind, body, detail }) => ({ name: name.trim(), kind, body: (body || '').trim(), detail: (detail || '').trim() }));
     if (!picked.length) { setErr('Nothing selected to save.'); return; }
     setBusy(true); setErr(null);
     try {

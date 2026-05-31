@@ -60,7 +60,7 @@ pub async fn import(
             .map(|e| {
                 let exists = codex::exists(conn, &campaign_id, &e.name, &e.kind)?;
                 Ok(serde_json::json!({
-                    "name": e.name, "kind": e.kind, "body": e.body, "exists": exists,
+                    "name": e.name, "kind": e.kind, "body": e.body, "detail": e.detail, "exists": exists,
                 }))
             })
             .collect::<AppResult<Vec<_>>>()

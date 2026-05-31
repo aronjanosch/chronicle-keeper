@@ -6,10 +6,11 @@ use serde_json::{json, Value};
 use crate::error::{AppError, AppResult};
 use crate::models::{
     CampaignSessionInfo, CampaignUpdateRequest, CampaignsResponse, CreateCampaignRequest,
-    CreateCampaignSessionRequest, NextSessionNumberResponse,
+    CreateCampaignSessionRequest, NextSessionNumberResponse, RecapRequest, RecapResponse,
 };
 use crate::state::AppState;
 use crate::store::{campaigns, sessions};
+use crate::summarize;
 
 pub async fn list(State(state): State<AppState>) -> AppResult<Json<CampaignsResponse>> {
     state.with_db(|conn| {
@@ -84,6 +85,16 @@ pub async fn create_session(
             req.date.as_deref(),
         )?))
     })
+}
+
+/// Generate (or regenerate) the campaign "story so far" recap. Synchronous —
+/// one LLM call over the existing session summaries — then stored on the campaign.
+pub async fn generate_recap(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<RecapRequest>,
+) -> AppResult<Json<RecapResponse>> {
+    Ok(Json(summarize::generate_recap(&state, &campaign_id, &req).await?))
 }
 
 #[derive(Debug, Deserialize)]

@@ -114,16 +114,20 @@ Master's raw notes. The notes may be in ANY shape: one file per entity, one big 
 document, a Notion or Google-Doc export, or loose bullet points. Ignore all \
 formatting, headings, frontmatter, and markup — read for meaning.\n\n\
 Return ONLY a JSON object of the form:\n\
-{{\"entries\": [{{\"name\": \"...\", \"kind\": \"...\", \"body\": \"...\"}}]}}\n\n\
+{{\"entries\": [{{\"name\": \"...\", \"kind\": \"...\", \"body\": \"...\", \"detail\": \"...\"}}]}}\n\n\
 Rules:\n\
-- `kind` MUST be exactly one of these English keywords: npc, place, faction, item, lore. Do NOT translate the kind.\n\
+- `kind` MUST be exactly one of these English keywords: pc, npc, place, faction, item, lore. \
+Use `pc` for a player character / member of the party, `npc` for any other character. Do NOT translate the kind.\n\
 - `name` is the proper name of the thing, copied VERBATIM from the notes (keep the original spelling and language — do not translate names). Omit leading articles unless part of the name.\n\
 - `body` is ONE concise sentence (max ~25 words) capturing what the summarizer should \
 know about it. Write the body in {lang_name}. No markdown, no line breaks.\n\
+- `detail` is a SHORT distilled paragraph (2-5 sentences) with the richer context worth \
+remembering — relationships, motives, secrets, appearance. Distill and rewrite in your own \
+words; do NOT copy the raw notes verbatim. Write in {lang_name}. Plain prose, no markdown. \
+Leave it an empty string if the notes say nothing beyond the one-liner.\n\
 - Create one entry per distinct entity. Merge duplicates. Do not invent anything \
 that is not in the notes.\n\
-- Skip the player characters / the party themselves unless a note clearly describes \
-one as world lore.\n\
+- Include player characters / party members as `pc` entries when the notes describe them.\n\
 - If the notes contain nothing glossary-worthy, return {{\"entries\": []}}.\n\n\
 Notes:\n\
 \"\"\"\n{notes}\n\"\"\""
@@ -178,11 +182,12 @@ fn parse_entries(raw: &str) -> Vec<CodexEntryCreate> {
         let name = obj.get("name").and_then(Value::as_str).unwrap_or("").trim().to_string();
         let kind = obj.get("kind").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
         let body = obj.get("body").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let detail = obj.get("detail").and_then(Value::as_str).unwrap_or("").trim().to_string();
         if name.is_empty() || !KINDS.contains(&kind.as_str()) {
             continue;
         }
         if seen.insert((name.to_lowercase(), kind.clone())) {
-            out.push(CodexEntryCreate { name, kind, body });
+            out.push(CodexEntryCreate { name, kind, body, detail });
         }
     }
     out
@@ -218,7 +223,7 @@ mod tests {
         // Unknown codes fall back without panicking.
         assert!(build_prompt("notes", "xx").contains("code \"xx\""));
         // The kind enum stays English regardless of language.
-        assert!(de.contains("npc, place, faction, item, lore"));
+        assert!(de.contains("pc, npc, place, faction, item, lore"));
     }
 
     #[test]

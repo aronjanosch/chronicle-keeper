@@ -120,6 +120,20 @@ fn migrate(conn: &Connection) -> Result<()> {
         // Codex (Phase 1): a per-campaign freeform glossary of known names & lore,
         // injected verbatim into every summary's prompt context.
         "ALTER TABLE campaigns ADD COLUMN codex TEXT NOT NULL DEFAULT ''",
+        // Codex (Phase 3): distilled longer write-up per entry, shown in the entry
+        // inspector. Not fed to summaries — the one-line `body` still is.
+        "ALTER TABLE codex_entries ADD COLUMN detail TEXT NOT NULL DEFAULT ''",
+        // Freeform notes: a JSON array [{title, body}] of campaign-wide notes, all
+        // injected verbatim into every summary. Supersedes the single `codex` string
+        // (kept for back-compat; shown as the first note until the user saves).
+        "ALTER TABLE campaigns ADD COLUMN codex_notes TEXT NOT NULL DEFAULT ''",
+        // "Story so far" recap: an LLM-generated narrative rollup of every session
+        // summary, regenerated on demand. Read-only for the GM. Synced as part of
+        // the campaign row (last-write-wins, like every other campaign field) so
+        // devices stay consistent. NOT fed back into per-session summaries (codex
+        // covers that; a recursive recap would compound drift — see ROADMAP).
+        "ALTER TABLE campaigns ADD COLUMN recap TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE campaigns ADD COLUMN recap_updated_at TEXT NOT NULL DEFAULT ''",
     ];
     for sql in add_columns {
         if let Err(e) = conn.execute(sql, []) {

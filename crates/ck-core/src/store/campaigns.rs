@@ -30,7 +30,48 @@ fn row_to_detail(row: &rusqlite::Row, fallback_lang: &str) -> rusqlite::Result<C
         players: normalize_players(&players),
         extra_info: row.get::<_, Option<String>>("extra_info")?.unwrap_or_default(),
         codex: row.get::<_, Option<String>>("codex")?.unwrap_or_default(),
+        codex_notes: row
+            .get::<_, Option<String>>("codex_notes")?
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .filter(Value::is_array)
+            .unwrap_or_else(|| json!([])),
+        recap: row.get::<_, Option<String>>("recap")?.unwrap_or_default(),
+        recap_updated_at: row.get::<_, Option<String>>("recap_updated_at")?.unwrap_or_default(),
     })
+}
+
+/// Store a freshly generated recap. Stamps `recap_updated_at` and the sync
+/// columns (`updated_at`/`dirty`) so the next sync cycle pushes the new recap
+/// to the server and on to other devices.
+pub fn set_recap(conn: &Connection, campaign_id: &str, recap: &str) -> AppResult<String> {
+    let ts = now();
+    conn.execute(
+        "UPDATE campaigns SET recap = ?1, recap_updated_at = ?2, updated_at = ?2, dirty = 1 \
+         WHERE campaign_id = ?3",
+        params![recap, ts, campaign_id],
+    )?;
+    Ok(ts)
+}
+
+/// Effective freeform text fed to every summary: the `codex_notes` list joined
+/// (title then body, blank-line separated), falling back to the legacy single
+/// `codex` string when no notes exist yet.
+pub fn codex_freeform_text(detail: &CampaignDetail) -> String {
+    if let Some(arr) = detail.codex_notes.as_array() {
+        let mut parts = Vec::new();
+        for n in arr {
+            let title = n.get("title").and_then(Value::as_str).unwrap_or("").trim();
+            let body = n.get("body").and_then(Value::as_str).unwrap_or("").trim();
+            if title.is_empty() && body.is_empty() {
+                continue;
+            }
+            parts.push(if title.is_empty() { body.to_string() } else { format!("{title}\n{body}") });
+        }
+        if !parts.is_empty() {
+            return parts.join("\n\n");
+        }
+    }
+    detail.codex.trim().to_string()
 }
 
 pub fn get_campaigns(conn: &Connection) -> AppResult<Vec<CampaignDetail>> {
@@ -112,6 +153,10 @@ pub fn update_campaign(
     push_str!("default_language", req.default_language);
     push_str!("extra_info", req.extra_info);
     push_str!("codex", req.codex);
+    if let Some(notes) = &req.codex_notes {
+        sets.push("codex_notes = ?".into());
+        vals.push(Box::new(notes.to_string()));
+    }
     if let Some(n) = req.next_session_number {
         sets.push("next_session_number = ?".into());
         vals.push(Box::new(n));
@@ -128,6 +173,11 @@ pub fn update_campaign(
     let sql = format!("UPDATE campaigns SET {} WHERE campaign_id = ?", sets.join(", "));
     let refs: Vec<&dyn rusqlite::ToSql> = vals.iter().map(|b| b.as_ref()).collect();
     conn.execute(&sql, refs.as_slice())?;
+    // Keep the codex in sync with the party roster: each character gets an empty
+    // `pc` entry (create-only — see codex::sync_pc_entries).
+    if let Some(players) = &req.players {
+        crate::store::codex::sync_pc_entries(conn, campaign_id, &normalize_players(players))?;
+    }
     get_campaign(conn, campaign_id)?.ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))
 }
 

@@ -126,6 +126,8 @@ pub fn build_session_context(ctx: Option<&Value>, language: &str) -> String {
 
 fn kind_label(kind: &str, de: bool) -> &'static str {
     match (kind, de) {
+        ("pc", true) => "Spielercharaktere",
+        ("pc", false) => "Player characters",
         ("npc", true) => "NPCs",
         ("npc", false) => "NPCs",
         ("place", true) => "Orte",
@@ -151,8 +153,8 @@ fn render_codex_entries(entries: &[Value], de: bool) -> String {
         by_kind.entry(kind).or_default().push((name, body));
     }
     let mut out = String::new();
-    // Stable order: npc, place, faction, item, lore.
-    for kind in ["npc", "place", "faction", "item", "lore"] {
+    // Stable order: pc, npc, place, faction, item, lore.
+    for kind in ["pc", "npc", "place", "faction", "item", "lore"] {
         let Some(list) = by_kind.get(kind) else { continue };
         if list.is_empty() { continue; }
         out.push_str(kind_label(kind, de));
@@ -239,6 +241,21 @@ mod tests {
     }
 
     #[test]
+    fn recap_prompt_includes_name_summaries_and_language() {
+        let block = "### Session 1 — Arrival\nThe party reached Bree.";
+        let en = build_recap_prompt("The Iron Crown", block, "en");
+        assert!(en.contains("Campaign: The Iron Crown"));
+        assert!(en.contains("Session summaries:"));
+        assert!(en.contains("The party reached Bree."));
+        assert!(en.contains("Where Things Stand"));
+
+        let de = build_recap_prompt("Die Eiserne Krone", block, "de");
+        assert!(de.contains("Kampagne: Die Eiserne Krone"));
+        assert!(de.contains("Sitzungszusammenfassungen:"));
+        assert!(de.contains("Aktueller Stand"));
+    }
+
+    #[test]
     fn codex_entries_alone_still_render() {
         let ctx = json!({
             "codex_entries": [{ "name": "Bree", "kind": "place", "body": "" }],
@@ -247,6 +264,30 @@ mod tests {
         assert!(block.contains("Known names & lore:"));
         assert!(block.contains("Places:"));
     }
+}
+
+const RECAP_EN: &str = "You are an RPG assistant for the GM. Below are the per-session summaries of a campaign, in chronological order. Weave them into a single flowing \"story so far\" recap the GM can read in one sitting to recall the whole arc.\n\nRULES:\n- Tell it as one continuous narrative, chronological, past tense. Do NOT list it session-by-session.\n- Use CHARACTER names, places, and factions exactly as written in the summaries.\n- Focus on the throughline: how the story built, what changed, where it now stands.\n- End with a short \"## Where Things Stand\" section: open threads, looming threats, and unanswered questions going into the next session.\n- Be concise — a few tight paragraphs, not a retelling of every scene. Markdown only.";
+
+const RECAP_DE: &str = "Du bist ein RPG-Assistent für den Spielleiter. Unten stehen die einzelnen Sitzungszusammenfassungen einer Kampagne in chronologischer Reihenfolge. Verwebe sie zu einer einzigen fließenden \"Was bisher geschah\"-Zusammenfassung, die der SL in einem Zug lesen kann, um den gesamten Handlungsbogen zu erinnern.\n\nREGELN:\n- Erzähle es als eine durchgehende Erzählung, chronologisch, in der Vergangenheitsform. Liste es NICHT sitzungsweise auf.\n- Verwende CHARAKTERNAMEN, Orte und Fraktionen genau so, wie sie in den Zusammenfassungen stehen.\n- Fokus auf den roten Faden: wie sich die Geschichte aufgebaut hat, was sich verändert hat, wo sie jetzt steht.\n- Schließe mit einem kurzen Abschnitt \"## Aktueller Stand\": offene Fäden, drohende Gefahren und ungeklärte Fragen für die nächste Sitzung.\n- Fasse dich kurz — ein paar dichte Absätze, keine Nacherzählung jeder Szene. Nur Markdown.";
+
+/// Build the "story so far" recap prompt from a chronological block of session
+/// summaries. `sessions_block` is the pre-joined text (per-session headers + body).
+pub fn build_recap_prompt(campaign_name: &str, sessions_block: &str, language: &str) -> String {
+    let header = if is_de(language) { RECAP_DE } else { RECAP_EN };
+    let name_line = if campaign_name.trim().is_empty() {
+        String::new()
+    } else if is_de(language) {
+        format!("Kampagne: {campaign_name}\n\n")
+    } else {
+        format!("Campaign: {campaign_name}\n\n")
+    };
+    let label = if is_de(language) { "Sitzungszusammenfassungen:" } else { "Session summaries:" };
+    let closing = if is_de(language) {
+        "Gib nur die Zusammenfassung in Markdown zurück."
+    } else {
+        "Return only the recap in markdown."
+    };
+    format!("{header}\n\n{name_line}{label}\n{sessions_block}\n\n{closing}")
 }
 
 pub fn build_metadata_prompt(summary: &str, language: &str) -> String {

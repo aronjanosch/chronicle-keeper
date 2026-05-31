@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+
 use serde_json::{json, Map, Value};
 
 use crate::error::{AppError, AppResult};
 use crate::llm::{self, Transport};
-use crate::models::{SummarizeRequest, SummarizeResponse};
-use crate::prompts::{build_metadata_prompt, build_summary_prompt};
+use crate::models::{RecapRequest, RecapResponse, SummarizeRequest, SummarizeResponse};
+use crate::prompts::{build_metadata_prompt, build_recap_prompt, build_summary_prompt};
 use crate::state::AppState;
 use crate::store::{artifacts, campaigns, codex, sessions};
 
@@ -15,6 +17,69 @@ struct Resolved {
     model: String,
     timeout: u64,
     needs_key: bool,
+}
+
+/// Resolve the LLM provider/model/base/timeout for a generation call, layering
+/// per-request overrides over the saved provider key over config defaults.
+/// Shared by session summarization and campaign recap generation.
+fn resolve_provider(
+    conn: &rusqlite::Connection,
+    cfg: &HashMap<String, String>,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+    base_override: Option<&str>,
+) -> AppResult<Resolved> {
+    let provider = provider_override
+        .map(str::to_string)
+        .unwrap_or_else(|| cfg.get("summary_provider").cloned().unwrap_or_else(|| "ollama".into()))
+        .to_lowercase();
+    let p = llm::get(&provider)
+        .ok_or_else(|| AppError::BadRequest(format!("Unknown provider: {provider}")))?;
+    let saved = llm::get_key(conn, &provider)?.unwrap_or_default();
+
+    let api_key = saved.api_key.clone();
+    if p.needs_key && api_key.is_empty() {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "No API key saved for {}. Add it in Settings → LLM providers.",
+            p.name
+        )));
+    }
+
+    let api_base = base_override
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .or_else(|| Some(saved.api_base.clone()).filter(|s| !s.is_empty()))
+        .or_else(|| {
+            if p.transport == Transport::Ollama {
+                cfg.get("ollama_base_url").cloned()
+            } else {
+                None
+            }
+        })
+        .or_else(|| p.default_api_base.map(str::to_string))
+        .unwrap_or_default();
+
+    let model = model_override
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .or_else(|| Some(saved.default_model.clone()).filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| p.default_model.to_string());
+
+    let timeout: u64 = if p.transport == Transport::Ollama {
+        cfg.get("ollama_timeout_seconds").and_then(|s| s.parse().ok()).unwrap_or(120)
+    } else {
+        cfg.get("litellm_timeout_seconds").and_then(|s| s.parse().ok()).unwrap_or(120)
+    };
+
+    Ok(Resolved {
+        provider,
+        transport: p.transport,
+        api_base,
+        api_key,
+        model,
+        timeout,
+        needs_key: p.needs_key,
+    })
 }
 
 pub async fn summarize_session(state: &AppState, req: &SummarizeRequest) -> AppResult<SummarizeResponse> {
@@ -29,50 +94,13 @@ pub async fn summarize_session(state: &AppState, req: &SummarizeRequest) -> AppR
         }
         .ok_or_else(|| AppError::BadRequest("Transcript not found for session.".into()))?;
 
-        let provider = req
-            .provider
-            .clone()
-            .unwrap_or_else(|| cfg.get("summary_provider").cloned().unwrap_or_else(|| "ollama".into()))
-            .to_lowercase();
-        let p = llm::get(&provider)
-            .ok_or_else(|| AppError::BadRequest(format!("Unknown provider: {provider}")))?;
-        let saved = llm::get_key(conn, &provider)?.unwrap_or_default();
-
-        let api_key = saved.api_key.clone();
-        if p.needs_key && api_key.is_empty() {
-            return Err(AppError::Internal(anyhow::anyhow!(
-                "No API key saved for {}. Add it in Settings → LLM providers.",
-                p.name
-            )));
-        }
-
-        let api_base = req
-            .base_url
-            .clone()
-            .filter(|s| !s.is_empty())
-            .or_else(|| Some(saved.api_base.clone()).filter(|s| !s.is_empty()))
-            .or_else(|| {
-                if p.transport == Transport::Ollama {
-                    cfg.get("ollama_base_url").cloned()
-                } else {
-                    None
-                }
-            })
-            .or_else(|| p.default_api_base.map(str::to_string))
-            .unwrap_or_default();
-
-        let model = req
-            .model
-            .clone()
-            .filter(|s| !s.is_empty())
-            .or_else(|| Some(saved.default_model.clone()).filter(|s| !s.is_empty()))
-            .unwrap_or_else(|| p.default_model.to_string());
-
-        let timeout: u64 = if p.transport == Transport::Ollama {
-            cfg.get("ollama_timeout_seconds").and_then(|s| s.parse().ok()).unwrap_or(120)
-        } else {
-            cfg.get("litellm_timeout_seconds").and_then(|s| s.parse().ok()).unwrap_or(120)
-        };
+        let resolved = resolve_provider(
+            conn,
+            &cfg,
+            req.provider.as_deref(),
+            req.model.as_deref(),
+            req.base_url.as_deref(),
+        )?;
 
         let language = cfg.get("default_language").cloned().unwrap_or_else(|| "en".into());
         // Campaign codex glossary: Phase 1 freeform paste + Phase 2 structured entries.
@@ -86,22 +114,14 @@ pub async fn summarize_session(state: &AppState, req: &SummarizeRequest) -> AppR
         let codex_text = campaign_id
             .as_deref()
             .and_then(|cid| campaigns::get_campaign(conn, cid).ok().flatten())
-            .map(|c| c.codex)
+            .map(|c| campaigns::codex_freeform_text(&c))
             .unwrap_or_default();
         let codex_entries = campaign_id
             .as_deref()
             .map(|cid| codex::list_entries(conn, cid))
             .transpose()?
             .unwrap_or_default();
-        Ok((session, transcript_text, language, codex_text, codex_entries, Resolved {
-            provider,
-            transport: p.transport,
-            api_base,
-            api_key,
-            model,
-            timeout,
-            needs_key: p.needs_key,
-        }))
+        Ok((session, transcript_text, language, codex_text, codex_entries, resolved))
     })?;
     let (session, transcript_text, language, codex_text, codex_entries, resolved) = prep;
     let _ = resolved.needs_key;
@@ -165,6 +185,95 @@ pub async fn summarize_session(state: &AppState, req: &SummarizeRequest) -> AppR
         model: resolved.model,
         summary_path: None,
         metadata,
+    })
+}
+
+/// Generate the campaign "story so far" recap: roll up every session's latest
+/// summary (chronological) into one narrative. Operates on summaries, not
+/// transcripts — cheaper, already-clean text, and avoids re-reading raw audio
+/// output. Stores the result on the campaign and returns it.
+pub async fn generate_recap(
+    state: &AppState,
+    campaign_id: &str,
+    req: &RecapRequest,
+) -> AppResult<RecapResponse> {
+    let prep = state.with_db(|conn| -> AppResult<_> {
+        let campaign = campaigns::get_campaign(conn, campaign_id)?
+            .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))?;
+        let cfg = crate::config::get_config_map(conn)?;
+
+        // Sessions come back newest-first; recap reads oldest-first.
+        let mut list = sessions::list_campaign_sessions(conn, campaign_id)?;
+        list.reverse();
+
+        let mut blocks: Vec<String> = Vec::new();
+        for s in &list {
+            if !s.has_summary {
+                continue;
+            }
+            let Some(text) = artifacts::latest_content(conn, &s.session_id, "summary")? else {
+                continue;
+            };
+            let text = text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            let num = s.session_number.unwrap_or(0);
+            let title = s.title.as_deref().unwrap_or("").trim();
+            let header = if title.is_empty() {
+                format!("### Session {num}")
+            } else {
+                format!("### Session {num} — {title}")
+            };
+            blocks.push(format!("{header}\n{text}"));
+        }
+
+        let resolved = resolve_provider(
+            conn,
+            &cfg,
+            req.provider.as_deref(),
+            req.model.as_deref(),
+            req.base_url.as_deref(),
+        )?;
+        Ok((campaign, blocks, resolved))
+    })?;
+    let (campaign, blocks, resolved) = prep;
+
+    if blocks.is_empty() {
+        return Err(AppError::BadRequest(
+            "No session summaries yet — summarize at least one session before building a recap.".into(),
+        ));
+    }
+    let sessions_used = blocks.len();
+    let sessions_block = blocks.join("\n\n");
+    let prompt = build_recap_prompt(&campaign.name, &sessions_block, &campaign.default_language);
+
+    let recap_text = llm::chat(
+        resolved.transport,
+        &resolved.api_base,
+        &resolved.api_key,
+        &resolved.model,
+        &prompt,
+        resolved.timeout,
+        false,
+    )
+    .await
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("Recap LLM request failed: {}", e.0)))?;
+    let recap_text = recap_text.trim().to_string();
+    if recap_text.is_empty() {
+        return Err(AppError::Internal(anyhow::anyhow!("LLM returned an empty recap.")));
+    }
+
+    let cid = campaign_id.to_string();
+    let recap_for_db = recap_text.clone();
+    let recap_updated_at = state.with_db(move |conn| campaigns::set_recap(conn, &cid, &recap_for_db))?;
+
+    Ok(RecapResponse {
+        recap: recap_text,
+        recap_updated_at,
+        provider: resolved.provider,
+        model: resolved.model,
+        sessions_used,
     })
 }
 
@@ -317,6 +426,7 @@ mod tests {
                 name: "Aragorn".into(),
                 kind: "npc".into(),
                 body: "Heir of Isildur".into(),
+                detail: String::new(),
             },
         )
         .unwrap();

@@ -38,6 +38,7 @@ pub fn router(state: AppState) -> Router {
             get(campaigns::list_sessions).post(campaigns::create_session),
         )
         .route("/next-session-number", get(campaigns::next_session_number))
+        .route("/campaigns/:id/recap", post(campaigns::generate_recap))
         // codex entries (Phase 2)
         .route(
             "/campaigns/:id/codex/entries",

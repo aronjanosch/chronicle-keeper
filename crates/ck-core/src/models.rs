@@ -20,6 +20,12 @@ pub struct CampaignDetail {
     pub players: Value,
     pub extra_info: String,
     pub codex: String,
+    /// Freeform notes as a JSON array [{title, body}], all fed verbatim into summaries.
+    pub codex_notes: Value,
+    /// LLM-generated "story so far" narrative rollup (read-only, regenerate on demand).
+    pub recap: String,
+    /// When `recap` was last generated (local naive timestamp; empty if never).
+    pub recap_updated_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -204,6 +210,7 @@ pub struct CampaignUpdateRequest {
     pub players: Option<Value>,
     pub extra_info: Option<String>,
     pub codex: Option<String>,
+    pub codex_notes: Option<Value>,
     pub next_session_number: Option<i64>,
 }
 
@@ -234,6 +241,9 @@ pub struct CodexEntry {
     pub name: String,
     pub kind: String,
     pub body: String,
+    /// Distilled multi-sentence write-up shown in the entry inspector. NOT fed
+    /// into summaries (the one-line `body` still is) — this is for the human.
+    pub detail: String,
     pub source: String,
     pub updated_at: String,
 }
@@ -244,6 +254,8 @@ pub struct CodexEntryCreate {
     pub kind: String,
     #[serde(default)]
     pub body: String,
+    #[serde(default)]
+    pub detail: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -251,6 +263,26 @@ pub struct CodexEntryUpdate {
     pub name: Option<String>,
     pub kind: Option<String>,
     pub body: Option<String>,
+    pub detail: Option<String>,
+}
+
+/// Generate the campaign "story so far" recap. Provider/model optional — falls
+/// back to the configured summary provider, same as `SummarizeRequest`.
+#[derive(Debug, Default, Deserialize)]
+pub struct RecapRequest {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RecapResponse {
+    pub recap: String,
+    pub recap_updated_at: String,
+    pub provider: String,
+    pub model: String,
+    /// Number of session summaries that fed the recap.
+    pub sessions_used: usize,
 }
 
 /// Paste-and-distill import: raw notes in, proposed entries out (reviewed before save).

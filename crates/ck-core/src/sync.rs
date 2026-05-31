@@ -36,6 +36,12 @@ pub struct Campaign {
     pub extra_info: String,
     #[serde(default)]
     pub codex: String,
+    #[serde(default)]
+    pub codex_notes: String,
+    #[serde(default)]
+    pub recap: String,
+    #[serde(default)]
+    pub recap_updated_at: String,
     pub updated_at: String,
     #[serde(default)]
     pub deleted: bool,
@@ -78,6 +84,8 @@ pub struct CodexEntry {
     #[serde(default)]
     pub body: String,
     #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
     pub source: String,
     pub updated_at: String,
     #[serde(default)]
@@ -119,7 +127,8 @@ pub fn collect_dirty(conn: &Connection) -> AppResult<SyncPayload> {
 
     let mut stmt = conn.prepare(
         "SELECT campaign_id, name, next_session_number, system, gm, setting, \
-         default_language, players_json, extra_info, codex, updated_at, deleted \
+         default_language, players_json, extra_info, codex, codex_notes, recap, recap_updated_at, \
+         updated_at, deleted \
          FROM campaigns WHERE dirty = 1",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -135,6 +144,9 @@ pub fn collect_dirty(conn: &Connection) -> AppResult<SyncPayload> {
             players: serde_json::from_str(&players_json).unwrap_or_else(|_| json!([])),
             extra_info: r.get::<_, Option<String>>("extra_info")?.unwrap_or_default(),
             codex: r.get::<_, Option<String>>("codex")?.unwrap_or_default(),
+            codex_notes: r.get::<_, Option<String>>("codex_notes")?.unwrap_or_default(),
+            recap: r.get::<_, Option<String>>("recap")?.unwrap_or_default(),
+            recap_updated_at: r.get::<_, Option<String>>("recap_updated_at")?.unwrap_or_default(),
             updated_at: r.get("updated_at")?,
             deleted: r.get::<_, i64>("deleted")? != 0,
         })
@@ -192,7 +204,7 @@ pub fn collect_dirty(conn: &Connection) -> AppResult<SyncPayload> {
     payload.deleted_artifact_ids = crate::store::artifacts::collect_deleted_dirty(conn)?;
 
     let mut stmt = conn.prepare(
-        "SELECT entry_id, campaign_id, name, kind, body, source, updated_at, deleted \
+        "SELECT entry_id, campaign_id, name, kind, body, detail, source, updated_at, deleted \
          FROM codex_entries WHERE dirty = 1",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -202,6 +214,7 @@ pub fn collect_dirty(conn: &Connection) -> AppResult<SyncPayload> {
             name: r.get("name")?,
             kind: r.get("kind")?,
             body: r.get::<_, Option<String>>("body")?.unwrap_or_default(),
+            detail: r.get::<_, Option<String>>("detail")?.unwrap_or_default(),
             source: r.get::<_, Option<String>>("source")?.unwrap_or_else(|| "manual".into()),
             updated_at: r.get::<_, Option<String>>("updated_at")?.unwrap_or_default(),
             deleted: r.get::<_, i64>("deleted")? != 0,
@@ -247,17 +260,19 @@ pub fn apply_pull(conn: &Connection, pull: &SyncPayload) -> AppResult<()> {
         conn.execute(
             "INSERT INTO campaigns \
              (campaign_id, name, next_session_number, system, gm, setting, default_language, \
-              players_json, extra_info, codex, updated_at, deleted, dirty) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0) \
+              players_json, extra_info, codex, codex_notes, recap, recap_updated_at, updated_at, deleted, dirty) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 0) \
              ON CONFLICT(campaign_id) DO UPDATE SET \
               name = excluded.name, next_session_number = excluded.next_session_number, \
               system = excluded.system, gm = excluded.gm, setting = excluded.setting, \
               default_language = excluded.default_language, players_json = excluded.players_json, \
-              extra_info = excluded.extra_info, codex = excluded.codex, updated_at = excluded.updated_at, \
-              deleted = excluded.deleted, dirty = 0",
+              extra_info = excluded.extra_info, codex = excluded.codex, codex_notes = excluded.codex_notes, \
+              recap = excluded.recap, recap_updated_at = excluded.recap_updated_at, \
+              updated_at = excluded.updated_at, deleted = excluded.deleted, dirty = 0",
             params![
                 c.campaign_id, c.name, c.next_session_number, c.system, c.gm, c.setting,
-                c.default_language, players.to_string(), c.extra_info, c.codex, c.updated_at, c.deleted as i64,
+                c.default_language, players.to_string(), c.extra_info, c.codex, c.codex_notes,
+                c.recap, c.recap_updated_at, c.updated_at, c.deleted as i64,
             ],
         )?;
     }
@@ -302,14 +317,14 @@ pub fn apply_pull(conn: &Connection, pull: &SyncPayload) -> AppResult<()> {
     for e in &pull.codex_entries {
         conn.execute(
             "INSERT INTO codex_entries \
-             (entry_id, campaign_id, name, kind, body, source, updated_at, deleted, dirty) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0) \
+             (entry_id, campaign_id, name, kind, body, detail, source, updated_at, deleted, dirty) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0) \
              ON CONFLICT(entry_id) DO UPDATE SET \
               campaign_id = excluded.campaign_id, name = excluded.name, kind = excluded.kind, \
-              body = excluded.body, source = excluded.source, \
+              body = excluded.body, detail = excluded.detail, source = excluded.source, \
               updated_at = excluded.updated_at, deleted = excluded.deleted, dirty = 0",
             params![
-                e.entry_id, e.campaign_id, e.name, e.kind, e.body,
+                e.entry_id, e.campaign_id, e.name, e.kind, e.body, e.detail,
                 if e.source.is_empty() { "manual" } else { &e.source },
                 e.updated_at, e.deleted as i64,
             ],
@@ -441,6 +456,38 @@ mod tests {
     }
 
     #[test]
+    fn recap_round_trips_on_the_campaign() {
+        let conn = crate::db::open_in_memory().unwrap();
+        campaigns::create_campaign(&conn, "c1", "Camp", 1).unwrap();
+
+        // A generated recap is dirty and pushed with its timestamp.
+        campaigns::set_recap(&conn, "c1", "The party rose from nothing.").unwrap();
+        let push = collect_dirty(&conn).unwrap();
+        let pushed = push.campaigns.iter().find(|c| c.campaign_id == "c1").expect("campaign pushed");
+        assert_eq!(pushed.recap, "The party rose from nothing.");
+        assert!(!pushed.recap_updated_at.is_empty(), "recap timestamp pushed");
+        clear_dirty(&conn, &push).unwrap();
+
+        // A recap arriving from another device overwrites the local one.
+        let pull = SyncPayload {
+            campaigns: vec![Campaign {
+                campaign_id: "c1".into(),
+                name: "Camp".into(),
+                recap: "A darker chapter began.".into(),
+                recap_updated_at: "2026-05-29T00:00:00Z".into(),
+                updated_at: "2026-05-29T00:00:00Z".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        apply_pull(&conn, &pull).unwrap();
+        let got = campaigns::get_campaign(&conn, "c1").unwrap().expect("campaign present");
+        assert_eq!(got.recap, "A darker chapter began.");
+        assert_eq!(got.recap_updated_at, "2026-05-29T00:00:00Z");
+        assert!(collect_dirty(&conn).unwrap().campaigns.is_empty(), "pulled campaign clean");
+    }
+
+    #[test]
     fn deletions_are_collected_and_cleared() {
         let conn = crate::db::open_in_memory().unwrap();
         conn.execute("INSERT INTO sessions (session_id) VALUES ('s1')", []).unwrap();
@@ -467,7 +514,7 @@ mod tests {
         let e = codex_store::create_entry(
             &conn,
             "c1",
-            &CodexEntryCreate { name: "Aragorn".into(), kind: "npc".into(), body: "Ranger".into() },
+            &CodexEntryCreate { name: "Aragorn".into(), kind: "npc".into(), body: "Ranger".into(), detail: "A weathered ranger of the North.".into() },
         )
         .unwrap();
 
@@ -475,6 +522,7 @@ mod tests {
         let push = collect_dirty(&conn).unwrap();
         let pushed = push.codex_entries.iter().find(|x| x.entry_id == e.entry_id).expect("entry pushed");
         assert_eq!(pushed.name, "Aragorn");
+        assert_eq!(pushed.detail, "A weathered ranger of the North.");
         assert!(!pushed.deleted);
         clear_dirty(&conn, &push).unwrap();
         assert!(collect_dirty(&conn).unwrap().codex_entries.is_empty());
@@ -487,6 +535,7 @@ mod tests {
                 name: "Aragorn".into(),
                 kind: "npc".into(),
                 body: "Heir of Isildur".into(),
+                detail: "Currently in Rivendell seeking counsel.".into(),
                 source: "manual".into(),
                 updated_at: "2026-05-28T00:00:00Z".into(),
                 deleted: false,
@@ -497,6 +546,7 @@ mod tests {
         let entries = codex_store::list_entries(&conn, "c1").unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].body, "Heir of Isildur");
+        assert_eq!(entries[0].detail, "Currently in Rivendell seeking counsel.");
         // Pulled record clean.
         assert!(collect_dirty(&conn).unwrap().codex_entries.is_empty());
 

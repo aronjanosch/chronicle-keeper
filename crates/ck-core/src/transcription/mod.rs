@@ -5,6 +5,7 @@ mod decode;
 pub mod model;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 use sherpa_onnx::{
@@ -113,6 +114,7 @@ fn transcribe_vad(
     samples: &[f32],
     track_id: &str,
     label: &str,
+    cancel: &AtomicBool,
 ) -> Option<Vec<Segment>> {
     let vad = build_vad(vad_model)?;
     let mut segments = Vec::new();
@@ -128,6 +130,9 @@ fn transcribe_vad(
         }
     };
     for window in samples.chunks(VAD_WINDOW) {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
         vad.accept_waveform(window);
         drain(&vad, &mut segments);
     }
@@ -142,10 +147,14 @@ fn transcribe_fixed(
     samples: &[f32],
     track_id: &str,
     label: &str,
+    cancel: &AtomicBool,
 ) -> Vec<Segment> {
     let chunk_len = (CHUNK_SECS as i32 * TARGET_SR) as usize;
     let mut segments = Vec::new();
     for (idx, chunk) in samples.chunks(chunk_len).enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
         let text = decode_text(recognizer, chunk);
         if text.is_empty() {
             continue;
@@ -172,15 +181,22 @@ fn make_segment(text: String, start: f64, end: f64, track_id: &str, label: &str)
 /// `tracks` is `(track_id, file_path, speaker_label)`. `accelerator` is the
 /// onnxruntime execution provider (cpu/coreml/cuda/directml); falls back to cpu
 /// if unsupported. `vad_model`, when present, enables Silero-VAD segmentation.
+/// `cancel`, when flipped to `true` by another thread (e.g. the HTTP handler on
+/// timeout), makes the loop bail at the next track/chunk boundary — a blocking
+/// `spawn_blocking` thread can't be aborted, so cancellation is cooperative.
 pub fn transcribe_tracks(
     model_dir: &Path,
     accelerator: &str,
     vad_model: Option<&Path>,
     tracks: &[(String, PathBuf, String)],
+    cancel: &AtomicBool,
 ) -> Result<Vec<Segment>> {
     let recognizer = build_recognizer(model_dir, accelerator)?;
     let mut all = Vec::new();
     for (track_id, path, label) in tracks {
+        if cancel.load(Ordering::Relaxed) {
+            anyhow::bail!("Transcription cancelled (timed out).");
+        }
         if !path.exists() {
             tracing::warn!("track file missing, skipping: {}", path.display());
             continue;
@@ -190,9 +206,12 @@ pub fn transcribe_tracks(
         let samples = to_target_sr(&samples, sr);
 
         let segs = vad_model
-            .and_then(|m| transcribe_vad(&recognizer, m, &samples, track_id, label))
-            .unwrap_or_else(|| transcribe_fixed(&recognizer, &samples, track_id, label));
+            .and_then(|m| transcribe_vad(&recognizer, m, &samples, track_id, label, cancel))
+            .unwrap_or_else(|| transcribe_fixed(&recognizer, &samples, track_id, label, cancel));
         all.extend(segs);
+    }
+    if cancel.load(Ordering::Relaxed) {
+        anyhow::bail!("Transcription cancelled (timed out).");
     }
     all.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
     Ok(all)

@@ -84,10 +84,22 @@ fn resolve(conn: &rusqlite::Connection, campaign_id: &str) -> AppResult<Resolved
 
 /// Distill pasted notes into proposed codex entries. Does not touch the DB
 /// beyond reading config — the caller reviews and commits.
+/// Upper bound on pasted note size. Past this, a single import is both useless
+/// (it overruns the model's context) and a foot-gun (runaway token cost on a BYO
+/// cloud key). Distilling notes in batches is the right move at this scale.
+const MAX_IMPORT_BYTES: usize = 256 * 1024;
+
 pub async fn import(state: &AppState, campaign_id: &str, text: &str) -> AppResult<Vec<CodexEntryCreate>> {
     let text = text.trim();
     if text.is_empty() {
         return Err(AppError::BadRequest("Nothing to import — paste some notes first.".into()));
+    }
+    if text.len() > MAX_IMPORT_BYTES {
+        return Err(AppError::BadRequest(format!(
+            "Notes are too large to import at once ({} KB; max {} KB). Split them and import in batches.",
+            text.len() / 1024,
+            MAX_IMPORT_BYTES / 1024,
+        )));
     }
     let resolved = state.with_db(|conn| resolve(conn, campaign_id))?;
     let prompt = build_prompt(text, &resolved.language);

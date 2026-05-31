@@ -25,6 +25,7 @@ fn default_config() -> Vec<(&'static str, String)> {
         ("default_language", "en".into()),
         ("whisperx_model", "nemo-parakeet-tdt-0.6b-v3".into()),
         ("transcription_accelerator", "cpu".into()),
+        ("transcription_timeout_seconds", "3600".into()),
         ("current_campaign_id", "".into()),
     ]
 }
@@ -61,6 +62,8 @@ pub struct ConfigResponse {
     pub transcription_provider: String,
     pub transcription_provider_effective: String,
     pub transcription_accelerator: String,
+    /// Hard cap (seconds) on a single transcription run before it's aborted.
+    pub transcription_timeout_seconds: i64,
     pub has_litellm_key: bool,
     /// Multi-device sync server base URL (empty = sync disabled).
     pub sync_url: String,
@@ -84,6 +87,7 @@ pub struct UpdateConfigRequest {
     pub whisperx_model: Option<String>,
     pub transcription_provider: Option<String>,
     pub transcription_accelerator: Option<String>,
+    pub transcription_timeout_seconds: Option<i64>,
     pub sync_url: Option<String>,
     pub sync_token: Option<String>,
 }
@@ -155,6 +159,10 @@ pub fn to_response(map: &HashMap<String, String>) -> ConfigResponse {
             let a = get_str(map, "transcription_accelerator");
             if a.is_empty() { "cpu".into() } else { a }
         },
+        transcription_timeout_seconds: {
+            let t = get_int(map, "transcription_timeout_seconds");
+            if t > 0 { t } else { 3600 }
+        },
         has_litellm_key: !get_str(map, "litellm_api_key").is_empty(),
         sync_url: get_str(map, "sync_url"),
         has_sync_token: !get_str(map, "sync_token").is_empty(),
@@ -202,6 +210,7 @@ pub fn apply_update(conn: &Connection, req: &UpdateConfigRequest) -> AppResult<(
     set("whisperx_model", req.whisperx_model.clone())?;
     set("transcription_provider", req.transcription_provider.as_ref().map(|s| s.trim().to_lowercase()))?;
     set("transcription_accelerator", req.transcription_accelerator.as_ref().map(|s| s.trim().to_lowercase()))?;
+    set("transcription_timeout_seconds", req.transcription_timeout_seconds.map(|n| n.to_string()))?;
     set("sync_url", req.sync_url.as_ref().map(|s| s.trim().trim_end_matches('/').to_string()))?;
     set("sync_token", req.sync_token.clone())?;
     Ok(())

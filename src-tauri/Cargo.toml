@@ -1,8 +1,8 @@
 [package]
 name = "chronicle-keeper"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "0.5.0"
+description = "Generate structured D&D session notes from Craig Bot recordings — local-first, bring-your-own-LLM."
+authors = ["Aron Wiederkehr"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

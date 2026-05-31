@@ -112,7 +112,7 @@ async fn health() -> Json<Value> {
 /// `/transcribe` request is in flight to render a progress bar. Returns `idle`
 /// when no download is happening (e.g. model already present).
 async fn model_status(State(state): State<AppState>) -> Json<crate::state::ModelProgress> {
-    let p = state.model_progress.lock().expect("model_progress mutex poisoned").clone();
+    let p = state.model_progress.lock().unwrap_or_else(|e| e.into_inner()).clone();
     Json(p)
 }
 

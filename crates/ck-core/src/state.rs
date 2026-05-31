@@ -32,7 +32,9 @@ impl Default for ModelProgress {
 
 impl ModelProgress {
     pub fn set(handle: &Arc<Mutex<Self>>, phase: &str, downloaded: u64, total: u64) {
-        let mut p = handle.lock().expect("model_progress mutex poisoned");
+        // Recover the guard on poison rather than cascading a panic into a
+        // process kill — a panicked writer leaves the progress struct usable.
+        let mut p = handle.lock().unwrap_or_else(|e| e.into_inner());
         p.phase = phase.into();
         p.downloaded = downloaded;
         p.total = total;
@@ -40,7 +42,7 @@ impl ModelProgress {
     }
 
     pub fn set_error(handle: &Arc<Mutex<Self>>, message: String) {
-        let mut p = handle.lock().expect("model_progress mutex poisoned");
+        let mut p = handle.lock().unwrap_or_else(|e| e.into_inner());
         p.phase = "error".into();
         p.message = Some(message);
     }
@@ -76,7 +78,9 @@ impl AppState {
 
     /// Run a closure with the locked DB connection.
     pub fn with_db<T>(&self, f: impl FnOnce(&Connection) -> T) -> T {
-        let conn = self.db.lock().expect("db mutex poisoned");
+        // Recover the guard on poison: SQLite state is intact after a panicked
+        // borrow, so don't let one bad request kill the whole process.
+        let conn = self.db.lock().unwrap_or_else(|e| e.into_inner());
         f(&conn)
     }
 }

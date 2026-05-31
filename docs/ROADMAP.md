@@ -1,11 +1,12 @@
 # Chronicle Keeper — Roadmap
 
-> Last updated: 2026-05-27  
+> Last updated: 2026-06-01  
 > Branch: `main` (the native-Rust rewrite is merged; `native-rust-core` retired)
 >
 > **Status in one line:** standalone app works offline end-to-end with a redesigned
-> "scriptorium" UI (Preact + htm, no build step); multi-device sync is functionally complete
-> and verified client↔server. Repo licensed (app MIT, server AGPL-3.0).
+> "scriptorium" UI (Preact + htm, no build step); the codex glossary is complete (all three
+> phases — manual, auto-extract, folder import) plus a story-so-far recap; multi-device sync is
+> functionally complete and verified client↔server. Repo licensed (app MIT, server AGPL-3.0).
 >
 > **Next milestone: the first public OSS release — `v0.5`, a Reddit launch of the free
 > standalone app.** Everything reorders around one question: *can a Windows / macOS / Linux
@@ -231,9 +232,15 @@ verbatim. Three phases, cheap-first:
       extracts (never overwrites a user-edited row); editable Codex screen grouped by kind,
       inline edit/delete, `source` badge; sidebar count = entry count; sync wiring (client +
       server, soft-delete propagates). Closes the self-improving loop.
-- **Phase 3 — folder/export import** (Obsidian / Notion / LegendKeeper export → LLM *distills*
-  to glossary entries; user-chosen provider/model; manual snapshot; desktop-only fs guard):
-  deferred (see "Later"). Supersedes the old "C — Sources indexer" with an LLM-distill take.
+- [x] **Phase 3 — folder/export import (shipped):** point at a directory (Obsidian / Notion /
+      LegendKeeper export); an LLM *distills* it to glossary entries (`codex_import.rs`), with a
+      user-chosen provider/model and a preview → commit flow (`POST .../codex/import` returns a
+      preview, `.../codex/import/commit` persists it onto the Phase 2 store). Manual snapshot,
+      desktop-only fs guard. Supersedes the old "C — Sources indexer" with an LLM-distill take.
+
+**Story-so-far recap (shipped):** `POST /campaigns/:id/recap` synthesizes a running narrative
+recap from prior session summaries (prompt in `prompts.rs`); surfaced in the campaign overview UI.
+A read-aloud "previously on…" for the GM, regenerated on demand — derived, not hand-maintained.
 
 **Docs / marketing:**
 - [ ] README: screenshots of the new scriptorium UI + a short demo GIF of the pipeline
@@ -266,38 +273,26 @@ Why now and not earlier: the original justification (shared HTTP contract with s
 
 `ck-serve` (dev binary) keeps axum — useful for testing the core without a window.
 
-### 🔲 Codex Phase 3 (post-launch, detailed)
+### ✅ Codex Phase 3 — folder / export import (shipped)
 
-Phases 1 (manual glossary) and 2 (structured entries + auto-extract) shipped. Phase 3 extends
-the **same** model: one editable glossary store + one injection point
+Phases 1 (manual glossary), 2 (structured entries + auto-extract), and 3 (folder import) are all
+done. Phase 3 extends the **same** model: one editable glossary store + one injection point
 (`prompts.rs::build_session_context`), filled by more sources. **Guiding principle holds:** the
 codex is *the summarizer's memory* — derived, lossy, lightly editable — **not** a wiki the GM
 lives in. No maps, no AI prep-chat, no full CRUD workspace.
 
-#### Phase 3 — folder / export import (LLM distillation)
+What shipped (LLM distillation of a notes folder):
 
-Point at a directory (Obsidian vault, Notion/LegendKeeper export); an LLM **distills** it to
-glossary entries (not schema parsing — tolerates any export shape). Lands on Phase 2's
-`codex_entries` store.
-
-- **`http/codex.rs`** (extend) — `POST /campaigns/:id/codex/import`, body `{ dir_path, provider, model,
-  base_url }` (mirror `SummarizeRequest`; resolve provider/model/key exactly like
-  `summarize.rs` via `llm::get`/`llm::get_key`).
-- Walk `dir_path` with `std::fs` recursion (no new dep); collect `.md`/`.markdown`/`.txt`; skip
-  large/binary. Per file: relative path (parent folder = `kind` hint) + frontmatter + prose.
-- Batch by a token budget; per batch call `llm::chat(json_mode=true)` with a **distill** prompt
-  → `[{name, kind, body}]` (one-line `body`). Reuse the tolerant fenced-JSON parse from
-  `summarize.rs::parse_metadata`. Upsert as `source='import'` (dedup as Phase 2).
-- **Guard** — reads the local filesystem → desktop-only; reject in server mode (gate on
-  `state.auth_token`/server flag) so the sync VPS never exposes arbitrary fs.
-- **Frontend** — import panel on the Codex screen: directory path input (v1 text field; Tauri
-  dialog plugin optional), provider+model select chosen **before** running (mirror
-  `screens/summarize.js`), and a **privacy line** under the button: *"Your notes will be sent
-  to {provider} to build the glossary. Ollama keeps this fully local."* After import, distilled
-  entries flow into the editable Phase 2 table so the GM corrects anything wrong.
+- [x] **`http/codex.rs` + `codex_import.rs`** — `POST /campaigns/:id/codex/import` (mirrors
+      `SummarizeRequest`: provider/model/base_url; resolves key like `summarize.rs`) walks the
+      directory with `std::fs`, collects `.md`/`.markdown`/`.txt`, and batches them to the LLM
+      with a **distill** prompt → `[{name, kind, body}]`. Returns a **preview**;
+      `.../codex/import/commit` persists the chosen entries as `source='import'` (dedup as Phase 2).
+- [x] **Desktop-only guard** — reads the local filesystem, so it is gated off in server mode; the
+      sync VPS never exposes arbitrary fs.
+- [x] **Frontend** — import panel on the Codex screen with directory input + provider/model select
+      chosen before running, a privacy line, and a preview the GM edits before committing.
 - **Snapshot semantics** — one-time, manual; re-run to refresh. No folder-watching.
-- **Verify** — import an Obsidian vault with Ollama → entries populate, editable; run a summary
-  → imported names land in context and aren't re-mangled by ASR.
 
 ### 🔲 Later
 
@@ -305,7 +300,6 @@ glossary entries (not schema parsing — tolerates any export shape). Lands on P
 - More transcription engines (e.g. Whisper Turbo) — audio is kept on device specifically so users can re-transcribe with a different model
 - Postgres on sync server (when SQLite write contention becomes real; storage is behind an interface)
 - Cohere LLM provider (deferred from the LLM port)
-- Codex **Phase 3** — folder/export import (LLM distill). Detailed spec below ("Codex Phase 3").
 - Export targets beyond Obsidian (Notion API, Logseq)
 - Optional shutdown-flush hook in the Tauri shell (today's startup + interval is sufficient; dirty flags persist)
 

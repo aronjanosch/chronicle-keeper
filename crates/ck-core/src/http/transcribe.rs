@@ -93,12 +93,39 @@ pub async fn transcribe(
     };
     // Best-effort VAD model fetch (None → fixed-window fallback inside the engine).
     let vad_model = model::ensure_vad(&state.paths).await;
-    let segments = tokio::task::spawn_blocking(move || {
-        transcribe_tracks(&model_dir, &accelerator, vad_model.as_deref(), &tracks)
-    })
-    .await
-    .map_err(|e| AppError::Internal(anyhow::anyhow!("transcription task: {e}")))?
-    .map_err(AppError::Internal)?;
+
+    // Cap how long a single transcription may run. A corrupt or huge file would
+    // otherwise pin a worker forever and freeze the frontend op-banner. The flag
+    // cooperatively stops the blocking thread at its next chunk boundary (a
+    // blocking thread can't be force-aborted), so the leaked core is freed too.
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let timeout_secs: u64 = state
+        .with_db(|conn| crate::config::get_config_map(conn))
+        .ok()
+        .and_then(|cfg| cfg.get("transcription_timeout_seconds").and_then(|s| s.parse().ok()))
+        .filter(|&s: &u64| s > 0)
+        .unwrap_or(3600);
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_worker = cancel.clone();
+    let handle = tokio::task::spawn_blocking(move || {
+        transcribe_tracks(&model_dir, &accelerator, vad_model.as_deref(), &tracks, &cancel_worker)
+    });
+
+    let segments = match tokio::time::timeout(Duration::from_secs(timeout_secs), handle).await {
+        Ok(joined) => joined
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("transcription task: {e}")))?
+            .map_err(AppError::Internal)?,
+        Err(_) => {
+            cancel.store(true, Ordering::Relaxed); // signal the blocking thread to bail
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "Transcription timed out after {timeout_secs}s. The audio may be corrupt or too long; try splitting it or raise transcription_timeout_seconds."
+            )));
+        }
+    };
 
     let _ = session_path; // session folder no longer holds transcript files
     let transcript_text = segments_to_plain_text(&segments);

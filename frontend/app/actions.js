@@ -97,7 +97,10 @@ export async function deleteCampaign(id) {
 export async function loadCodexEntries(campaignId) {
   const id = campaignId || store.campaign?.campaign_id;
   if (!id) return [];
-  const entries = await apiFetch(`/campaigns/${id}/codex/entries`).catch(() => []);
+  const entries = await apiFetch(`/campaigns/${id}/codex/entries`).catch((e) => {
+    console.warn('loadCodexEntries failed:', e);
+    return [];
+  });
   setState({ codexEntries: entries || [] });
   return entries || [];
 }
@@ -267,7 +270,8 @@ export async function runTranscribe({ provider, model, language }) {
 
 export async function loadTranscriptionProviders() {
   if (!store.providers) {
-    try { setState({ providers: await apiFetch('/providers') }); } catch (_) {}
+    try { setState({ providers: await apiFetch('/providers') }); }
+    catch (e) { console.warn('loadTranscriptionProviders failed:', e); }
   }
   return store.providers || [];
 }
@@ -276,7 +280,7 @@ export async function loadTranscriptionProviders() {
 export async function loadPromptPresets() {
   if (store.promptPresets) return store.promptPresets;
   let p = {};
-  try { p = await apiFetch('/prompts'); } catch (_) {}
+  try { p = await apiFetch('/prompts'); } catch (e) { console.warn('loadPromptPresets failed:', e); }
   setState({ promptPresets: p });
   return p;
 }
@@ -314,7 +318,8 @@ export async function loadConfig() {
   const config = await apiFetch('/config');
   setState({ config });
   if (!store.llmProviders) {
-    try { setState({ llmProviders: await apiFetch('/llm-providers') }); } catch (_) {}
+    try { setState({ llmProviders: await apiFetch('/llm-providers') }); }
+    catch (e) { console.warn('loadConfig: llm-providers fetch failed:', e); }
   }
   return config;
 }
@@ -330,7 +335,7 @@ export async function saveConfig(payload, apiBaseValue) {
 export async function loadLlmProviders(force) {
   if (store.llmProviders && !force) return store.llmProviders;
   let list = [];
-  try { list = await apiFetch('/llm-providers'); } catch (_) {}
+  try { list = await apiFetch('/llm-providers'); } catch (e) { console.warn('loadLlmProviders failed:', e); }
   setState({ llmProviders: list });
   return list;
 }

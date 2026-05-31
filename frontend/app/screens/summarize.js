@@ -125,12 +125,14 @@ export function SummarizeScreen({ store }) {
           </div>
         </div>
 
-        <!-- Codex context (deferred) -->
+        <!-- Codex context — entries are fed into the prompt automatically (see prompts.rs) -->
         <div style=${{ marginTop: 22 }}>
           <${Label}>Codex context</${Label}>
           <div style=${{ padding: '12px 14px', background: 'var(--paper-deep)', border: '1px solid var(--rule-soft)', borderRadius: 6, fontSize: 12.5, color: 'var(--ink-muted)', display: 'flex', alignItems: 'center', gap: 10 }}>
             <${Icon} name="book" size=${14} />
-            <span>Feeding codex notes to the summarizer is coming soon.</span>
+            <span>${(store.codexEntries?.length || 0) > 0
+              ? `${store.codexEntries.length} codex ${store.codexEntries.length === 1 ? 'entry is' : 'entries are'} fed to the summarizer automatically.`
+              : 'Codex entries for this campaign are fed to the summarizer automatically. None yet.'}</span>
           </div>
         </div>
       </div>

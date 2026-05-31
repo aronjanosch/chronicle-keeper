@@ -152,7 +152,10 @@ pub async fn summarize_session(state: &AppState, req: &SummarizeRequest) -> AppR
         return Err(AppError::Internal(anyhow::anyhow!("LLM returned an empty summary.")));
     }
 
-    let metadata_text = llm::chat(
+    // Metadata is best-effort: a failure here must not sink the summary the user
+    // already paid for. But don't swallow it silently — a quiet empty string
+    // looks identical to "no metadata found" and hides a broken auto-fill.
+    let metadata_text = match llm::chat(
         resolved.transport,
         &resolved.api_base,
         &resolved.api_key,
@@ -162,7 +165,13 @@ pub async fn summarize_session(state: &AppState, req: &SummarizeRequest) -> AppR
         true,
     )
     .await
-    .unwrap_or_default();
+    {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::warn!("metadata extraction failed, skipping auto-fill: {}", e.0);
+            String::new()
+        }
+    };
     let metadata = parse_metadata(&metadata_text);
 
     // --- persist (inline content in SQLite; no loose files — core principle #1) ---

@@ -27,7 +27,10 @@ fn shellexpand_home(path: &str) -> PathBuf {
 }
 
 fn campaign_name(conn: &Connection, campaign_id: &str) -> Option<String> {
-    campaigns::get_campaign(conn, campaign_id).ok().flatten().map(|c| c.name)
+    campaigns::get_campaign(conn, campaign_id)
+        .ok()
+        .flatten()
+        .map(|c| c.name)
 }
 
 fn number_in_use(conn: &Connection, campaign_id: &str, number: i64) -> AppResult<bool> {
@@ -49,7 +52,9 @@ pub fn create_campaign_session(
     date: Option<&str>,
 ) -> AppResult<CampaignSessionInfo> {
     let Some(campaign) = campaigns::get_campaign(conn, campaign_id)? else {
-        return Err(AppError::NotFound(format!("Campaign not found: {campaign_id}")));
+        return Err(AppError::NotFound(format!(
+            "Campaign not found: {campaign_id}"
+        )));
     };
     let current_next = campaign.next_session_number;
 
@@ -115,7 +120,10 @@ pub fn create_campaign_session(
 
 pub fn set_campaign_metadata(conn: &Connection, req: &SessionMetadataRequest) -> AppResult<Value> {
     if !session_exists(conn, &req.session_id)? {
-        return Err(AppError::NotFound(format!("Session not found: {}", req.session_id)));
+        return Err(AppError::NotFound(format!(
+            "Session not found: {}",
+            req.session_id
+        )));
     }
 
     let mut session_number = req.session_number;
@@ -153,7 +161,10 @@ pub fn set_campaign_metadata(conn: &Connection, req: &SessionMetadataRequest) ->
         }
     }
 
-    let campaign_name = req.campaign_id.as_deref().and_then(|c| campaign_name(conn, c));
+    let campaign_name = req
+        .campaign_id
+        .as_deref()
+        .and_then(|c| campaign_name(conn, c));
     Ok(json!({
         "campaign_id": req.campaign_id,
         "campaign_name": campaign_name,
@@ -167,7 +178,11 @@ pub fn set_campaign_metadata(conn: &Connection, req: &SessionMetadataRequest) ->
 
 fn session_exists(conn: &Connection, session_id: &str) -> AppResult<bool> {
     let n: Option<i64> = conn
-        .query_row("SELECT 1 FROM sessions WHERE session_id = ?1", params![session_id], |r| r.get(0))
+        .query_row(
+            "SELECT 1 FROM sessions WHERE session_id = ?1",
+            params![session_id],
+            |r| r.get(0),
+        )
         .optional()?;
     Ok(n.is_some())
 }
@@ -194,13 +209,26 @@ pub fn get_session_object(conn: &Connection, session_id: &str) -> AppResult<Valu
             },
         )
         .optional()?;
-    let Some((campaign_id, number, title, date, metadata_json, notes, session_path, tracks_json, speakers_json)) = row
+    let Some((
+        campaign_id,
+        number,
+        title,
+        date,
+        metadata_json,
+        notes,
+        session_path,
+        tracks_json,
+        speakers_json,
+    )) = row
     else {
-        return Err(AppError::NotFound(format!("Session not found: {session_id}")));
+        return Err(AppError::NotFound(format!(
+            "Session not found: {session_id}"
+        )));
     };
 
     let campaign_name = campaign_id.as_deref().and_then(|c| campaign_name(conn, c));
-    let metadata: Value = serde_json::from_str(&metadata_json).unwrap_or_else(|_| normalize_metadata(&Value::Null));
+    let metadata: Value =
+        serde_json::from_str(&metadata_json).unwrap_or_else(|_| normalize_metadata(&Value::Null));
     let tracks: Value = serde_json::from_str(&tracks_json).unwrap_or_else(|_| json!([]));
     let speakers: Value = serde_json::from_str(&speakers_json).unwrap_or_else(|_| json!([]));
 
@@ -229,7 +257,10 @@ pub fn get_campaign_metadata(conn: &Connection, session_id: &str) -> AppResult<V
     let campaign = obj.get("campaign").cloned().unwrap_or_else(|| json!({}));
     let mut out = campaign;
     if let Value::Object(map) = &mut out {
-        map.insert("metadata".into(), obj.get("metadata").cloned().unwrap_or_else(|| json!({})));
+        map.insert(
+            "metadata".into(),
+            obj.get("metadata").cloned().unwrap_or_else(|| json!({})),
+        );
     }
     Ok(out)
 }
@@ -244,7 +275,13 @@ fn tracks_present(tracks_json: &str) -> bool {
 
 pub fn list_sessions(conn: &Connection) -> AppResult<Vec<SessionInfo>> {
     let mut stmt = conn.prepare("SELECT session_id, session_path, tracks_json FROM sessions WHERE deleted = 0 ORDER BY session_id DESC")?;
-    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    })?;
     let mut out = Vec::new();
     for r in rows {
         let (sid, path, tracks_json) = r?;
@@ -262,7 +299,10 @@ pub fn list_sessions(conn: &Connection) -> AppResult<Vec<SessionInfo>> {
     Ok(out)
 }
 
-pub fn list_campaign_sessions(conn: &Connection, campaign_id: &str) -> AppResult<Vec<CampaignSessionInfo>> {
+pub fn list_campaign_sessions(
+    conn: &Connection,
+    campaign_id: &str,
+) -> AppResult<Vec<CampaignSessionInfo>> {
     let mut stmt = conn.prepare(
         "SELECT session_id, session_number, title, date, metadata_json, tracks_json FROM sessions \
          WHERE campaign_id = ?1 AND deleted = 0 ORDER BY session_number DESC",
@@ -280,7 +320,8 @@ pub fn list_campaign_sessions(conn: &Connection, campaign_id: &str) -> AppResult
     let mut out = Vec::new();
     for r in rows {
         let (sid, number, title, date, metadata_json, tracks_json) = r?;
-        let metadata: Value = serde_json::from_str(&metadata_json).unwrap_or_else(|_| normalize_metadata(&Value::Null));
+        let metadata: Value = serde_json::from_str(&metadata_json)
+            .unwrap_or_else(|_| normalize_metadata(&Value::Null));
         out.push(CampaignSessionInfo {
             has_tracks: tracks_present(&tracks_json),
             has_transcription: artifacts::has_kind(conn, &sid, "transcript")?,
@@ -297,20 +338,29 @@ pub fn list_campaign_sessions(conn: &Connection, campaign_id: &str) -> AppResult
 
 pub fn session_path_of(conn: &Connection, session_id: &str) -> AppResult<Option<String>> {
     let p: Option<String> = conn
-        .query_row("SELECT session_path FROM sessions WHERE session_id = ?1", params![session_id], |r| r.get(0))
+        .query_row(
+            "SELECT session_path FROM sessions WHERE session_id = ?1",
+            params![session_id],
+            |r| r.get(0),
+        )
         .optional()?;
     Ok(p)
 }
 
 /// Resolve the session dir for an upload, creating a bare (campaign-less)
 /// session row if the id is unknown. Returns `(session_id, session_path)`.
-pub fn resolve_for_upload(conn: &Connection, session_id: Option<&str>) -> AppResult<(String, PathBuf)> {
+pub fn resolve_for_upload(
+    conn: &Connection,
+    session_id: Option<&str>,
+) -> AppResult<(String, PathBuf)> {
     if let Some(sid) = session_id {
         if let Some(path) = session_path_of(conn, sid)? {
             return Ok((sid.to_string(), PathBuf::from(path)));
         }
     }
-    let sid = session_id.map(str::to_string).unwrap_or_else(|| Uuid::new_v4().to_string());
+    let sid = session_id
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let path = output_root(conn)?.join("_sessions").join(&sid);
     std::fs::create_dir_all(&path)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("create session dir: {e}")))?;
@@ -333,7 +383,9 @@ pub fn set_tracks(conn: &Connection, session_id: &str, tracks: &Value) -> AppRes
 
 pub fn set_speakers(conn: &Connection, session_id: &str, speakers: &Value) -> AppResult<()> {
     if !session_exists(conn, session_id)? {
-        return Err(AppError::NotFound(format!("Session not found: {session_id}")));
+        return Err(AppError::NotFound(format!(
+            "Session not found: {session_id}"
+        )));
     }
     conn.execute(
         "UPDATE sessions SET speakers_json = ?1, updated_at = ?2, dirty = 1 WHERE session_id = ?3",
@@ -344,27 +396,45 @@ pub fn set_speakers(conn: &Connection, session_id: &str, speakers: &Value) -> Ap
 
 pub fn get_tracks(conn: &Connection, session_id: &str) -> AppResult<Value> {
     let tj: Option<String> = conn
-        .query_row("SELECT tracks_json FROM sessions WHERE session_id = ?1", params![session_id], |r| r.get(0))
+        .query_row(
+            "SELECT tracks_json FROM sessions WHERE session_id = ?1",
+            params![session_id],
+            |r| r.get(0),
+        )
         .optional()?;
     match tj {
         Some(s) => Ok(serde_json::from_str(&s).unwrap_or_else(|_| json!([]))),
-        None => Err(AppError::NotFound(format!("Session not found: {session_id}"))),
+        None => Err(AppError::NotFound(format!(
+            "Session not found: {session_id}"
+        ))),
     }
 }
 
 pub fn get_speakers(conn: &Connection, session_id: &str) -> AppResult<Value> {
     let sj: Option<String> = conn
-        .query_row("SELECT speakers_json FROM sessions WHERE session_id = ?1", params![session_id], |r| r.get(0))
+        .query_row(
+            "SELECT speakers_json FROM sessions WHERE session_id = ?1",
+            params![session_id],
+            |r| r.get(0),
+        )
         .optional()?;
-    Ok(sj.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| json!([])))
+    Ok(sj
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!([])))
 }
 
 pub fn delete_session(conn: &Connection, session_id: &str) -> AppResult<()> {
     let path: Option<String> = conn
-        .query_row("SELECT session_path FROM sessions WHERE session_id = ?1", params![session_id], |r| r.get(0))
+        .query_row(
+            "SELECT session_path FROM sessions WHERE session_id = ?1",
+            params![session_id],
+            |r| r.get(0),
+        )
         .optional()?;
     let Some(path) = path else {
-        return Err(AppError::NotFound(format!("Session not found: {session_id}")));
+        return Err(AppError::NotFound(format!(
+            "Session not found: {session_id}"
+        )));
     };
     // Artifacts are hard-deleted + tombstoned (so the deletion syncs). The
     // session row is *soft*-deleted: kept with deleted=1 + dirty=1 so the

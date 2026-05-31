@@ -12,7 +12,10 @@ use crate::paths::default_output_root;
 /// compatibility.
 fn default_config() -> Vec<(&'static str, String)> {
     vec![
-        ("output_root", default_output_root().to_string_lossy().into_owned()),
+        (
+            "output_root",
+            default_output_root().to_string_lossy().into_owned(),
+        ),
         ("transcription_provider", "auto".into()),
         ("summary_provider", "ollama".into()),
         ("ollama_base_url", "http://localhost:11434".into()),
@@ -117,7 +120,9 @@ pub fn get_config_map(conn: &Connection) -> AppResult<HashMap<String, String>> {
 /// Read a single config value by key (None if unset/empty).
 pub fn get_value(conn: &Connection, key: &str) -> AppResult<Option<String>> {
     let v: Option<String> = conn
-        .query_row("SELECT value FROM config WHERE key = ?1", [key], |r| r.get(0))
+        .query_row("SELECT value FROM config WHERE key = ?1", [key], |r| {
+            r.get(0)
+        })
         .optional()?;
     Ok(v.filter(|s| !s.is_empty()))
 }
@@ -157,11 +162,19 @@ pub fn to_response(map: &HashMap<String, String>) -> ConfigResponse {
         transcription_provider: pref,
         transcription_accelerator: {
             let a = get_str(map, "transcription_accelerator");
-            if a.is_empty() { "cpu".into() } else { a }
+            if a.is_empty() {
+                "cpu".into()
+            } else {
+                a
+            }
         },
         transcription_timeout_seconds: {
             let t = get_int(map, "transcription_timeout_seconds");
-            if t > 0 { t } else { 3600 }
+            if t > 0 {
+                t
+            } else {
+                3600
+            }
         },
         has_litellm_key: !get_str(map, "litellm_api_key").is_empty(),
         sync_url: get_str(map, "sync_url"),
@@ -198,20 +211,49 @@ pub fn apply_update(conn: &Connection, req: &UpdateConfigRequest) -> AppResult<(
         Ok(())
     };
     set("output_root", req.output_root.clone())?;
-    set("summary_provider", req.summary_provider.as_ref().map(|s| s.trim().to_lowercase()))?;
+    set(
+        "summary_provider",
+        req.summary_provider
+            .as_ref()
+            .map(|s| s.trim().to_lowercase()),
+    )?;
     set("ollama_base_url", req.ollama_base_url.clone())?;
     set("ollama_model", req.ollama_model.clone())?;
-    set("ollama_timeout_seconds", req.ollama_timeout_seconds.map(|n| n.to_string()))?;
+    set(
+        "ollama_timeout_seconds",
+        req.ollama_timeout_seconds.map(|n| n.to_string()),
+    )?;
     set("litellm_model", req.litellm_model.clone())?;
     set("litellm_api_key", req.litellm_api_key.clone())?;
     set("litellm_api_base", req.litellm_api_base.clone())?;
-    set("litellm_timeout_seconds", req.litellm_timeout_seconds.map(|n| n.to_string()))?;
+    set(
+        "litellm_timeout_seconds",
+        req.litellm_timeout_seconds.map(|n| n.to_string()),
+    )?;
     set("default_language", req.default_language.clone())?;
     set("whisperx_model", req.whisperx_model.clone())?;
-    set("transcription_provider", req.transcription_provider.as_ref().map(|s| s.trim().to_lowercase()))?;
-    set("transcription_accelerator", req.transcription_accelerator.as_ref().map(|s| s.trim().to_lowercase()))?;
-    set("transcription_timeout_seconds", req.transcription_timeout_seconds.map(|n| n.to_string()))?;
-    set("sync_url", req.sync_url.as_ref().map(|s| s.trim().trim_end_matches('/').to_string()))?;
+    set(
+        "transcription_provider",
+        req.transcription_provider
+            .as_ref()
+            .map(|s| s.trim().to_lowercase()),
+    )?;
+    set(
+        "transcription_accelerator",
+        req.transcription_accelerator
+            .as_ref()
+            .map(|s| s.trim().to_lowercase()),
+    )?;
+    set(
+        "transcription_timeout_seconds",
+        req.transcription_timeout_seconds.map(|n| n.to_string()),
+    )?;
+    set(
+        "sync_url",
+        req.sync_url
+            .as_ref()
+            .map(|s| s.trim().trim_end_matches('/').to_string()),
+    )?;
     set("sync_token", req.sync_token.clone())?;
     Ok(())
 }

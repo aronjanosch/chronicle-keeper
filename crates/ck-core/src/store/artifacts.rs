@@ -16,7 +16,10 @@ pub fn insert_artifact(
     model: &str,
     content: &str,
 ) -> AppResult<ArtifactInfo> {
-    let created_at = Local::now().naive_local().format("%Y-%m-%dT%H:%M:%S%.6f").to_string();
+    let created_at = Local::now()
+        .naive_local()
+        .format("%Y-%m-%dT%H:%M:%S%.6f")
+        .to_string();
     let artifact_id = Uuid::new_v4().to_string();
     conn.execute(
         "INSERT INTO artifacts (artifact_id, session_id, kind, provider, model, content, created_at) \
@@ -49,7 +52,11 @@ fn row_to_artifact(row: &rusqlite::Row) -> rusqlite::Result<ArtifactInfo> {
 
 const COLS: &str = "id, artifact_id, session_id, kind, provider, model, created_at";
 
-pub fn list_artifacts(conn: &Connection, session_id: &str, kind: Option<&str>) -> AppResult<Vec<ArtifactInfo>> {
+pub fn list_artifacts(
+    conn: &Connection,
+    session_id: &str,
+    kind: Option<&str>,
+) -> AppResult<Vec<ArtifactInfo>> {
     let mut out = Vec::new();
     match kind {
         Some(k) => {
@@ -76,7 +83,11 @@ pub fn list_artifacts(conn: &Connection, session_id: &str, kind: Option<&str>) -
 
 pub fn get_artifact(conn: &Connection, id: i64) -> AppResult<Option<ArtifactInfo>> {
     let art = conn
-        .query_row(&format!("SELECT {COLS} FROM artifacts WHERE id = ?1"), params![id], row_to_artifact)
+        .query_row(
+            &format!("SELECT {COLS} FROM artifacts WHERE id = ?1"),
+            params![id],
+            row_to_artifact,
+        )
         .optional()?;
     Ok(art)
 }
@@ -84,7 +95,11 @@ pub fn get_artifact(conn: &Connection, id: i64) -> AppResult<Option<ArtifactInfo
 /// Inline content for a single artifact by row id.
 pub fn get_content(conn: &Connection, id: i64) -> AppResult<Option<String>> {
     let content = conn
-        .query_row("SELECT content FROM artifacts WHERE id = ?1", params![id], |r| r.get::<_, String>(0))
+        .query_row(
+            "SELECT content FROM artifacts WHERE id = ?1",
+            params![id],
+            |r| r.get::<_, String>(0),
+        )
         .optional()?;
     Ok(content)
 }
@@ -104,7 +119,11 @@ fn tombstone(conn: &Connection, artifact_id: &str) -> AppResult<()> {
 
 pub fn delete_artifact(conn: &Connection, id: i64) -> AppResult<()> {
     let artifact_id: Option<String> = conn
-        .query_row("SELECT artifact_id FROM artifacts WHERE id = ?1", params![id], |r| r.get(0))
+        .query_row(
+            "SELECT artifact_id FROM artifacts WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
         .optional()?;
     conn.execute("DELETE FROM artifacts WHERE id = ?1", params![id])?;
     if let Some(aid) = artifact_id {
@@ -120,7 +139,10 @@ pub fn delete_artifacts_for_session(conn: &Connection, session_id: &str) -> AppR
         .filter_map(|r| r.ok())
         .collect();
     drop(stmt);
-    conn.execute("DELETE FROM artifacts WHERE session_id = ?1", params![session_id])?;
+    conn.execute(
+        "DELETE FROM artifacts WHERE session_id = ?1",
+        params![session_id],
+    )?;
     for aid in ids {
         tombstone(conn, &aid)?;
     }
@@ -140,7 +162,10 @@ pub fn collect_deleted_dirty(conn: &Connection) -> AppResult<Vec<String>> {
 /// Mark the given deletion tombstones as pushed.
 pub fn clear_deleted_dirty(conn: &Connection, ids: &[String]) -> AppResult<()> {
     for aid in ids {
-        conn.execute("UPDATE deleted_artifacts SET dirty = 0 WHERE artifact_id = ?1", params![aid])?;
+        conn.execute(
+            "UPDATE deleted_artifacts SET dirty = 0 WHERE artifact_id = ?1",
+            params![aid],
+        )?;
     }
     Ok(())
 }
@@ -148,12 +173,19 @@ pub fn clear_deleted_dirty(conn: &Connection, ids: &[String]) -> AppResult<()> {
 /// Apply a deletion received from the server: drop the artifact, no tombstone
 /// (we didn't initiate it, so it must not echo back on our next push).
 pub fn apply_remote_deletion(conn: &Connection, artifact_id: &str) -> AppResult<()> {
-    conn.execute("DELETE FROM artifacts WHERE artifact_id = ?1", params![artifact_id])?;
+    conn.execute(
+        "DELETE FROM artifacts WHERE artifact_id = ?1",
+        params![artifact_id],
+    )?;
     Ok(())
 }
 
 /// Inline content of the latest artifact of a kind, if any.
-pub fn latest_content(conn: &Connection, session_id: &str, kind: &str) -> AppResult<Option<String>> {
+pub fn latest_content(
+    conn: &Connection,
+    session_id: &str,
+    kind: &str,
+) -> AppResult<Option<String>> {
     let content = conn
         .query_row(
             "SELECT content FROM artifacts WHERE session_id = ?1 AND kind = ?2 ORDER BY created_at DESC LIMIT 1",

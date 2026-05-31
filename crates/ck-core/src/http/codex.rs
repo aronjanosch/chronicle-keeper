@@ -3,13 +3,13 @@
 use axum::extract::{Path, State};
 use axum::Json;
 
+use crate::codex_import;
 use crate::error::AppResult;
 use crate::models::{
     CodexCommitRequest, CodexEntry, CodexEntryCreate, CodexEntryUpdate, CodexImportRequest,
 };
 use crate::state::AppState;
 use crate::store::codex;
-use crate::codex_import;
 
 pub async fn list(
     State(state): State<AppState>,
@@ -87,6 +87,8 @@ pub async fn commit(
                 Err(_) => skipped += 1,
             }
         }
-        Ok(Json(serde_json::json!({ "created": created, "updated": updated, "skipped": skipped })))
+        Ok(Json(
+            serde_json::json!({ "created": created, "updated": updated, "skipped": skipped }),
+        ))
     })
 }

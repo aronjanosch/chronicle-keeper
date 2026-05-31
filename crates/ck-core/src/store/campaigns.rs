@@ -26,9 +26,13 @@ fn row_to_detail(row: &rusqlite::Row, fallback_lang: &str) -> rusqlite::Result<C
         system: row.get::<_, Option<String>>("system")?.unwrap_or_default(),
         gm: row.get::<_, Option<String>>("gm")?.unwrap_or_default(),
         setting: row.get::<_, Option<String>>("setting")?.unwrap_or_default(),
-        default_language: lang.filter(|s| !s.is_empty()).unwrap_or_else(|| fallback_lang.to_string()),
+        default_language: lang
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| fallback_lang.to_string()),
         players: normalize_players(&players),
-        extra_info: row.get::<_, Option<String>>("extra_info")?.unwrap_or_default(),
+        extra_info: row
+            .get::<_, Option<String>>("extra_info")?
+            .unwrap_or_default(),
         codex: row.get::<_, Option<String>>("codex")?.unwrap_or_default(),
         codex_notes: row
             .get::<_, Option<String>>("codex_notes")?
@@ -36,7 +40,9 @@ fn row_to_detail(row: &rusqlite::Row, fallback_lang: &str) -> rusqlite::Result<C
             .filter(Value::is_array)
             .unwrap_or_else(|| json!([])),
         recap: row.get::<_, Option<String>>("recap")?.unwrap_or_default(),
-        recap_updated_at: row.get::<_, Option<String>>("recap_updated_at")?.unwrap_or_default(),
+        recap_updated_at: row
+            .get::<_, Option<String>>("recap_updated_at")?
+            .unwrap_or_default(),
     })
 }
 
@@ -65,7 +71,11 @@ pub fn codex_freeform_text(detail: &CampaignDetail) -> String {
             if title.is_empty() && body.is_empty() {
                 continue;
             }
-            parts.push(if title.is_empty() { body.to_string() } else { format!("{title}\n{body}") });
+            parts.push(if title.is_empty() {
+                body.to_string()
+            } else {
+                format!("{title}\n{body}")
+            });
         }
         if !parts.is_empty() {
             return parts.join("\n\n");
@@ -125,7 +135,8 @@ pub fn create_campaign(
         params![campaign_id, name, start_session_number, lang, now()],
     )?;
     set_current_campaign_id(conn, campaign_id)?;
-    get_campaign(conn, campaign_id)?.ok_or_else(|| AppError::Internal(anyhow::anyhow!("campaign vanished")))
+    get_campaign(conn, campaign_id)?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("campaign vanished")))
 }
 
 pub fn update_campaign(
@@ -134,7 +145,9 @@ pub fn update_campaign(
     req: &CampaignUpdateRequest,
 ) -> AppResult<CampaignDetail> {
     if get_campaign(conn, campaign_id)?.is_none() {
-        return Err(AppError::NotFound(format!("Campaign not found: {campaign_id}")));
+        return Err(AppError::NotFound(format!(
+            "Campaign not found: {campaign_id}"
+        )));
     }
     let mut sets: Vec<String> = Vec::new();
     let mut vals: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -170,7 +183,10 @@ pub fn update_campaign(
     vals.push(Box::new(now()));
     sets.push("dirty = 1".into());
     vals.push(Box::new(campaign_id.to_string()));
-    let sql = format!("UPDATE campaigns SET {} WHERE campaign_id = ?", sets.join(", "));
+    let sql = format!(
+        "UPDATE campaigns SET {} WHERE campaign_id = ?",
+        sets.join(", ")
+    );
     let refs: Vec<&dyn rusqlite::ToSql> = vals.iter().map(|b| b.as_ref()).collect();
     conn.execute(&sql, refs.as_slice())?;
     // Keep the codex in sync with the party roster: each character gets an empty
@@ -178,7 +194,8 @@ pub fn update_campaign(
     if let Some(players) = &req.players {
         crate::store::codex::sync_pc_entries(conn, campaign_id, &normalize_players(players))?;
     }
-    get_campaign(conn, campaign_id)?.ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))
+    get_campaign(conn, campaign_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))
 }
 
 /// Delete a campaign and cascade to all its sessions. Mirrors session deletion:
@@ -187,7 +204,9 @@ pub fn update_campaign(
 /// soft-deleted (deleted=1, dirty=1) so the tombstone propagates to other devices.
 pub fn delete_campaign(conn: &Connection, campaign_id: &str) -> AppResult<()> {
     if get_campaign(conn, campaign_id)?.is_none() {
-        return Err(AppError::NotFound(format!("Campaign not found: {campaign_id}")));
+        return Err(AppError::NotFound(format!(
+            "Campaign not found: {campaign_id}"
+        )));
     }
     // All sessions (incl. already soft-deleted) so their artifacts are cleaned too.
     let mut stmt = conn.prepare("SELECT session_id FROM sessions WHERE campaign_id = ?1")?;
@@ -228,7 +247,11 @@ pub fn next_session_number(conn: &Connection, campaign_id: Option<&str>) -> AppR
 
 pub fn current_campaign_id(conn: &Connection) -> AppResult<Option<String>> {
     let v: Option<String> = conn
-        .query_row("SELECT value FROM config WHERE key = 'current_campaign_id'", [], |r| r.get(0))
+        .query_row(
+            "SELECT value FROM config WHERE key = 'current_campaign_id'",
+            [],
+            |r| r.get(0),
+        )
         .optional()?;
     Ok(v.filter(|s| !s.is_empty()))
 }

@@ -1,4 +1,3 @@
-
 use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
@@ -14,7 +13,9 @@ pub fn export_session(state: &AppState, req: &ExportRequest) -> AppResult<Export
     })?;
 
     if summary_text.trim().is_empty() {
-        return Err(AppError::BadRequest("No summary available for export.".into()));
+        return Err(AppError::BadRequest(
+            "No summary available for export.".into(),
+        ));
     }
 
     let campaign = session.get("campaign").cloned().unwrap_or_default();
@@ -49,7 +50,10 @@ pub fn export_session(state: &AppState, req: &ExportRequest) -> AppResult<Export
     // Write the note into the session's own folder (next to its audio), so it
     // lands in the user-visible data folder ready for Obsidian. SQLite stays the
     // source of truth; this is just a convenience output the user asked to keep.
-    let session_path = session.get("session_path").and_then(Value::as_str).unwrap_or_default();
+    let session_path = session
+        .get("session_path")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let mut path = None;
     if !session_path.is_empty() {
         let dir = std::path::Path::new(session_path);
@@ -69,16 +73,25 @@ pub fn export_session(state: &AppState, req: &ExportRequest) -> AppResult<Export
     })
 }
 
-fn resolve_summary_text(conn: &rusqlite::Connection, session_id: &str, summary_id: Option<i64>) -> AppResult<String> {
+fn resolve_summary_text(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    summary_id: Option<i64>,
+) -> AppResult<String> {
     if let Some(id) = summary_id {
         let art = artifacts::get_artifact(conn, id)?
             .filter(|a| a.session_id == session_id)
-            .ok_or_else(|| AppError::BadRequest("Selected summary was not found for this session.".into()))?;
+            .ok_or_else(|| {
+                AppError::BadRequest("Selected summary was not found for this session.".into())
+            })?;
         if art.kind != "summary" {
-            return Err(AppError::BadRequest("Selected artifact is not a summary.".into()));
+            return Err(AppError::BadRequest(
+                "Selected artifact is not a summary.".into(),
+            ));
         }
-        return artifacts::get_content(conn, art.id)?
-            .ok_or_else(|| AppError::BadRequest("Selected summary was not found for this session.".into()));
+        return artifacts::get_content(conn, art.id)?.ok_or_else(|| {
+            AppError::BadRequest("Selected summary was not found for this session.".into())
+        });
     }
     Ok(artifacts::latest_content(conn, session_id, "summary")?.unwrap_or_default())
 }

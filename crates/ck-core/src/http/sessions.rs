@@ -41,6 +41,8 @@ pub async fn delete(
 ) -> AppResult<Json<Value>> {
     state.with_db(|conn| {
         sessions::delete_session(conn, &session_id)?;
-        Ok(Json(json!({ "status": "deleted", "session_id": session_id })))
+        Ok(Json(
+            json!({ "status": "deleted", "session_id": session_id }),
+        ))
     })
 }

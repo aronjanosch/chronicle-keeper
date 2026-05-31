@@ -15,8 +15,16 @@ pub fn normalize_players(value: &Value) -> Value {
     for item in raw {
         let (player, character) = match &item {
             Value::Object(o) => (
-                o.get("player_name").and_then(Value::as_str).unwrap_or("").trim().to_string(),
-                o.get("character_name").and_then(Value::as_str).unwrap_or("").trim().to_string(),
+                o.get("player_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
+                o.get("character_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
             ),
             Value::String(s) => (s.trim().to_string(), String::new()),
             _ => continue,
@@ -55,7 +63,10 @@ pub fn normalize_metadata(value: &Value) -> Value {
     match value {
         Value::Object(obj) => {
             for cat in METADATA_CATEGORIES {
-                out.insert(cat.to_string(), Value::Array(obj.get(cat).map(to_list).unwrap_or_default()));
+                out.insert(
+                    cat.to_string(),
+                    Value::Array(obj.get(cat).map(to_list).unwrap_or_default()),
+                );
             }
         }
         Value::Array(_) => {

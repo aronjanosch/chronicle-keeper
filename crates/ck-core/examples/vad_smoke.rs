@@ -34,7 +34,12 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let vad = model::ensure_vad(&paths).await;
-    println!("VAD model: {}", vad.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "NONE (fixed-window fallback)".into()));
+    println!(
+        "VAD model: {}",
+        vad.as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "NONE (fixed-window fallback)".into())
+    );
 
     let tracks: Vec<(String, PathBuf, String)> = files
         .iter()
@@ -46,7 +51,11 @@ async fn main() -> anyhow::Result<()> {
     let segments = transcribe_tracks(&model_dir, "cpu", vad.as_deref(), &tracks)?;
     let elapsed = t0.elapsed();
 
-    println!("\n== {} segments in {:.1}s ==", segments.len(), elapsed.as_secs_f64());
+    println!(
+        "\n== {} segments in {:.1}s ==",
+        segments.len(),
+        elapsed.as_secs_f64()
+    );
     for s in &segments {
         println!(
             "[{:>7.2}–{:>7.2}] {}: {}",

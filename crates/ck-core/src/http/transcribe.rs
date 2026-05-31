@@ -38,20 +38,25 @@ pub async fn transcribe(
     use crate::transcription::{model, transcribe_tracks};
 
     // Gather session inputs.
-    let (tracks_val, speakers_val, session_path, default_lang, accelerator) = state.with_db(|conn| {
-        let tracks = sessions::get_tracks(conn, &req.session_id)?;
-        let speakers = sessions::get_speakers(conn, &req.session_id)?;
-        let path = sessions::session_path_of(conn, &req.session_id)?
-            .ok_or_else(|| AppError::NotFound(format!("Session not found: {}", req.session_id)))?;
-        let cfg = crate::config::get_config_map(conn)?;
-        let lang = cfg.get("default_language").cloned().unwrap_or_else(|| "en".into());
-        let accel = cfg
-            .get("transcription_accelerator")
-            .cloned()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "cpu".into());
-        Ok::<_, AppError>((tracks, speakers, path, lang, accel))
-    })?;
+    let (tracks_val, speakers_val, session_path, default_lang, accelerator) =
+        state.with_db(|conn| {
+            let tracks = sessions::get_tracks(conn, &req.session_id)?;
+            let speakers = sessions::get_speakers(conn, &req.session_id)?;
+            let path = sessions::session_path_of(conn, &req.session_id)?.ok_or_else(|| {
+                AppError::NotFound(format!("Session not found: {}", req.session_id))
+            })?;
+            let cfg = crate::config::get_config_map(conn)?;
+            let lang = cfg
+                .get("default_language")
+                .cloned()
+                .unwrap_or_else(|| "en".into());
+            let accel = cfg
+                .get("transcription_accelerator")
+                .cloned()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "cpu".into());
+            Ok::<_, AppError>((tracks, speakers, path, lang, accel))
+        })?;
 
     let track_list = tracks_val.as_array().cloned().unwrap_or_default();
     if track_list.is_empty() {
@@ -61,14 +66,22 @@ pub async fn transcribe(
         .language
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(default_lang);
-    let language = if language.trim().is_empty() { "en".to_string() } else { language };
+    let language = if language.trim().is_empty() {
+        "en".to_string()
+    } else {
+        language
+    };
 
     // Map track_id -> speaker entry.
     let speaker_map: std::collections::HashMap<String, Value> = speakers_val
         .as_array()
         .map(|arr| {
             arr.iter()
-                .filter_map(|s| s.get("track_id").and_then(Value::as_str).map(|t| (t.to_string(), s.clone())))
+                .filter_map(|s| {
+                    s.get("track_id")
+                        .and_then(Value::as_str)
+                        .map(|t| (t.to_string(), s.clone()))
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -105,14 +118,23 @@ pub async fn transcribe(
     let timeout_secs: u64 = state
         .with_db(|conn| crate::config::get_config_map(conn))
         .ok()
-        .and_then(|cfg| cfg.get("transcription_timeout_seconds").and_then(|s| s.parse().ok()))
+        .and_then(|cfg| {
+            cfg.get("transcription_timeout_seconds")
+                .and_then(|s| s.parse().ok())
+        })
         .filter(|&s: &u64| s > 0)
         .unwrap_or(3600);
 
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_worker = cancel.clone();
     let handle = tokio::task::spawn_blocking(move || {
-        transcribe_tracks(&model_dir, &accelerator, vad_model.as_deref(), &tracks, &cancel_worker)
+        transcribe_tracks(
+            &model_dir,
+            &accelerator,
+            vad_model.as_deref(),
+            &tracks,
+            &cancel_worker,
+        )
     });
 
     let segments = match tokio::time::timeout(Duration::from_secs(timeout_secs), handle).await {

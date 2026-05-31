@@ -15,7 +15,9 @@ use axum::{Json, Router};
 use serde_json::{json, Value};
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::config::{apply_update, get_config_map, to_response, ConfigResponse, UpdateConfigRequest};
+use crate::config::{
+    apply_update, get_config_map, to_response, ConfigResponse, UpdateConfigRequest,
+};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
@@ -32,7 +34,12 @@ pub fn router(state: AppState) -> Router {
         .route("/config", get(read_config).put(write_config))
         // campaigns
         .route("/campaigns", get(campaigns::list).post(campaigns::create))
-        .route("/campaigns/:id", get(campaigns::detail).put(campaigns::update).delete(campaigns::delete))
+        .route(
+            "/campaigns/:id",
+            get(campaigns::detail)
+                .put(campaigns::update)
+                .delete(campaigns::delete),
+        )
         .route(
             "/campaigns/:id/sessions",
             get(campaigns::list_sessions).post(campaigns::create_session),
@@ -72,12 +79,27 @@ pub fn router(state: AppState) -> Router {
         .route("/llm-providers/:id/test", post(llm::test_provider))
         .route("/llm-providers/:id/ping", get(llm::ping_provider))
         // artifacts
-        .route("/sessions/:id/transcripts", get(artifacts::list_transcripts))
-        .route("/sessions/:id/transcripts/:aid/content", get(artifacts::transcript_content))
-        .route("/sessions/:id/transcripts/:aid", delete(artifacts::delete_transcript))
+        .route(
+            "/sessions/:id/transcripts",
+            get(artifacts::list_transcripts),
+        )
+        .route(
+            "/sessions/:id/transcripts/:aid/content",
+            get(artifacts::transcript_content),
+        )
+        .route(
+            "/sessions/:id/transcripts/:aid",
+            delete(artifacts::delete_transcript),
+        )
         .route("/sessions/:id/summaries", get(artifacts::list_summaries))
-        .route("/sessions/:id/summaries/:aid/content", get(artifacts::summary_content))
-        .route("/sessions/:id/summaries/:aid", delete(artifacts::delete_summary))
+        .route(
+            "/sessions/:id/summaries/:aid/content",
+            get(artifacts::summary_content),
+        )
+        .route(
+            "/sessions/:id/summaries/:aid",
+            delete(artifacts::delete_summary),
+        )
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), require_token))
         .with_state(state)
@@ -112,7 +134,11 @@ async fn health() -> Json<Value> {
 /// `/transcribe` request is in flight to render a progress bar. Returns `idle`
 /// when no download is happening (e.g. model already present).
 async fn model_status(State(state): State<AppState>) -> Json<crate::state::ModelProgress> {
-    let p = state.model_progress.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let p = state
+        .model_progress
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     Json(p)
 }
 

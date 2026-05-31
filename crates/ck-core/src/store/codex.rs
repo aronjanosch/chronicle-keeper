@@ -35,8 +35,12 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<CodexEntry> {
         kind: row.get("kind")?,
         body: row.get::<_, Option<String>>("body")?.unwrap_or_default(),
         detail: row.get::<_, Option<String>>("detail")?.unwrap_or_default(),
-        source: row.get::<_, Option<String>>("source")?.unwrap_or_else(|| "manual".into()),
-        updated_at: row.get::<_, Option<String>>("updated_at")?.unwrap_or_default(),
+        source: row
+            .get::<_, Option<String>>("source")?
+            .unwrap_or_else(|| "manual".into()),
+        updated_at: row
+            .get::<_, Option<String>>("updated_at")?
+            .unwrap_or_default(),
     })
 }
 
@@ -111,7 +115,15 @@ pub fn create_entry(
         "INSERT INTO codex_entries \
          (entry_id, campaign_id, name, kind, body, detail, source, updated_at, deleted, dirty) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'manual', ?7, 0, 1)",
-        params![entry_id, campaign_id, name, req.kind, req.body.trim(), req.detail.trim(), now()],
+        params![
+            entry_id,
+            campaign_id,
+            name,
+            req.kind,
+            req.body.trim(),
+            req.detail.trim(),
+            now()
+        ],
     )?;
     get_entry(conn, &entry_id)?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("entry vanished after insert")))
@@ -187,9 +199,15 @@ pub fn sync_pc_entries(
     campaign_id: &str,
     players: &serde_json::Value,
 ) -> AppResult<()> {
-    let Some(arr) = players.as_array() else { return Ok(()) };
+    let Some(arr) = players.as_array() else {
+        return Ok(());
+    };
     for p in arr {
-        let ch = p.get("character_name").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let ch = p
+            .get("character_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
         if ch.is_empty() {
             continue;
         }
@@ -219,7 +237,9 @@ pub fn update_entry(
     // Check the dedup index won't be violated by a rename/retype.
     let candidate_name = new_name.as_deref().unwrap_or(&existing.name);
     let candidate_kind = req.kind.as_deref().unwrap_or(&existing.kind);
-    if let Some(clash) = find_by_natural_key(conn, &existing.campaign_id, candidate_name, candidate_kind)? {
+    if let Some(clash) =
+        find_by_natural_key(conn, &existing.campaign_id, candidate_name, candidate_kind)?
+    {
         if clash.entry_id != existing.entry_id {
             return Err(AppError::BadRequest(format!(
                 "Another codex entry already uses {candidate_name} ({candidate_kind})"
@@ -250,7 +270,9 @@ pub fn delete_entry(conn: &Connection, entry_id: &str) -> AppResult<()> {
         params![now(), entry_id],
     )?;
     if n == 0 {
-        return Err(AppError::NotFound(format!("Codex entry not found: {entry_id}")));
+        return Err(AppError::NotFound(format!(
+            "Codex entry not found: {entry_id}"
+        )));
     }
     Ok(())
 }
@@ -272,13 +294,23 @@ mod tests {
         create_entry(
             &conn,
             &cid,
-            &CodexEntryCreate { name: "Aragorn".into(), kind: "npc".into(), body: "Ranger".into(), detail: String::new() },
+            &CodexEntryCreate {
+                name: "Aragorn".into(),
+                kind: "npc".into(),
+                body: "Ranger".into(),
+                detail: String::new(),
+            },
         )
         .unwrap();
         create_entry(
             &conn,
             &cid,
-            &CodexEntryCreate { name: "Rivendell".into(), kind: "place".into(), body: String::new(), detail: String::new() },
+            &CodexEntryCreate {
+                name: "Rivendell".into(),
+                kind: "place".into(),
+                body: String::new(),
+                detail: String::new(),
+            },
         )
         .unwrap();
         let list = list_entries(&conn, &cid).unwrap();
@@ -292,8 +324,28 @@ mod tests {
     fn duplicate_create_rejected() {
         let conn = crate::db::open_in_memory().unwrap();
         let cid = seed_campaign(&conn);
-        create_entry(&conn, &cid, &CodexEntryCreate { name: "Aragorn".into(), kind: "npc".into(), body: String::new(), detail: String::new() }).unwrap();
-        let err = create_entry(&conn, &cid, &CodexEntryCreate { name: "aragorn".into(), kind: "npc".into(), body: String::new(), detail: String::new() }).unwrap_err();
+        create_entry(
+            &conn,
+            &cid,
+            &CodexEntryCreate {
+                name: "Aragorn".into(),
+                kind: "npc".into(),
+                body: String::new(),
+                detail: String::new(),
+            },
+        )
+        .unwrap();
+        let err = create_entry(
+            &conn,
+            &cid,
+            &CodexEntryCreate {
+                name: "aragorn".into(),
+                kind: "npc".into(),
+                body: String::new(),
+                detail: String::new(),
+            },
+        )
+        .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)));
     }
 
@@ -304,12 +356,20 @@ mod tests {
         let manual = create_entry(
             &conn,
             &cid,
-            &CodexEntryCreate { name: "Aragorn".into(), kind: "npc".into(), body: "Hand-edited".into(), detail: String::new() },
+            &CodexEntryCreate {
+                name: "Aragorn".into(),
+                kind: "npc".into(),
+                body: "Hand-edited".into(),
+                detail: String::new(),
+            },
         )
         .unwrap();
         assert!(!upsert_auto(&conn, &cid, "Aragorn", "npc").unwrap());
         let still = get_entry(&conn, &manual.entry_id).unwrap().unwrap();
-        assert_eq!(still.body, "Hand-edited", "manual body must not be overwritten");
+        assert_eq!(
+            still.body, "Hand-edited",
+            "manual body must not be overwritten"
+        );
         assert_eq!(still.source, "manual");
     }
 
@@ -332,7 +392,10 @@ mod tests {
         let updated = update_entry(
             &conn,
             &auto_entry.entry_id,
-            &CodexEntryUpdate { body: Some("Town near the Shire".into()), ..Default::default() },
+            &CodexEntryUpdate {
+                body: Some("Town near the Shire".into()),
+                ..Default::default()
+            },
         )
         .unwrap();
         assert_eq!(updated.body, "Town near the Shire");
@@ -344,15 +407,31 @@ mod tests {
         let conn = crate::db::open_in_memory().unwrap();
         let cid = seed_campaign(&conn);
         // First import (e.g. from NPC notes): thin body.
-        let created = upsert_manual(&conn, &cid, &CodexEntryCreate {
-            name: "Iron Hand".into(), kind: "faction".into(), body: "mentioned by Ulric".into(), detail: String::new(),
-        }).unwrap();
+        let created = upsert_manual(
+            &conn,
+            &cid,
+            &CodexEntryCreate {
+                name: "Iron Hand".into(),
+                kind: "faction".into(),
+                body: "mentioned by Ulric".into(),
+                detail: String::new(),
+            },
+        )
+        .unwrap();
         assert!(created);
         assert!(exists(&conn, &cid, "iron hand", "faction").unwrap());
         // Second import (the faction file): better body replaces it, no dup error.
-        let created2 = upsert_manual(&conn, &cid, &CodexEntryCreate {
-            name: "Iron Hand".into(), kind: "faction".into(), body: "Thieves' guild controlling the docks".into(), detail: String::new(),
-        }).unwrap();
+        let created2 = upsert_manual(
+            &conn,
+            &cid,
+            &CodexEntryCreate {
+                name: "Iron Hand".into(),
+                kind: "faction".into(),
+                body: "Thieves' guild controlling the docks".into(),
+                detail: String::new(),
+            },
+        )
+        .unwrap();
         assert!(!created2, "second upsert replaces, does not create");
         let list = list_entries(&conn, &cid).unwrap();
         assert_eq!(list.len(), 1);
@@ -363,11 +442,34 @@ mod tests {
     fn soft_delete_hides_from_list_but_allows_recreate() {
         let conn = crate::db::open_in_memory().unwrap();
         let cid = seed_campaign(&conn);
-        let e = create_entry(&conn, &cid, &CodexEntryCreate { name: "Sauron".into(), kind: "npc".into(), body: String::new(), detail: String::new() }).unwrap();
+        let e = create_entry(
+            &conn,
+            &cid,
+            &CodexEntryCreate {
+                name: "Sauron".into(),
+                kind: "npc".into(),
+                body: String::new(),
+                detail: String::new(),
+            },
+        )
+        .unwrap();
         delete_entry(&conn, &e.entry_id).unwrap();
-        assert!(list_entries(&conn, &cid).unwrap().is_empty(), "deleted hidden");
+        assert!(
+            list_entries(&conn, &cid).unwrap().is_empty(),
+            "deleted hidden"
+        );
         // Re-create with the same natural key succeeds (partial index excludes deleted).
-        create_entry(&conn, &cid, &CodexEntryCreate { name: "Sauron".into(), kind: "npc".into(), body: String::new(), detail: String::new() }).unwrap();
+        create_entry(
+            &conn,
+            &cid,
+            &CodexEntryCreate {
+                name: "Sauron".into(),
+                kind: "npc".into(),
+                body: String::new(),
+                detail: String::new(),
+            },
+        )
+        .unwrap();
         assert_eq!(list_entries(&conn, &cid).unwrap().len(), 1);
     }
 }

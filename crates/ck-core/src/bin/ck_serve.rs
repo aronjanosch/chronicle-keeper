@@ -14,7 +14,10 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let port: u16 = std::env::var("CK_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8000);
+    let port: u16 = std::env::var("CK_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8000);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
 
     let (listener, state) = ck_core::bind(addr).await?;

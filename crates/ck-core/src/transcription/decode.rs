@@ -29,8 +29,15 @@ pub fn decode_to_mono(path: &Path) -> Result<(Vec<f32>, u32)> {
 
     let track = format.default_track().context("no default track")?;
     let track_id = track.id;
-    let sample_rate = track.codec_params.sample_rate.context("track missing sample rate")?;
-    let channels = track.codec_params.channels.context("track missing channel layout")?.count();
+    let sample_rate = track
+        .codec_params
+        .sample_rate
+        .context("track missing sample rate")?;
+    let channels = track
+        .codec_params
+        .channels
+        .context("track missing channel layout")?
+        .count();
 
     let mut decoder =
         symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
@@ -53,7 +60,10 @@ pub fn decode_to_mono(path: &Path) -> Result<(Vec<f32>, u32)> {
         }
         let decoded = decoder.decode(&packet)?;
         if sample_buf.is_none() {
-            sample_buf = Some(SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec()));
+            sample_buf = Some(SampleBuffer::<f32>::new(
+                decoded.capacity() as u64,
+                *decoded.spec(),
+            ));
         }
         let buf = sample_buf.as_mut().unwrap();
         buf.copy_interleaved_ref(decoded);

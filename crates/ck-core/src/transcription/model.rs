@@ -10,7 +10,8 @@ use crate::state::ModelProgress;
 pub const MODEL_DIR_NAME: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
 const MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2";
 const VAD_MODEL_NAME: &str = "silero_vad.onnx";
-const VAD_MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
+const VAD_MODEL_URL: &str =
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
 const REQUIRED: [&str; 4] = [
     "encoder.int8.onnx",
     "decoder.int8.onnx",
@@ -40,7 +41,9 @@ pub async fn ensure(paths: &Paths, progress: &Arc<Mutex<ModelProgress>>) -> Resu
 
     tracing::info!("downloading Parakeet model (~465MB, one time)…");
     let archive = models_root.join("parakeet-v3.tar.bz2");
-    download(MODEL_URL, &archive, progress).await.context("download model")?;
+    download(MODEL_URL, &archive, progress)
+        .await
+        .context("download model")?;
 
     tracing::info!("extracting model archive…");
     ModelProgress::set(progress, "extracting", 0, 0);
@@ -48,7 +51,10 @@ pub async fn ensure(paths: &Paths, progress: &Arc<Mutex<ModelProgress>>) -> Resu
     let _ = std::fs::remove_file(&archive);
 
     if !is_present(&dir) {
-        anyhow::bail!("model archive extracted but expected files missing in {}", dir.display());
+        anyhow::bail!(
+            "model archive extracted but expected files missing in {}",
+            dir.display()
+        );
     }
     tracing::info!("model ready at {}", dir.display());
     ModelProgress::set(progress, "ready", 0, 0);

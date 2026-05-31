@@ -147,9 +147,8 @@ fn migrate(conn: &Connection) -> Result<()> {
     // Backfill: existing artifacts still point at loose files. Pull their text
     // into `content` so reads can drop the filesystem. Best-effort — a missing
     // file just leaves an empty artifact rather than aborting startup.
-    let mut stmt = conn.prepare(
-        "SELECT id, file_path FROM artifacts WHERE content = '' AND file_path <> ''",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, file_path FROM artifacts WHERE content = '' AND file_path <> ''")?;
     let rows: Vec<(i64, String)> = stmt
         .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
         .filter_map(|r| r.ok())
@@ -157,7 +156,10 @@ fn migrate(conn: &Connection) -> Result<()> {
     drop(stmt);
     for (id, path) in rows {
         if let Ok(text) = std::fs::read_to_string(&path) {
-            conn.execute("UPDATE artifacts SET content = ?1 WHERE id = ?2", rusqlite::params![text, id])?;
+            conn.execute(
+                "UPDATE artifacts SET content = ?1 WHERE id = ?2",
+                rusqlite::params![text, id],
+            )?;
         }
     }
 
@@ -170,7 +172,10 @@ fn migrate(conn: &Connection) -> Result<()> {
     drop(stmt);
     for id in ids {
         let uuid = uuid::Uuid::new_v4().to_string();
-        conn.execute("UPDATE artifacts SET artifact_id = ?1 WHERE id = ?2", rusqlite::params![uuid, id])?;
+        conn.execute(
+            "UPDATE artifacts SET artifact_id = ?1 WHERE id = ?2",
+            rusqlite::params![uuid, id],
+        )?;
     }
 
     // Sync relies on `artifact_id` being unique (push-once / INSERT OR IGNORE).

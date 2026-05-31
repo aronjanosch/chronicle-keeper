@@ -12,7 +12,10 @@ use crate::store::sessions;
 
 const AUDIO_EXTS: [&str; 5] = ["flac", "wav", "mp3", "m4a", "ogg"];
 
-pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> AppResult<Json<UploadResponse>> {
+pub async fn upload(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> AppResult<Json<UploadResponse>> {
     let mut zip_bytes: Option<Vec<u8>> = None;
     let mut session_id: Option<String> = None;
 
@@ -46,7 +49,9 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
 
     let tracks = extract_and_list(&zip_bytes, &session_path)?;
     if tracks.as_array().map(|a| a.is_empty()).unwrap_or(true) {
-        return Err(AppError::BadRequest("No audio files found in ZIP archive".into()));
+        return Err(AppError::BadRequest(
+            "No audio files found in ZIP archive".into(),
+        ));
     }
 
     state.with_db(|conn| sessions::set_tracks(conn, &sid, &tracks))?;
@@ -74,37 +79,57 @@ fn extract_and_list(zip_bytes: &[u8], session_path: &Path) -> AppResult<Value> {
         .map_err(|_| AppError::BadRequest("Invalid ZIP file".into()))?;
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| AppError::Internal(e.into()))?;
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| AppError::Internal(e.into()))?;
         if entry.is_dir() {
             continue;
         }
         // zip-slip guard: only keep the sanitized relative path.
-        let Some(rel) = entry.enclosed_name() else { continue };
+        let Some(rel) = entry.enclosed_name() else {
+            continue;
+        };
         let dest = safe_join(session_path, &rel);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| AppError::Internal(e.into()))?;
         }
         let mut buf = Vec::new();
-        entry.read_to_end(&mut buf).map_err(|e| AppError::Internal(e.into()))?;
+        entry
+            .read_to_end(&mut buf)
+            .map_err(|e| AppError::Internal(e.into()))?;
         std::fs::write(&dest, &buf).map_err(|e| AppError::Internal(e.into()))?;
     }
 
     let mut tracks: Vec<Value> = Vec::new();
     collect_audio(session_path, &mut tracks)?;
     tracks.sort_by(|a, b| {
-        a["filename"].as_str().unwrap_or("").cmp(b["filename"].as_str().unwrap_or(""))
+        a["filename"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["filename"].as_str().unwrap_or(""))
     });
     Ok(Value::Array(tracks))
 }
 
 fn collect_audio(dir: &Path, out: &mut Vec<Value>) -> AppResult<()> {
-    for entry in std::fs::read_dir(dir).map_err(|e| AppError::Internal(e.into()))?.flatten() {
+    for entry in std::fs::read_dir(dir)
+        .map_err(|e| AppError::Internal(e.into()))?
+        .flatten()
+    {
         let p = entry.path();
         if p.is_dir() {
             collect_audio(&p, out)?;
         } else if is_audio(&p) {
-            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-            let filename = p.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let stem = p
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let filename = p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
             out.push(json!({
                 "id": stem,
                 "filename": filename,
@@ -138,5 +163,7 @@ pub async fn label_speakers(
     Json(req): Json<LabelSpeakersRequest>,
 ) -> AppResult<Json<Value>> {
     state.with_db(|conn| sessions::set_speakers(conn, &req.session_id, &req.speakers))?;
-    Ok(Json(json!({ "session_id": req.session_id, "speakers": req.speakers })))
+    Ok(Json(
+        json!({ "session_id": req.session_id, "speakers": req.speakers }),
+    ))
 }

@@ -63,9 +63,13 @@ fn resolve(conn: &rusqlite::Connection, campaign_id: &str) -> AppResult<Resolved
         .unwrap_or_else(|| p.default_model.to_string());
 
     let timeout: u64 = if p.transport == Transport::Ollama {
-        cfg.get("ollama_timeout_seconds").and_then(|s| s.parse().ok()).unwrap_or(120)
+        cfg.get("ollama_timeout_seconds")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(120)
     } else {
-        cfg.get("litellm_timeout_seconds").and_then(|s| s.parse().ok()).unwrap_or(120)
+        cfg.get("litellm_timeout_seconds")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(120)
     };
 
     // The campaign's own language wins (a German campaign in an English-default
@@ -79,7 +83,14 @@ fn resolve(conn: &rusqlite::Connection, campaign_id: &str) -> AppResult<Resolved
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "en".into());
 
-    Ok(Resolved { transport: p.transport, api_base, api_key, model, timeout, language })
+    Ok(Resolved {
+        transport: p.transport,
+        api_base,
+        api_key,
+        model,
+        timeout,
+        language,
+    })
 }
 
 /// Distill pasted notes into proposed codex entries. Does not touch the DB
@@ -89,10 +100,16 @@ fn resolve(conn: &rusqlite::Connection, campaign_id: &str) -> AppResult<Resolved
 /// cloud key). Distilling notes in batches is the right move at this scale.
 const MAX_IMPORT_BYTES: usize = 256 * 1024;
 
-pub async fn import(state: &AppState, campaign_id: &str, text: &str) -> AppResult<Vec<CodexEntryCreate>> {
+pub async fn import(
+    state: &AppState,
+    campaign_id: &str,
+    text: &str,
+) -> AppResult<Vec<CodexEntryCreate>> {
     let text = text.trim();
     if text.is_empty() {
-        return Err(AppError::BadRequest("Nothing to import — paste some notes first.".into()));
+        return Err(AppError::BadRequest(
+            "Nothing to import — paste some notes first.".into(),
+        ));
     }
     if text.len() > MAX_IMPORT_BYTES {
         return Err(AppError::BadRequest(format!(
@@ -149,7 +166,13 @@ Notes:\n\
 /// Map an ISO-ish language code to a name the model reliably understands. Falls
 /// back to the raw code (LLMs handle bare codes fine) for anything unlisted.
 fn language_name(code: &str) -> String {
-    match code.trim().to_lowercase().split(['-', '_']).next().unwrap_or("") {
+    match code
+        .trim()
+        .to_lowercase()
+        .split(['-', '_'])
+        .next()
+        .unwrap_or("")
+    {
         "de" => "German".into(),
         "en" => "English".into(),
         "fr" => "French".into(),
@@ -191,15 +214,40 @@ fn parse_entries(raw: &str) -> Vec<CodexEntryCreate> {
     let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
     for v in &arr {
         let Some(obj) = v.as_object() else { continue };
-        let name = obj.get("name").and_then(Value::as_str).unwrap_or("").trim().to_string();
-        let kind = obj.get("kind").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
-        let body = obj.get("body").and_then(Value::as_str).unwrap_or("").trim().to_string();
-        let detail = obj.get("detail").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let name = obj
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let kind = obj
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_lowercase();
+        let body = obj
+            .get("body")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let detail = obj
+            .get("detail")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if name.is_empty() || !KINDS.contains(&kind.as_str()) {
             continue;
         }
         if seen.insert((name.to_lowercase(), kind.clone())) {
-            out.push(CodexEntryCreate { name, kind, body, detail });
+            out.push(CodexEntryCreate {
+                name,
+                kind,
+                body,
+                detail,
+            });
         }
     }
     out
@@ -211,7 +259,8 @@ mod tests {
 
     #[test]
     fn parses_wrapped_object() {
-        let raw = r#"{"entries":[{"name":"Aragorn","kind":"npc","body":"Ranger heir of Isildur"}]}"#;
+        let raw =
+            r#"{"entries":[{"name":"Aragorn","kind":"npc","body":"Ranger heir of Isildur"}]}"#;
         let e = parse_entries(raw);
         assert_eq!(e.len(), 1);
         assert_eq!(e[0].name, "Aragorn");

@@ -58,7 +58,11 @@ pub fn build_session_context(ctx: Option<&Value>, language: &str) -> String {
 
     let mut block = String::new();
     if !lines.is_empty() {
-        let header = if de { "Sitzungskontext:" } else { "Session Context:" };
+        let header = if de {
+            "Sitzungskontext:"
+        } else {
+            "Session Context:"
+        };
         block.push_str(header);
         block.push('\n');
         block.push_str(&lines.join("\n"));
@@ -66,15 +70,36 @@ pub fn build_session_context(ctx: Option<&Value>, language: &str) -> String {
     }
 
     if let Some(speakers) = ctx.get("speakers").and_then(Value::as_array) {
-        let gm_name = ctx.get("gm").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
+        let gm_name = ctx
+            .get("gm")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_lowercase();
         let plays = if de { "spielt" } else { "plays" };
-        let gm_label = if de { "ist der Spielleiter" } else { "is the GM" };
+        let gm_label = if de {
+            "ist der Spielleiter"
+        } else {
+            "is the GM"
+        };
         let speakers_label = if de { "Sprecher:" } else { "Speakers:" };
         let mut sl: Vec<String> = vec![speakers_label.to_string()];
         for s in speakers {
-            let player = s.get("player_name").and_then(Value::as_str).unwrap_or("").trim();
-            let character = s.get("character_name").and_then(Value::as_str).unwrap_or("").trim();
-            let pronouns = s.get("pronouns").and_then(Value::as_str).unwrap_or("").trim();
+            let player = s
+                .get("player_name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let character = s
+                .get("character_name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let pronouns = s
+                .get("pronouns")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
             if player.is_empty() && character.is_empty() {
                 continue;
             }
@@ -104,11 +129,19 @@ pub fn build_session_context(ctx: Option<&Value>, language: &str) -> String {
     // Two sources: the freeform `codex` paste box (Phase 1) and the structured
     // `codex_entries` list (Phase 2). Both are emitted under the same header so
     // the LLM treats them as one glossary.
-    let codex_text = ctx.get("codex").and_then(Value::as_str).map(str::trim).unwrap_or("");
+    let codex_text = ctx
+        .get("codex")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
     let entries = ctx.get("codex_entries").and_then(Value::as_array);
     let has_entries = entries.map(|a| !a.is_empty()).unwrap_or(false);
     if !codex_text.is_empty() || has_entries {
-        let header = if de { "Bekannte Namen & Lore:" } else { "Known names & lore:" };
+        let header = if de {
+            "Bekannte Namen & Lore:"
+        } else {
+            "Known names & lore:"
+        };
         block.push('\n');
         block.push_str(header);
         block.push('\n');
@@ -147,7 +180,9 @@ fn render_codex_entries(entries: &[Value], de: bool) -> String {
     let mut by_kind: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
     for e in entries {
         let name = e.get("name").and_then(Value::as_str).unwrap_or("").trim();
-        if name.is_empty() { continue; }
+        if name.is_empty() {
+            continue;
+        }
         let kind = e.get("kind").and_then(Value::as_str).unwrap_or("lore");
         let body = e.get("body").and_then(Value::as_str).unwrap_or("").trim();
         by_kind.entry(kind).or_default().push((name, body));
@@ -155,8 +190,12 @@ fn render_codex_entries(entries: &[Value], de: bool) -> String {
     let mut out = String::new();
     // Stable order: pc, npc, place, faction, item, lore.
     for kind in ["pc", "npc", "place", "faction", "item", "lore"] {
-        let Some(list) = by_kind.get(kind) else { continue };
-        if list.is_empty() { continue; }
+        let Some(list) = by_kind.get(kind) else {
+            continue;
+        };
+        if list.is_empty() {
+            continue;
+        }
         out.push_str(kind_label(kind, de));
         out.push_str(":\n");
         for (name, body) in list {
@@ -191,9 +230,15 @@ pub fn build_summary_prompt(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| get_prompt_text(language));
     let title_line = title.map(|t| format!("Title: {t}\n")).unwrap_or_default();
-    let context_line = context.map(|c| format!("Context: {c}\n")).unwrap_or_default();
+    let context_line = context
+        .map(|c| format!("Context: {c}\n"))
+        .unwrap_or_default();
     let session_block = build_session_context(session_context, language);
-    let transcript_label = if is_de(language) { "Transkript:" } else { "Transcript:" };
+    let transcript_label = if is_de(language) {
+        "Transkript:"
+    } else {
+        "Transcript:"
+    };
 
     format!(
         "{header}\n\n{title_line}{context_line}{session_block}\n{transcript_label}\n{transcript}\n\nReturn only the summary in markdown."
@@ -209,15 +254,24 @@ mod tests {
     fn codex_is_injected_verbatim_when_present() {
         let ctx = json!({ "campaign_name": "The Iron Crown", "codex": "Neverwinter — frozen trade city." });
         let block = build_session_context(Some(&ctx), "en");
-        assert!(block.contains("Known names & lore:"), "labelled header present");
-        assert!(block.contains("Neverwinter — frozen trade city."), "codex passed verbatim");
+        assert!(
+            block.contains("Known names & lore:"),
+            "labelled header present"
+        );
+        assert!(
+            block.contains("Neverwinter — frozen trade city."),
+            "codex passed verbatim"
+        );
     }
 
     #[test]
     fn codex_block_omitted_when_empty() {
         let ctx = json!({ "campaign_name": "The Iron Crown", "codex": "  " });
         let block = build_session_context(Some(&ctx), "en");
-        assert!(!block.contains("Known names & lore"), "no header for blank codex");
+        assert!(
+            !block.contains("Known names & lore"),
+            "no header for blank codex"
+        );
     }
 
     #[test]
@@ -281,7 +335,11 @@ pub fn build_recap_prompt(campaign_name: &str, sessions_block: &str, language: &
     } else {
         format!("Campaign: {campaign_name}\n\n")
     };
-    let label = if is_de(language) { "Sitzungszusammenfassungen:" } else { "Session summaries:" };
+    let label = if is_de(language) {
+        "Sitzungszusammenfassungen:"
+    } else {
+        "Session summaries:"
+    };
     let closing = if is_de(language) {
         "Gib nur die Zusammenfassung in Markdown zurück."
     } else {
@@ -297,7 +355,11 @@ pub fn build_metadata_prompt(summary: &str, language: &str) -> String {
     } else {
         "Analyze this TTRPG session summary and extract metadata. Return ONLY valid JSON with this exact structure:"
     };
-    let guidelines = if de { METADATA_GUIDE_DE } else { METADATA_GUIDE_EN };
+    let guidelines = if de {
+        METADATA_GUIDE_DE
+    } else {
+        METADATA_GUIDE_EN
+    };
     let structure = serde_json::to_string_pretty(&json!({
         "characters": [], "locations": [], "events": [], "items": [], "tags": []
     }))

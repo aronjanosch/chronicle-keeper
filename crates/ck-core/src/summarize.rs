@@ -31,7 +31,11 @@ fn resolve_provider(
 ) -> AppResult<Resolved> {
     let provider = provider_override
         .map(str::to_string)
-        .unwrap_or_else(|| cfg.get("summary_provider").cloned().unwrap_or_else(|| "ollama".into()))
+        .unwrap_or_else(|| {
+            cfg.get("summary_provider")
+                .cloned()
+                .unwrap_or_else(|| "ollama".into())
+        })
         .to_lowercase();
     let p = llm::get(&provider)
         .ok_or_else(|| AppError::BadRequest(format!("Unknown provider: {provider}")))?;
@@ -66,9 +70,13 @@ fn resolve_provider(
         .unwrap_or_else(|| p.default_model.to_string());
 
     let timeout: u64 = if p.transport == Transport::Ollama {
-        cfg.get("ollama_timeout_seconds").and_then(|s| s.parse().ok()).unwrap_or(120)
+        cfg.get("ollama_timeout_seconds")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(120)
     } else {
-        cfg.get("litellm_timeout_seconds").and_then(|s| s.parse().ok()).unwrap_or(120)
+        cfg.get("litellm_timeout_seconds")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(120)
     };
 
     Ok(Resolved {
@@ -82,7 +90,10 @@ fn resolve_provider(
     })
 }
 
-pub async fn summarize_session(state: &AppState, req: &SummarizeRequest) -> AppResult<SummarizeResponse> {
+pub async fn summarize_session(
+    state: &AppState,
+    req: &SummarizeRequest,
+) -> AppResult<SummarizeResponse> {
     // --- gather everything from the DB up front (sync) ---
     let prep = state.with_db(|conn| -> AppResult<_> {
         let session = sessions::get_session_object(conn, &req.session_id)?;
@@ -102,7 +113,10 @@ pub async fn summarize_session(state: &AppState, req: &SummarizeRequest) -> AppR
             req.base_url.as_deref(),
         )?;
 
-        let language = cfg.get("default_language").cloned().unwrap_or_else(|| "en".into());
+        let language = cfg
+            .get("default_language")
+            .cloned()
+            .unwrap_or_else(|| "en".into());
         // Campaign codex glossary: Phase 1 freeform paste + Phase 2 structured entries.
         // Both pass into the prompt verbatim so the LLM can recognize and correctly
         // spell NPCs/places/items the ASR mangled.
@@ -121,12 +135,20 @@ pub async fn summarize_session(state: &AppState, req: &SummarizeRequest) -> AppR
             .map(|cid| codex::list_entries(conn, cid))
             .transpose()?
             .unwrap_or_default();
-        Ok((session, transcript_text, language, codex_text, codex_entries, resolved))
+        Ok((
+            session,
+            transcript_text,
+            language,
+            codex_text,
+            codex_entries,
+            resolved,
+        ))
     })?;
     let (session, transcript_text, language, codex_text, codex_entries, resolved) = prep;
     let _ = resolved.needs_key;
 
-    let session_context = build_context(&session, req.title.as_deref(), &codex_text, &codex_entries);
+    let session_context =
+        build_context(&session, req.title.as_deref(), &codex_text, &codex_entries);
     let summary_prompt = build_summary_prompt(
         &transcript_text,
         req.title.as_deref(),
@@ -149,7 +171,9 @@ pub async fn summarize_session(state: &AppState, req: &SummarizeRequest) -> AppR
     .await
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Cloud LLM request failed: {}", e.0)))?;
     if summary_text.is_empty() {
-        return Err(AppError::Internal(anyhow::anyhow!("LLM returned an empty summary.")));
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "LLM returned an empty summary."
+        )));
     }
 
     // Metadata is best-effort: a failure here must not sink the summary the user
@@ -181,7 +205,14 @@ pub async fn summarize_session(state: &AppState, req: &SummarizeRequest) -> AppR
     let metadata_for_merge = metadata.clone();
     let summary_for_db = summary_text.clone();
     state.with_db(|conn| -> AppResult<()> {
-        artifacts::insert_artifact(conn, &session_id, "summary", &provider, &model, &summary_for_db)?;
+        artifacts::insert_artifact(
+            conn,
+            &session_id,
+            "summary",
+            &provider,
+            &model,
+            &summary_for_db,
+        )?;
         if let Some(md) = &metadata_for_merge {
             merge_metadata(conn, &session_id, md)?;
         }
@@ -250,7 +281,8 @@ pub async fn generate_recap(
 
     if blocks.is_empty() {
         return Err(AppError::BadRequest(
-            "No session summaries yet — summarize at least one session before building a recap.".into(),
+            "No session summaries yet — summarize at least one session before building a recap."
+                .into(),
         ));
     }
     let sessions_used = blocks.len();
@@ -270,12 +302,15 @@ pub async fn generate_recap(
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Recap LLM request failed: {}", e.0)))?;
     let recap_text = recap_text.trim().to_string();
     if recap_text.is_empty() {
-        return Err(AppError::Internal(anyhow::anyhow!("LLM returned an empty recap.")));
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "LLM returned an empty recap."
+        )));
     }
 
     let cid = campaign_id.to_string();
     let recap_for_db = recap_text.clone();
-    let recap_updated_at = state.with_db(move |conn| campaigns::set_recap(conn, &cid, &recap_for_db))?;
+    let recap_updated_at =
+        state.with_db(move |conn| campaigns::set_recap(conn, &cid, &recap_for_db))?;
 
     Ok(RecapResponse {
         recap: recap_text,
@@ -293,7 +328,10 @@ fn build_context(
     codex: &str,
     codex_entries: &[crate::models::CodexEntry],
 ) -> Value {
-    let campaign = session.get("campaign").cloned().unwrap_or_else(|| json!({}));
+    let campaign = session
+        .get("campaign")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     json!({
         "campaign_name": campaign.get("campaign_name"),
         "session_number": campaign.get("session_number"),
@@ -312,7 +350,10 @@ fn build_context(
 /// Tolerant JSON parse: strip ``` fences then parse.
 fn parse_metadata(text: &str) -> Option<Value> {
     let t = text.trim();
-    let t = t.strip_prefix("```json").or_else(|| t.strip_prefix("```")).unwrap_or(t);
+    let t = t
+        .strip_prefix("```json")
+        .or_else(|| t.strip_prefix("```"))
+        .unwrap_or(t);
     let t = t.strip_suffix("```").unwrap_or(t).trim();
     serde_json::from_str(t).ok()
 }
@@ -320,7 +361,11 @@ fn parse_metadata(text: &str) -> Option<Value> {
 /// Merge LLM-extracted lists into the session's metadata without overwriting
 /// existing (user-edited) values, then materialize the names/locations/items as
 /// auto-extracted codex entries on the parent campaign.
-fn merge_metadata(conn: &rusqlite::Connection, session_id: &str, metadata: &Value) -> AppResult<()> {
+fn merge_metadata(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    metadata: &Value,
+) -> AppResult<()> {
     use rusqlite::{params, OptionalExtension};
     let row: Option<(String, Option<String>)> = conn
         .query_row(
@@ -329,13 +374,16 @@ fn merge_metadata(conn: &rusqlite::Connection, session_id: &str, metadata: &Valu
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    let Some((existing_json, campaign_id)) = row else { return Ok(()) };
-    let mut existing: Map<String, Value> =
-        serde_json::from_str(&existing_json).unwrap_or_default();
+    let Some((existing_json, campaign_id)) = row else {
+        return Ok(());
+    };
+    let mut existing: Map<String, Value> = serde_json::from_str(&existing_json).unwrap_or_default();
 
     if let Value::Object(new_map) = metadata {
         for (key, values) in new_map {
-            let Some(new_list) = values.as_array() else { continue };
+            let Some(new_list) = values.as_array() else {
+                continue;
+            };
             let entry = existing.entry(key.clone()).or_insert_with(|| json!([]));
             let mut merged: Vec<Value> = entry.as_array().cloned().unwrap_or_default();
             for v in new_list {
@@ -356,8 +404,14 @@ fn merge_metadata(conn: &rusqlite::Connection, session_id: &str, metadata: &Valu
     // the natural key exists).
     if let Some(cid) = campaign_id.as_deref().filter(|s| !s.is_empty()) {
         if let Value::Object(map) = metadata {
-            for (key, kind) in [("characters", "npc"), ("locations", "place"), ("items", "item")] {
-                let Some(list) = map.get(key).and_then(Value::as_array) else { continue };
+            for (key, kind) in [
+                ("characters", "npc"),
+                ("locations", "place"),
+                ("items", "item"),
+            ] {
+                let Some(list) = map.get(key).and_then(Value::as_array) else {
+                    continue;
+                };
                 for v in list {
                     if let Some(name) = extract_name(v) {
                         let _ = codex::upsert_auto(conn, cid, &name, kind);
@@ -381,7 +435,11 @@ fn extract_name(v: &Value) -> Option<String> {
         _ => return None,
     };
     let trimmed = raw.trim();
-    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -407,7 +465,8 @@ mod tests {
         });
         merge_metadata(&conn, "s1", &metadata).unwrap();
         let entries = codex::list_entries(&conn, "c1").unwrap();
-        let names: std::collections::BTreeSet<String> = entries.iter().map(|e| e.name.clone()).collect();
+        let names: std::collections::BTreeSet<String> =
+            entries.iter().map(|e| e.name.clone()).collect();
         assert!(names.contains("Aragorn"));
         assert!(names.contains("Gandalf"));
         assert!(names.contains("Bree"));

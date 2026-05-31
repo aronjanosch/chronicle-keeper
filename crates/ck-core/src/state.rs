@@ -26,7 +26,12 @@ pub struct ModelProgress {
 
 impl Default for ModelProgress {
     fn default() -> Self {
-        Self { phase: "idle".into(), downloaded: 0, total: 0, message: None }
+        Self {
+            phase: "idle".into(),
+            downloaded: 0,
+            total: 0,
+            message: None,
+        }
     }
 }
 

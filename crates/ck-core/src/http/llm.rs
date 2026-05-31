@@ -27,7 +27,9 @@ fn provider_info(p: &llm::Provider, saved: Option<&SavedKey>) -> ProviderInfo {
         default_api_base: p.default_api_base.map(str::to_string),
         has_key: saved.map(|s| !s.api_key.is_empty()).unwrap_or(false),
         has_custom_base: saved.map(|s| !s.api_base.is_empty()).unwrap_or(false),
-        saved_model: saved.map(|s| s.default_model.clone()).filter(|m| !m.is_empty()),
+        saved_model: saved
+            .map(|s| s.default_model.clone())
+            .filter(|m| !m.is_empty()),
     }
 }
 
@@ -35,7 +37,10 @@ pub async fn list_providers(State(state): State<AppState>) -> AppResult<Json<Vec
     state.with_db(|conn| {
         let saved = llm::list_keys(conn)?;
         Ok(Json(
-            llm::REGISTRY.iter().map(|p| provider_info(p, saved.get(p.id))).collect(),
+            llm::REGISTRY
+                .iter()
+                .map(|p| provider_info(p, saved.get(p.id)))
+                .collect(),
         ))
     })
 }
@@ -67,7 +72,9 @@ pub async fn test_provider(
 ) -> AppResult<Json<ProviderTestResult>> {
     let p = llm::get(&provider_id)
         .ok_or_else(|| AppError::NotFound(format!("Unknown provider: {provider_id}")))?;
-    let saved = state.with_db(|conn| llm::get_key(conn, &provider_id))?.unwrap_or_default();
+    let saved = state
+        .with_db(|conn| llm::get_key(conn, &provider_id))?
+        .unwrap_or_default();
 
     let api_base = if !saved.api_base.is_empty() {
         saved.api_base.clone()
@@ -81,11 +88,28 @@ pub async fn test_provider(
         .unwrap_or_else(|| p.default_model.to_string());
 
     let start = Instant::now();
-    let result = llm::chat(p.transport, &api_base, &saved.api_key, &model, "Hi", 15, false).await;
+    let result = llm::chat(
+        p.transport,
+        &api_base,
+        &saved.api_key,
+        &model,
+        "Hi",
+        15,
+        false,
+    )
+    .await;
     let latency_ms = start.elapsed().as_millis() as i64;
     Ok(Json(match result {
-        Ok(_) => ProviderTestResult { ok: true, latency_ms, error: None },
-        Err(e) => ProviderTestResult { ok: false, latency_ms, error: Some(e.0) },
+        Ok(_) => ProviderTestResult {
+            ok: true,
+            latency_ms,
+            error: None,
+        },
+        Err(e) => ProviderTestResult {
+            ok: false,
+            latency_ms,
+            error: Some(e.0),
+        },
     }))
 }
 
@@ -98,7 +122,9 @@ pub async fn ping_provider(
 ) -> AppResult<Json<ProviderTestResult>> {
     let p = llm::get(&provider_id)
         .ok_or_else(|| AppError::NotFound(format!("Unknown provider: {provider_id}")))?;
-    let saved = state.with_db(|conn| llm::get_key(conn, &provider_id))?.unwrap_or_default();
+    let saved = state
+        .with_db(|conn| llm::get_key(conn, &provider_id))?
+        .unwrap_or_default();
     let api_base = if !saved.api_base.is_empty() {
         saved.api_base.clone()
     } else {
@@ -106,8 +132,16 @@ pub async fn ping_provider(
     };
     let result = llm::ping(p.transport, &api_base, &saved.api_key, 4).await;
     Ok(Json(match result {
-        Ok(()) => ProviderTestResult { ok: true, latency_ms: 0, error: None },
-        Err(e) => ProviderTestResult { ok: false, latency_ms: 0, error: Some(e.0) },
+        Ok(()) => ProviderTestResult {
+            ok: true,
+            latency_ms: 0,
+            error: None,
+        },
+        Err(e) => ProviderTestResult {
+            ok: false,
+            latency_ms: 0,
+            error: Some(e.0),
+        },
     }))
 }
 

@@ -26,7 +26,12 @@ pub async fn create(
     Json(req): Json<CreateCampaignRequest>,
 ) -> AppResult<Json<Value>> {
     state.with_db(|conn| {
-        let campaign = campaigns::create_campaign(conn, &req.campaign_id, &req.name, req.start_session_number)?;
+        let campaign = campaigns::create_campaign(
+            conn,
+            &req.campaign_id,
+            &req.name,
+            req.start_session_number,
+        )?;
         campaigns::set_current_campaign_id(conn, &req.campaign_id)?;
         Ok(Json(json!({ "status": "success", "campaign": campaign })))
     })
@@ -60,7 +65,9 @@ pub async fn delete(
 ) -> AppResult<Json<Value>> {
     state.with_db(|conn| {
         campaigns::delete_campaign(conn, &campaign_id)?;
-        Ok(Json(json!({ "status": "deleted", "campaign_id": campaign_id })))
+        Ok(Json(
+            json!({ "status": "deleted", "campaign_id": campaign_id }),
+        ))
     })
 }
 
@@ -94,7 +101,9 @@ pub async fn generate_recap(
     Path(campaign_id): Path<String>,
     Json(req): Json<RecapRequest>,
 ) -> AppResult<Json<RecapResponse>> {
-    Ok(Json(summarize::generate_recap(&state, &campaign_id, &req).await?))
+    Ok(Json(
+        summarize::generate_recap(&state, &campaign_id, &req).await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]

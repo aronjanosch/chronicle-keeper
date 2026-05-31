@@ -11,7 +11,9 @@ use ck_core::sync::{Artifact, Campaign, SyncPayload, SyncRequest, SyncResponse};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let base = std::env::args().nth(1).unwrap_or_else(|| "http://127.0.0.1:8899".into());
+    let base = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "http://127.0.0.1:8899".into());
     let endpoint = format!("{}/sync", base.trim_end_matches('/'));
     let client = reqwest::Client::new();
 
@@ -28,19 +30,34 @@ async fn main() -> anyhow::Result<()> {
     };
     let a: SyncResponse = client
         .post(&endpoint)
-        .json(&SyncRequest { client_id: "deviceA".into(), since: None, push })
+        .json(&SyncRequest {
+            client_id: "deviceA".into(),
+            since: None,
+            push,
+        })
         .send()
         .await?
         .error_for_status()?
         .json()
         .await?;
-    println!("A pushed -> synced_at={} pulled {} campaigns", a.synced_at, a.pull.campaigns.len());
-    assert!(a.pull.campaigns.is_empty(), "A must not pull back its own push");
+    println!(
+        "A pushed -> synced_at={} pulled {} campaigns",
+        a.synced_at,
+        a.pull.campaigns.len()
+    );
+    assert!(
+        a.pull.campaigns.is_empty(),
+        "A must not pull back its own push"
+    );
 
     // Device B (fresh) pulls everything.
     let b: SyncResponse = client
         .post(&endpoint)
-        .json(&SyncRequest { client_id: "deviceB".into(), since: None, push: SyncPayload::default() })
+        .json(&SyncRequest {
+            client_id: "deviceB".into(),
+            since: None,
+            push: SyncPayload::default(),
+        })
         .send()
         .await?
         .error_for_status()?
@@ -49,7 +66,10 @@ async fn main() -> anyhow::Result<()> {
     let names: Vec<&str> = b.pull.campaigns.iter().map(|c| c.name.as_str()).collect();
     println!("B pulled campaigns: {names:?} (synced_at={})", b.synced_at);
     assert!(
-        b.pull.campaigns.iter().any(|c| c.campaign_id == "smoke-c1" && c.next_session_number == 2),
+        b.pull
+            .campaigns
+            .iter()
+            .any(|c| c.campaign_id == "smoke-c1" && c.next_session_number == 2),
         "B must pull device A's campaign intact"
     );
 
@@ -58,7 +78,14 @@ async fn main() -> anyhow::Result<()> {
         let client = client.clone();
         let endpoint = endpoint.clone();
         async move {
-            client.post(&endpoint).json(&req).send().await?.error_for_status()?.json::<SyncResponse>().await
+            client
+                .post(&endpoint)
+                .json(&req)
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<SyncResponse>()
+                .await
         }
     };
     let art = Artifact {
@@ -71,13 +98,19 @@ async fn main() -> anyhow::Result<()> {
     let pushed = post(SyncRequest {
         client_id: "deviceA".into(),
         since: Some(b.synced_at.clone()),
-        push: SyncPayload { artifacts: vec![art], ..Default::default() },
+        push: SyncPayload {
+            artifacts: vec![art],
+            ..Default::default()
+        },
     })
     .await?;
     let del = post(SyncRequest {
         client_id: "deviceA".into(),
         since: Some(pushed.synced_at.clone()),
-        push: SyncPayload { deleted_artifact_ids: vec!["smoke-a1".into()], ..Default::default() },
+        push: SyncPayload {
+            deleted_artifact_ids: vec!["smoke-a1".into()],
+            ..Default::default()
+        },
     })
     .await?;
     let _ = del;
@@ -90,7 +123,9 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     println!("B pulled deletions: {:?}", b2.pull.deleted_artifact_ids);
     assert!(
-        b2.pull.deleted_artifact_ids.contains(&"smoke-a1".to_string()),
+        b2.pull
+            .deleted_artifact_ids
+            .contains(&"smoke-a1".to_string()),
         "B must see the artifact deletion"
     );
 

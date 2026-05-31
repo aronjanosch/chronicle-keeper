@@ -5,9 +5,19 @@ use crate::models::Segment;
 /// Build a display label from a speaker mapping entry (mirrors the Python
 /// `speaker_label`): "Character (Player)" / Character / Player / fallback.
 pub fn speaker_label(speaker: Option<&Value>, fallback: &str) -> String {
-    let Some(s) = speaker else { return fallback.to_string() };
-    let character = s.get("character_name").and_then(Value::as_str).unwrap_or("").trim();
-    let player = s.get("player_name").and_then(Value::as_str).unwrap_or("").trim();
+    let Some(s) = speaker else {
+        return fallback.to_string();
+    };
+    let character = s
+        .get("character_name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let player = s
+        .get("player_name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
     match (character.is_empty(), player.is_empty()) {
         (false, false) => format!("{character} ({player})"),
         (false, true) => character.to_string(),

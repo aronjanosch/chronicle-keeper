@@ -82,7 +82,10 @@ fn build_vad(vad_model: &Path) -> Option<VoiceActivityDetector> {
 }
 
 fn num_threads() -> i32 {
-    std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(2).clamp(1, 8)
+    std::thread::available_parallelism()
+        .map(|n| n.get() as i32)
+        .unwrap_or(2)
+        .clamp(1, 8)
 }
 
 /// Resample mono samples to [`TARGET_SR`]. A no-op clone if already at rate.
@@ -101,7 +104,10 @@ fn decode_text(recognizer: &OfflineRecognizer, samples: &[f32]) -> String {
     let stream = recognizer.create_stream();
     stream.accept_waveform(TARGET_SR, samples);
     recognizer.decode(&stream);
-    stream.get_result().map(|r| r.text.trim().to_string()).unwrap_or_default()
+    stream
+        .get_result()
+        .map(|r| r.text.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// VAD-driven segmentation: emit one transcript segment per detected speech run,
@@ -201,8 +207,8 @@ pub fn transcribe_tracks(
             tracing::warn!("track file missing, skipping: {}", path.display());
             continue;
         }
-        let (samples, sr) = decode::decode_to_mono(path)
-            .with_context(|| format!("decode {}", path.display()))?;
+        let (samples, sr) =
+            decode::decode_to_mono(path).with_context(|| format!("decode {}", path.display()))?;
         let samples = to_target_sr(&samples, sr);
 
         let segs = vad_model
@@ -213,6 +219,10 @@ pub fn transcribe_tracks(
     if cancel.load(Ordering::Relaxed) {
         anyhow::bail!("Transcription cancelled (timed out).");
     }
-    all.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+    all.sort_by(|a, b| {
+        a.start
+            .partial_cmp(&b.start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Ok(all)
 }

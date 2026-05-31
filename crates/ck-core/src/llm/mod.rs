@@ -39,7 +39,20 @@ pub static REGISTRY: &[Provider] = &[
         name: "Ollama (local)",
         needs_key: false,
         default_api_base: Some("http://localhost:11434"),
-        models: &["llama3.3", "llama3.2", "llama3.1", "mistral", "mixtral", "gemma3", "gemma2", "phi4", "qwen3", "qwen2.5", "deepseek-r1", "command-r"],
+        models: &[
+            "llama3.3",
+            "llama3.2",
+            "llama3.1",
+            "mistral",
+            "mixtral",
+            "gemma3",
+            "gemma2",
+            "phi4",
+            "qwen3",
+            "qwen2.5",
+            "deepseek-r1",
+            "command-r",
+        ],
         default_model: "llama3.2",
         transport: Transport::Ollama,
     },
@@ -59,7 +72,16 @@ pub static REGISTRY: &[Provider] = &[
         name: "OpenAI",
         needs_key: true,
         default_api_base: Some("https://api.openai.com/v1"),
-        models: &["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "o3", "o3-mini", "o4-mini"],
+        models: &[
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4.1-nano",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "o3",
+            "o3-mini",
+            "o4-mini",
+        ],
         default_model: "gpt-4.1-mini",
         transport: Transport::OpenAiCompat,
     },
@@ -68,7 +90,11 @@ pub static REGISTRY: &[Provider] = &[
         name: "Anthropic",
         needs_key: true,
         default_api_base: Some("https://api.anthropic.com"),
-        models: &["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+        models: &[
+            "claude-opus-4-7",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5-20251001",
+        ],
         default_model: "claude-sonnet-4-6",
         transport: Transport::Anthropic,
     },
@@ -77,7 +103,12 @@ pub static REGISTRY: &[Provider] = &[
         name: "Google Gemini",
         needs_key: true,
         default_api_base: Some("https://generativelanguage.googleapis.com/v1beta/openai"),
-        models: &["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite"],
+        models: &[
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+        ],
         default_model: "gemini-2.5-flash",
         transport: Transport::OpenAiCompat,
     },
@@ -95,7 +126,12 @@ pub static REGISTRY: &[Provider] = &[
         name: "Groq",
         needs_key: true,
         default_api_base: Some("https://api.groq.com/openai/v1"),
-        models: &["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it", "mixtral-8x7b-32768"],
+        models: &[
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "gemma2-9b-it",
+            "mixtral-8x7b-32768",
+        ],
         default_model: "llama-3.3-70b-versatile",
         transport: Transport::OpenAiCompat,
     },
@@ -104,7 +140,12 @@ pub static REGISTRY: &[Provider] = &[
         name: "Mistral",
         needs_key: true,
         default_api_base: Some("https://api.mistral.ai/v1"),
-        models: &["mistral-large-latest", "mistral-small-latest", "mistral-medium-latest", "codestral-latest"],
+        models: &[
+            "mistral-large-latest",
+            "mistral-small-latest",
+            "mistral-medium-latest",
+            "codestral-latest",
+        ],
         default_model: "mistral-large-latest",
         transport: Transport::OpenAiCompat,
     },
@@ -122,7 +163,11 @@ pub static REGISTRY: &[Provider] = &[
         name: "Together AI",
         needs_key: true,
         default_api_base: Some("https://api.together.xyz/v1"),
-        models: &["meta-llama/Llama-3.3-70B-Instruct-Turbo", "Qwen/Qwen2.5-72B-Instruct-Turbo", "mistralai/Mixtral-8x7B-Instruct-v0.1"],
+        models: &[
+            "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            "Qwen/Qwen2.5-72B-Instruct-Turbo",
+            "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        ],
         default_model: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
         transport: Transport::OpenAiCompat,
     },
@@ -131,7 +176,12 @@ pub static REGISTRY: &[Provider] = &[
         name: "Perplexity",
         needs_key: true,
         default_api_base: Some("https://api.perplexity.ai"),
-        models: &["sonar-pro", "sonar", "sonar-reasoning-pro", "sonar-reasoning"],
+        models: &[
+            "sonar-pro",
+            "sonar",
+            "sonar-reasoning-pro",
+            "sonar-reasoning",
+        ],
         default_model: "sonar-pro",
         transport: Transport::OpenAiCompat,
     },
@@ -159,13 +209,25 @@ pub fn get_key(conn: &Connection, id: &str) -> AppResult<Option<SavedKey>> {
         .query_row(
             "SELECT api_key, api_base, default_model FROM provider_keys WHERE provider_id = ?1",
             params![id],
-            |r| Ok(SavedKey { api_key: r.get(0)?, api_base: r.get(1)?, default_model: r.get(2)? }),
+            |r| {
+                Ok(SavedKey {
+                    api_key: r.get(0)?,
+                    api_base: r.get(1)?,
+                    default_model: r.get(2)?,
+                })
+            },
         )
         .optional()?;
     Ok(row)
 }
 
-pub fn upsert_key(conn: &Connection, id: &str, api_key: &str, api_base: &str, default_model: &str) -> AppResult<()> {
+pub fn upsert_key(
+    conn: &Connection,
+    id: &str,
+    api_key: &str,
+    api_base: &str,
+    default_model: &str,
+) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO provider_keys (provider_id, api_key, api_base, default_model, updated_at) \
@@ -179,9 +241,17 @@ pub fn upsert_key(conn: &Connection, id: &str, api_key: &str, api_base: &str, de
 }
 
 pub fn list_keys(conn: &Connection) -> AppResult<HashMap<String, SavedKey>> {
-    let mut stmt = conn.prepare("SELECT provider_id, api_key, api_base, default_model FROM provider_keys")?;
+    let mut stmt =
+        conn.prepare("SELECT provider_id, api_key, api_base, default_model FROM provider_keys")?;
     let rows = stmt.query_map([], |r| {
-        Ok((r.get::<_, String>(0)?, SavedKey { api_key: r.get(1)?, api_base: r.get(2)?, default_model: r.get(3)? }))
+        Ok((
+            r.get::<_, String>(0)?,
+            SavedKey {
+                api_key: r.get(1)?,
+                api_base: r.get(2)?,
+                default_model: r.get(3)?,
+            },
+        ))
     })?;
     let mut map = HashMap::new();
     for r in rows {
@@ -232,7 +302,12 @@ pub async fn chat(
             let resp = req.send().await.map_err(|e| LlmError(e.to_string()))?;
             let resp = error_for_status(resp).await?;
             let v: Value = resp.json().await.map_err(|e| LlmError(e.to_string()))?;
-            Ok(v.get("message").and_then(|m| m.get("content")).and_then(Value::as_str).unwrap_or("").trim().to_string())
+            Ok(v.get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string())
         }
         Transport::OpenAiCompat => {
             let mut body = json!({
@@ -255,7 +330,11 @@ pub async fn chat(
         Transport::Anthropic => {
             // Native Messages API. There is no `response_format`; to force JSON
             // we prefill the assistant turn with "{" and prepend it back on.
-            let base = if api_base.is_empty() { "https://api.anthropic.com" } else { api_base };
+            let base = if api_base.is_empty() {
+                "https://api.anthropic.com"
+            } else {
+                api_base
+            };
             let mut messages = vec![json!({ "role": "user", "content": prompt })];
             if json_mode {
                 messages.push(json!({ "role": "assistant", "content": "{" }));
@@ -278,7 +357,11 @@ pub async fn chat(
             let v: Value = resp.json().await.map_err(|e| LlmError(e.to_string()))?;
             let text = extract_anthropic_content(&v);
             // Prefill ate the opening brace; the model emits the rest incl. "}".
-            Ok(if json_mode { format!("{{{text}").trim().to_string() } else { text })
+            Ok(if json_mode {
+                format!("{{{text}").trim().to_string()
+            } else {
+                text
+            })
         }
         Transport::Unsupported => Err(LlmError(
             "This provider's native client is not yet available in this build.".into(),
@@ -289,7 +372,12 @@ pub async fn chat(
 /// Cheap reachability probe. For Ollama we hit `/api/tags` (instant, no model
 /// load or generation). Other transports have no keyless probe, so we report
 /// reachable and lean on the saved-key check instead.
-pub async fn ping(transport: Transport, api_base: &str, api_key: &str, timeout_secs: u64) -> Result<(), LlmError> {
+pub async fn ping(
+    transport: Transport,
+    api_base: &str,
+    api_key: &str,
+    timeout_secs: u64,
+) -> Result<(), LlmError> {
     if transport != Transport::Ollama {
         return Ok(());
     }
@@ -297,7 +385,11 @@ pub async fn ping(transport: Transport, api_base: &str, api_key: &str, timeout_s
         .timeout(Duration::from_secs(timeout_secs))
         .build()
         .map_err(|e| LlmError(e.to_string()))?;
-    let base = if api_base.is_empty() { "http://localhost:11434" } else { api_base };
+    let base = if api_base.is_empty() {
+        "http://localhost:11434"
+    } else {
+        api_base
+    };
     let url = format!("{}/api/tags", base.trim_end_matches('/'));
     let mut req = client.get(url);
     if !api_key.is_empty() {
@@ -331,7 +423,12 @@ fn extract_anthropic_content(v: &Value) -> String {
 }
 
 fn extract_openai_content(v: &Value) -> String {
-    let Some(content) = v.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("message")).and_then(|m| m.get("content")) else {
+    let Some(content) = v
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+    else {
         return String::new();
     };
     match content {

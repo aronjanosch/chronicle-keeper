@@ -20,7 +20,7 @@ use crate::state::AppState;
 
 const SYNC_PATH: &str = "/sync";
 
-// --- wire DTOs (mirror docs/SYNC_PROTOCOL.md) ---
+// Wire DTOs — mirror docs/SYNC_PROTOCOL.md.
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Campaign {
@@ -118,8 +118,6 @@ pub struct SyncResponse {
     pub synced_at: String,
     pub pull: SyncPayload,
 }
-
-// --- collection (dirty -> push) ---
 
 /// Gather every locally-dirty record into a push payload.
 pub fn collect_dirty(conn: &Connection) -> AppResult<SyncPayload> {
@@ -274,8 +272,6 @@ fn clear_dirty(conn: &Connection, payload: &SyncPayload) -> AppResult<()> {
     Ok(())
 }
 
-// --- application (pull -> local) ---
-
 /// Apply the server's changes locally. The server is authoritative: pulled
 /// records overwrite local copies and are marked clean (`dirty = 0`).
 pub fn apply_pull(conn: &Connection, pull: &SyncPayload) -> AppResult<()> {
@@ -387,8 +383,6 @@ pub fn apply_pull(conn: &Connection, pull: &SyncPayload) -> AppResult<()> {
 
     Ok(())
 }
-
-// --- orchestration ---
 
 /// Get this device's stable sync id, generating and persisting one on first use.
 fn ensure_client_id(conn: &Connection) -> AppResult<String> {

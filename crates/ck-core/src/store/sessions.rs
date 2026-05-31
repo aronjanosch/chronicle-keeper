@@ -275,27 +275,30 @@ fn tracks_present(tracks_json: &str) -> bool {
 
 pub fn list_sessions(conn: &Connection) -> AppResult<Vec<SessionInfo>> {
     let mut stmt = conn.prepare("SELECT session_id, session_path, tracks_json FROM sessions WHERE deleted = 0 ORDER BY session_id DESC")?;
-    let rows = stmt.query_map([], |r| {
-        Ok((
-            r.get::<_, String>(0)?,
-            r.get::<_, String>(1)?,
-            r.get::<_, String>(2)?,
-        ))
-    })?;
-    let mut out = Vec::new();
-    for r in rows {
-        let (sid, path, tracks_json) = r?;
-        out.push(SessionInfo {
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let with_transcript = artifacts::session_ids_with_kind(conn, "transcript")?;
+    let with_summary = artifacts::session_ids_with_kind(conn, "summary")?;
+    let out = rows
+        .into_iter()
+        .map(|(sid, path, tracks_json)| SessionInfo {
             has_tracks: tracks_present(&tracks_json),
-            has_transcription: artifacts::has_kind(conn, &sid, "transcript")?,
-            has_summary: artifacts::has_kind(conn, &sid, "summary")?,
+            has_transcription: with_transcript.contains(&sid),
+            has_summary: with_summary.contains(&sid),
             // Artifacts live inline in SQLite now; no file paths to surface.
             transcript_path: None,
             summary_path: None,
             session_id: sid,
             session_path: path,
-        });
-    }
+        })
+        .collect();
     Ok(out)
 }
 
@@ -307,32 +310,37 @@ pub fn list_campaign_sessions(
         "SELECT session_id, session_number, title, date, metadata_json, tracks_json FROM sessions \
          WHERE campaign_id = ?1 AND deleted = 0 ORDER BY session_number DESC",
     )?;
-    let rows = stmt.query_map(params![campaign_id], |r| {
-        Ok((
-            r.get::<_, String>(0)?,
-            r.get::<_, Option<i64>>(1)?,
-            r.get::<_, Option<String>>(2)?,
-            r.get::<_, Option<String>>(3)?,
-            r.get::<_, String>(4)?,
-            r.get::<_, String>(5)?,
-        ))
-    })?;
-    let mut out = Vec::new();
-    for r in rows {
-        let (sid, number, title, date, metadata_json, tracks_json) = r?;
-        let metadata: Value = serde_json::from_str(&metadata_json)
-            .unwrap_or_else(|_| normalize_metadata(&Value::Null));
-        out.push(CampaignSessionInfo {
-            has_tracks: tracks_present(&tracks_json),
-            has_transcription: artifacts::has_kind(conn, &sid, "transcript")?,
-            has_summary: artifacts::has_kind(conn, &sid, "summary")?,
-            session_id: sid,
-            session_number: number,
-            title,
-            date,
-            metadata,
-        });
-    }
+    let rows = stmt
+        .query_map(params![campaign_id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<i64>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let with_transcript = artifacts::session_ids_with_kind(conn, "transcript")?;
+    let with_summary = artifacts::session_ids_with_kind(conn, "summary")?;
+    let out = rows
+        .into_iter()
+        .map(|(sid, number, title, date, metadata_json, tracks_json)| {
+            let metadata: Value = serde_json::from_str(&metadata_json)
+                .unwrap_or_else(|_| normalize_metadata(&Value::Null));
+            CampaignSessionInfo {
+                has_tracks: tracks_present(&tracks_json),
+                has_transcription: with_transcript.contains(&sid),
+                has_summary: with_summary.contains(&sid),
+                session_id: sid,
+                session_number: number,
+                title,
+                date,
+                metadata,
+            }
+        })
+        .collect();
     Ok(out)
 }
 

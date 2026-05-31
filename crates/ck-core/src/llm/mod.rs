@@ -11,7 +11,7 @@ use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Transport {
@@ -259,6 +259,88 @@ pub fn list_keys(conn: &Connection) -> AppResult<HashMap<String, SavedKey>> {
         map.insert(id, k);
     }
     Ok(map)
+}
+
+// ---- provider resolution ----
+
+/// A fully-resolved LLM target for one generation call.
+pub struct Resolved {
+    pub provider: String,
+    pub transport: Transport,
+    pub api_base: String,
+    pub api_key: String,
+    pub model: String,
+    pub timeout: u64,
+    pub needs_key: bool,
+}
+
+/// Resolve provider/model/base/timeout for a call, layering per-request overrides
+/// over the saved provider key over config defaults. Shared by summarization,
+/// recap, and codex import so they all pick the same target the same way.
+pub fn resolve(
+    conn: &Connection,
+    cfg: &HashMap<String, String>,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+    base_override: Option<&str>,
+) -> AppResult<Resolved> {
+    let provider = provider_override
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            cfg.get("summary_provider")
+                .cloned()
+                .unwrap_or_else(|| "ollama".into())
+        })
+        .to_lowercase();
+    let p = get(&provider)
+        .ok_or_else(|| AppError::BadRequest(format!("Unknown provider: {provider}")))?;
+    let saved = get_key(conn, &provider)?.unwrap_or_default();
+
+    let api_key = saved.api_key.clone();
+    if p.needs_key && api_key.is_empty() {
+        return Err(AppError::BadRequest(format!(
+            "No API key saved for {}. Add it in Settings → LLM providers.",
+            p.name
+        )));
+    }
+
+    let api_base = base_override
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .or_else(|| Some(saved.api_base.clone()).filter(|s| !s.is_empty()))
+        .or_else(|| {
+            (p.transport == Transport::Ollama)
+                .then(|| cfg.get("ollama_base_url").cloned())
+                .flatten()
+        })
+        .or_else(|| p.default_api_base.map(str::to_string))
+        .unwrap_or_default();
+
+    let model = model_override
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .or_else(|| Some(saved.default_model.clone()).filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| p.default_model.to_string());
+
+    let timeout_key = if p.transport == Transport::Ollama {
+        "ollama_timeout_seconds"
+    } else {
+        "litellm_timeout_seconds"
+    };
+    let timeout = cfg
+        .get(timeout_key)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(120);
+
+    Ok(Resolved {
+        provider,
+        transport: p.transport,
+        api_base,
+        api_key,
+        model,
+        timeout,
+        needs_key: p.needs_key,
+    })
 }
 
 // ---- chat client ----

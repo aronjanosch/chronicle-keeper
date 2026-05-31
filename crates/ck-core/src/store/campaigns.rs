@@ -1,17 +1,16 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 
-use crate::config::get_config_map;
+use crate::config::get_value;
 use crate::error::{AppError, AppResult};
 use crate::models::{CampaignDetail, CampaignInfo, CampaignUpdateRequest};
 use crate::normalize::normalize_players;
 use crate::store::now;
 
 fn default_language(conn: &Connection) -> String {
-    get_config_map(conn)
+    get_value(conn, "default_language")
         .ok()
-        .and_then(|m| m.get("default_language").cloned())
-        .filter(|s| !s.is_empty())
+        .flatten()
         .unwrap_or_else(|| "en".to_string())
 }
 
@@ -87,11 +86,9 @@ pub fn codex_freeform_text(detail: &CampaignDetail) -> String {
 pub fn get_campaigns(conn: &Connection) -> AppResult<Vec<CampaignDetail>> {
     let lang = default_language(conn);
     let mut stmt = conn.prepare("SELECT * FROM campaigns WHERE deleted = 0 ORDER BY name")?;
-    let rows = stmt.query_map([], |r| row_to_detail(r, &lang))?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
+    let out = stmt
+        .query_map([], |r| row_to_detail(r, &lang))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(out)
 }
 
@@ -174,9 +171,11 @@ pub fn update_campaign(
         sets.push("next_session_number = ?".into());
         vals.push(Box::new(n));
     }
-    if let Some(players) = &req.players {
+    // Normalize once; reused below for the players_json column and codex PC sync.
+    let normalized_players = req.players.as_ref().map(normalize_players);
+    if let Some(players) = &normalized_players {
         sets.push("players_json = ?".into());
-        vals.push(Box::new(normalize_players(players).to_string()));
+        vals.push(Box::new(players.to_string()));
     }
     // Always stamp the sync columns, even if no user-facing field changed.
     sets.push("updated_at = ?".into());
@@ -191,8 +190,8 @@ pub fn update_campaign(
     conn.execute(&sql, refs.as_slice())?;
     // Keep the codex in sync with the party roster: each character gets an empty
     // `pc` entry (create-only — see codex::sync_pc_entries).
-    if let Some(players) = &req.players {
-        crate::store::codex::sync_pc_entries(conn, campaign_id, &normalize_players(players))?;
+    if let Some(players) = &normalized_players {
+        crate::store::codex::sync_pc_entries(conn, campaign_id, players)?;
     }
     get_campaign(conn, campaign_id)?
         .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))

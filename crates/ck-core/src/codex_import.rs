@@ -8,98 +8,21 @@
 use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
-use crate::llm::{self, Transport};
+use crate::llm;
 use crate::models::CodexEntryCreate;
 use crate::state::AppState;
 use crate::store::codex::KINDS;
 
-struct Resolved {
-    transport: Transport,
-    api_base: String,
-    api_key: String,
-    model: String,
-    timeout: u64,
-    /// Language the one-line bodies should be written in (ISO code, e.g. `de`).
-    /// Prefers the campaign's own `default_language`, falls back to app config.
-    language: String,
-}
-
-/// Resolve the LLM exactly like the summarizer does, but from config alone
-/// (no per-request override): the codex inherits the campaign's summary
-/// provider/model so the import "voice" matches the summaries.
-fn resolve(conn: &rusqlite::Connection, campaign_id: &str) -> AppResult<Resolved> {
-    let cfg = crate::config::get_config_map(conn)?;
-    let provider = cfg
-        .get("summary_provider")
-        .cloned()
-        .unwrap_or_else(|| "ollama".into())
-        .to_lowercase();
-    let p = llm::get(&provider)
-        .ok_or_else(|| AppError::BadRequest(format!("Unknown provider: {provider}")))?;
-    let saved = llm::get_key(conn, &provider)?.unwrap_or_default();
-
-    let api_key = saved.api_key.clone();
-    if p.needs_key && api_key.is_empty() {
-        return Err(AppError::BadRequest(format!(
-            "No API key saved for {}. Add it in Settings → LLM providers.",
-            p.name
-        )));
-    }
-
-    let api_base = Some(saved.api_base.clone())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            if p.transport == Transport::Ollama {
-                cfg.get("ollama_base_url").cloned()
-            } else {
-                None
-            }
-        })
-        .or_else(|| p.default_api_base.map(str::to_string))
-        .unwrap_or_default();
-
-    let model = Some(saved.default_model.clone())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| p.default_model.to_string());
-
-    let timeout: u64 = if p.transport == Transport::Ollama {
-        cfg.get("ollama_timeout_seconds")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(120)
-    } else {
-        cfg.get("litellm_timeout_seconds")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(120)
-    };
-
-    // The campaign's own language wins (a German campaign in an English-default
-    // app), then the app default, then English.
-    let language = crate::store::campaigns::get_campaign(conn, campaign_id)
-        .ok()
-        .flatten()
-        .map(|c| c.default_language)
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| cfg.get("default_language").cloned())
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "en".into());
-
-    Ok(Resolved {
-        transport: p.transport,
-        api_base,
-        api_key,
-        model,
-        timeout,
-        language,
-    })
-}
-
-/// Distill pasted notes into proposed codex entries. Does not touch the DB
-/// beyond reading config — the caller reviews and commits.
 /// Upper bound on pasted note size. Past this, a single import is both useless
 /// (it overruns the model's context) and a foot-gun (runaway token cost on a BYO
 /// cloud key). Distilling notes in batches is the right move at this scale.
 const MAX_IMPORT_BYTES: usize = 256 * 1024;
 
+/// Distill pasted notes into proposed codex entries. Does not touch the DB
+/// beyond reading config — the caller reviews and commits. The codex inherits
+/// the campaign's summary provider/model so the import "voice" matches summaries,
+/// and writes one-line bodies in the campaign's language (falling back to config,
+/// then English).
 pub async fn import(
     state: &AppState,
     campaign_id: &str,
@@ -118,15 +41,28 @@ pub async fn import(
             MAX_IMPORT_BYTES / 1024,
         )));
     }
-    let resolved = state.with_db(|conn| resolve(conn, campaign_id))?;
-    let prompt = build_prompt(text, &resolved.language);
+    let (target, language) = state.with_db(|conn| -> AppResult<_> {
+        let cfg = crate::config::get_config_map(conn)?;
+        let target = llm::resolve(conn, &cfg, None, None, None)?;
+        let language = crate::store::campaigns::get_campaign(conn, campaign_id)
+            .ok()
+            .flatten()
+            .map(|c| c.default_language)
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| cfg.get("default_language").cloned())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "en".into());
+        Ok((target, language))
+    })?;
+
+    let prompt = build_prompt(text, &language);
     let raw = llm::chat(
-        resolved.transport,
-        &resolved.api_base,
-        &resolved.api_key,
-        &resolved.model,
+        target.transport,
+        &target.api_base,
+        &target.api_key,
+        &target.model,
         &prompt,
-        resolved.timeout,
+        target.timeout,
         /* json_mode */ true,
     )
     .await

@@ -16,11 +16,9 @@ use crate::paths::Paths;
 pub struct ModelProgress {
     /// "idle" | "downloading" | "extracting" | "ready" | "error"
     pub phase: String,
-    /// Bytes downloaded so far (downloading phase).
     pub downloaded: u64,
     /// Total bytes if the server sent Content-Length, else 0 (unknown).
     pub total: u64,
-    /// Human-readable note, set on error.
     pub message: Option<String>,
 }
 

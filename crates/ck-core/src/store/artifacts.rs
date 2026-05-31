@@ -204,3 +204,17 @@ pub fn has_kind(conn: &Connection, session_id: &str, kind: &str) -> AppResult<bo
     )?;
     Ok(n > 0)
 }
+
+/// Every session id that has at least one artifact of `kind`. Lets list views
+/// resolve has-transcript / has-summary in one query instead of a COUNT per
+/// session (avoids an N+1 over the session list).
+pub fn session_ids_with_kind(
+    conn: &Connection,
+    kind: &str,
+) -> AppResult<std::collections::HashSet<String>> {
+    let mut stmt = conn.prepare("SELECT DISTINCT session_id FROM artifacts WHERE kind = ?1")?;
+    let ids = stmt
+        .query_map(params![kind], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;
+    Ok(ids)
+}

@@ -1,100 +1,16 @@
-use std::collections::HashMap;
-
 use serde_json::{json, Map, Value};
 
 use crate::error::{AppError, AppResult};
-use crate::llm::{self, Transport};
+use crate::llm;
 use crate::models::{RecapRequest, RecapResponse, SummarizeRequest, SummarizeResponse};
 use crate::prompts::{build_metadata_prompt, build_recap_prompt, build_summary_prompt};
 use crate::state::AppState;
 use crate::store::{artifacts, campaigns, codex, sessions};
 
-struct Resolved {
-    provider: String,
-    transport: Transport,
-    api_base: String,
-    api_key: String,
-    model: String,
-    timeout: u64,
-    needs_key: bool,
-}
-
-/// Resolve the LLM provider/model/base/timeout for a generation call, layering
-/// per-request overrides over the saved provider key over config defaults.
-/// Shared by session summarization and campaign recap generation.
-fn resolve_provider(
-    conn: &rusqlite::Connection,
-    cfg: &HashMap<String, String>,
-    provider_override: Option<&str>,
-    model_override: Option<&str>,
-    base_override: Option<&str>,
-) -> AppResult<Resolved> {
-    let provider = provider_override
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            cfg.get("summary_provider")
-                .cloned()
-                .unwrap_or_else(|| "ollama".into())
-        })
-        .to_lowercase();
-    let p = llm::get(&provider)
-        .ok_or_else(|| AppError::BadRequest(format!("Unknown provider: {provider}")))?;
-    let saved = llm::get_key(conn, &provider)?.unwrap_or_default();
-
-    let api_key = saved.api_key.clone();
-    if p.needs_key && api_key.is_empty() {
-        return Err(AppError::Internal(anyhow::anyhow!(
-            "No API key saved for {}. Add it in Settings → LLM providers.",
-            p.name
-        )));
-    }
-
-    let api_base = base_override
-        .map(str::to_string)
-        .filter(|s| !s.is_empty())
-        .or_else(|| Some(saved.api_base.clone()).filter(|s| !s.is_empty()))
-        .or_else(|| {
-            if p.transport == Transport::Ollama {
-                cfg.get("ollama_base_url").cloned()
-            } else {
-                None
-            }
-        })
-        .or_else(|| p.default_api_base.map(str::to_string))
-        .unwrap_or_default();
-
-    let model = model_override
-        .map(str::to_string)
-        .filter(|s| !s.is_empty())
-        .or_else(|| Some(saved.default_model.clone()).filter(|s| !s.is_empty()))
-        .unwrap_or_else(|| p.default_model.to_string());
-
-    let timeout: u64 = if p.transport == Transport::Ollama {
-        cfg.get("ollama_timeout_seconds")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(120)
-    } else {
-        cfg.get("litellm_timeout_seconds")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(120)
-    };
-
-    Ok(Resolved {
-        provider,
-        transport: p.transport,
-        api_base,
-        api_key,
-        model,
-        timeout,
-        needs_key: p.needs_key,
-    })
-}
-
 pub async fn summarize_session(
     state: &AppState,
     req: &SummarizeRequest,
 ) -> AppResult<SummarizeResponse> {
-    // --- gather everything from the DB up front (sync) ---
     let prep = state.with_db(|conn| -> AppResult<_> {
         let session = sessions::get_session_object(conn, &req.session_id)?;
         let cfg = crate::config::get_config_map(conn)?;
@@ -105,7 +21,7 @@ pub async fn summarize_session(
         }
         .ok_or_else(|| AppError::BadRequest("Transcript not found for session.".into()))?;
 
-        let resolved = resolve_provider(
+        let resolved = llm::resolve(
             conn,
             &cfg,
             req.provider.as_deref(),
@@ -145,7 +61,6 @@ pub async fn summarize_session(
         ))
     })?;
     let (session, transcript_text, language, codex_text, codex_entries, resolved) = prep;
-    let _ = resolved.needs_key;
 
     let session_context =
         build_context(&session, req.title.as_deref(), &codex_text, &codex_entries);
@@ -158,7 +73,6 @@ pub async fn summarize_session(
         Some(&session_context),
     );
 
-    // --- LLM calls (async) ---
     let summary_text = llm::chat(
         resolved.transport,
         &resolved.api_base,
@@ -198,7 +112,6 @@ pub async fn summarize_session(
     };
     let metadata = parse_metadata(&metadata_text);
 
-    // --- persist (inline content in SQLite; no loose files — core principle #1) ---
     let session_id = req.session_id.clone();
     let provider = resolved.provider.clone();
     let model = resolved.model.clone();
@@ -268,7 +181,7 @@ pub async fn generate_recap(
             blocks.push(format!("{header}\n{text}"));
         }
 
-        let resolved = resolve_provider(
+        let resolved = llm::resolve(
             conn,
             &cfg,
             req.provider.as_deref(),

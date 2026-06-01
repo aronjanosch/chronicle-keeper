@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The workflow · Chronicle Keeper docs</title>
+  <meta name="description" content="Upload a Craig recording, label speakers, transcribe on-device, summarize with your LLM, and export to Obsidian — the full Chronicle Keeper workflow, step by step." />
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="../assets/style.css" />
+</head>
+<body>
+
+  <header class="topnav">
+    <div class="wrap">
+      <a class="brand" href="../">
+        <span class="mark" style="width:30px;height:30px"><svg width="17" height="17" viewBox="0 0 20 20"><path d="M14.5 6.5C13.5 5.5 12 5 10.5 5c-3 0-5 2-5 5s2 5 5 5c1.5 0 3-.5 4-1.5" stroke="#F2D9D2" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg></span>
+        <span class="name">Chronicle Keeper<small>Docs</small></span>
+      </a>
+      <button class="nav-toggle btn btn-secondary btn-sm" aria-label="Toggle menu"><svg class="ic" viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12"/></svg></button>
+      <nav>
+        <a href="../#features">Features</a>
+        <a href="../#pipeline">How it works</a>
+        <a href="getting-started.html" class="is-active">Docs</a>
+        <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a>
+        <a class="btn btn-primary btn-sm" href="https://github.com/aronjanosch/chronicle-keeper/releases" style="color:#FBF6E9">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="docs">
+    <aside class="docs-sidebar">
+      <div class="group">
+        <h6>Start here</h6>
+        <a href="getting-started.html"><svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="m10.5 5.5-1.6 3.4-3.4 1.6 1.6-3.4 3.4-1.6Z"/></svg> Getting started</a>
+        <a href="install.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 3v8M5 8l3 3 3-3M3 13h10"/></svg> Install &amp; first launch</a>
+      </div>
+      <div class="group">
+        <h6>Using it</h6>
+        <a href="workflow.html"><svg class="ic" viewBox="0 0 16 16"><path d="M2 8h1M4 6v4M6 4v8M8 5v6M10 3v10M12 6v4M14 8h.5"/></svg> The workflow</a>
+        <a href="llm-setup.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2"/></svg> LLM setup</a>
+        <a href="codex.html"><svg class="ic" viewBox="0 0 16 16"><path d="m8 2 4 3-4 9-4-9 4-3ZM4 5h8M8 2v3M6 5l2 9M10 5l-2 9"/></svg> The Codex</a>
+        <a href="sync.html"><svg class="ic" viewBox="0 0 16 16"><path d="M4.5 12a3 3 0 0 1 0-6 3.5 3.5 0 0 1 6.7-1A2.8 2.8 0 0 1 12 12H4.5Z"/></svg> Multi-device sync</a>
+      </div>
+      <div class="group">
+        <h6>Help</h6>
+        <a href="troubleshooting.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg> Troubleshooting</a>
+        <a href="faq.html"><svg class="ic" viewBox="0 0 16 16"><path d="M3 2.5h7a2 2 0 0 1 2 2V14M3 2.5v11.5h7M3 2.5v11.5a1 1 0 0 0 1 1h8"/></svg> FAQ</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <div class="crumb">Docs / The workflow</div>
+      <h1>The workflow</h1>
+      <p class="page-lede">One recording in, one finished session note out. Here's every stage of the pipeline, in the order you'll meet them.</p>
+
+      <div class="prose">
+        <div class="pipeline" style="margin-bottom:8px">
+          <div class="step"><div class="n">01</div><h4>Upload</h4><p>Craig ZIP</p></div>
+          <div class="step"><div class="n">02</div><h4>Label</h4><p>who's who</p></div>
+          <div class="step"><div class="n">03</div><h4>Transcribe</h4><p>on-device</p></div>
+          <div class="step"><div class="n">04</div><h4>Summarize</h4><p>your LLM</p></div>
+          <div class="step"><div class="n">05</div><h4>Export</h4><p>Obsidian MD</p></div>
+        </div>
+
+        <h2 id="before">Before you start</h2>
+        <ul>
+          <li>You've <a href="install.html">installed the app</a>.</li>
+          <li>You've <a href="llm-setup.html">set up an LLM</a> in Settings and the Test passed.</li>
+          <li>You have a <strong>Craig Bot recording</strong> downloaded — the multi-track ZIP, ideally with one track per player.</li>
+        </ul>
+
+        <h2 id="record">0 · Record with Craig</h2>
+        <p>During your session, <a href="https://craig.chat" target="_blank" rel="noopener">Craig</a> records each person in your Discord voice channel to their own audio track. When the session ends, download the recording and choose the <strong>multi-track</strong> download (one file per speaker) — that's what gives the cleanest transcripts, since each track is one voice.</p>
+
+        <h2 id="campaign">1 · Create a campaign</h2>
+        <ol class="steps">
+          <li><h4>Open the Library</h4><p>The Library is your shelf of campaigns. A seeded <strong>Example</strong> campaign is there to poke at.</p></li>
+          <li><h4>New campaign</h4><p>Give it a name (e.g. "The Sunless Citadel"). Everything — sessions, the Codex, exports — is scoped per campaign.</p></li>
+        </ol>
+
+        <h2 id="upload">2 · Start a session &amp; upload</h2>
+        <ol class="steps">
+          <li><h4>New session</h4><p>Inside the campaign, start a new session. The session number is suggested automatically.</p></li>
+          <li><h4>Drop in the Craig ZIP</h4><p>Upload the recording. Chronicle Keeper unpacks the tracks and lists them.</p></li>
+        </ol>
+
+        <h2 id="label">3 · Label the speakers</h2>
+        <p>Each track gets a name so the transcript and summary know who said what. Type the player's name (or character) next to each track. This takes a minute and pays off in a far more readable write-up.</p>
+        <div class="callout callout-tip">
+          <svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg>
+          <div class="c-body"><strong>Tip</strong><p>Label with the names you want to read in the notes. If your group thinks in character names, use those; the summary will follow your lead.</p></div>
+        </div>
+
+        <h2 id="transcribe">4 · Transcribe</h2>
+        <p>Hit <strong>Transcribe</strong>. The first time, the speech model downloads once (a few hundred MB). After that, every track is transcribed locally — no audio leaves your machine, no internet needed.</p>
+        <ul>
+          <li><strong>Engine:</strong> native Parakeet TDT v3, several× realtime on CPU.</li>
+          <li><strong>Languages:</strong> 25 European languages including German.</li>
+          <li><strong>No diarization:</strong> because Craig gives one track per speaker, it's just clean speech-to-text per person.</li>
+        </ul>
+        <div class="callout callout-note">
+          <svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 5h.01"/></svg>
+          <div class="c-body"><strong>How long does it take?</strong><p>Roughly a fraction of the session's real length on a typical laptop CPU — a 3-hour session transcribes in well under an hour, often much less. A faster CPU is faster; no GPU is required.</p></div>
+        </div>
+
+        <h2 id="summarize">5 · Summarize</h2>
+        <p>With transcripts ready, generate the summary using your chosen LLM. Chronicle Keeper builds a structured prompt and — crucially — injects your campaign's <a href="codex.html">Codex</a> so the model corrects names the transcriber mangled. The result is a clean recap: what happened, who did what, decisions, loose threads.</p>
+        <p>Read it over. The summary is yours to copy, tweak, or regenerate. Chronicle Keeper deliberately stays out of in-app editing — your vault is the place to polish.</p>
+
+        <h2 id="recap">Bonus · Story-so-far recap</h2>
+        <p>Need to remind the table what happened last time? The <strong>recap</strong> stitches your past summaries into a short "previously on…" for the campaign — handy to read aloud at the start of a session.</p>
+
+        <h2 id="export">6 · Export</h2>
+        <p>Export the finished note as <strong>Markdown with Obsidian frontmatter</strong> (YAML at the top with campaign, session number, date, players). Paste it into your vault or save the file. You can export the full transcript alongside the summary if you want the raw record too.</p>
+
+        <h2 id="where-it-lives">Where everything lives</h2>
+        <p>State persists in a local SQLite database in your app-data folder — sessions, tracks, speaker labels, transcripts, summaries and the Codex all live there. There are no scattered loose files to manage, and nothing is uploaded unless you explicitly turn on <a href="sync.html">sync</a>.</p>
+      </div>
+
+      <div class="pager">
+        <a href="llm-setup.html"><span class="dir">Previous</span><span class="ttl">← LLM setup</span></a>
+        <a class="next" href="codex.html"><span class="dir">Next</span><span class="ttl">The Codex →</span></a>
+      </div>
+    </main>
+
+    <aside class="docs-toc"></aside>
+  </div>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="legal" style="border:0;margin:0;padding:0">
+        <span>© <span data-year>2026</span> Chronicle Keeper · MIT licensed · Built with ❤️ from Germany</span>
+        <span><a href="../">Home</a> · <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../assets/site.js"></script>
+</body>
+</html>

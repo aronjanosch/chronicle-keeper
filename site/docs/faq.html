@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FAQ · Chronicle Keeper docs</title>
+  <meta name="description" content="Frequently asked questions about Chronicle Keeper — privacy, cost, languages, what data leaves your machine, and how it compares to taking notes by hand." />
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="../assets/style.css" />
+</head>
+<body>
+
+  <header class="topnav">
+    <div class="wrap">
+      <a class="brand" href="../">
+        <span class="mark" style="width:30px;height:30px"><svg width="17" height="17" viewBox="0 0 20 20"><path d="M14.5 6.5C13.5 5.5 12 5 10.5 5c-3 0-5 2-5 5s2 5 5 5c1.5 0 3-.5 4-1.5" stroke="#F2D9D2" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg></span>
+        <span class="name">Chronicle Keeper<small>Docs</small></span>
+      </a>
+      <button class="nav-toggle btn btn-secondary btn-sm" aria-label="Toggle menu"><svg class="ic" viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12"/></svg></button>
+      <nav>
+        <a href="../#features">Features</a>
+        <a href="../#pipeline">How it works</a>
+        <a href="getting-started.html" class="is-active">Docs</a>
+        <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a>
+        <a class="btn btn-primary btn-sm" href="https://github.com/aronjanosch/chronicle-keeper/releases" style="color:#FBF6E9">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="docs">
+    <aside class="docs-sidebar">
+      <div class="group">
+        <h6>Start here</h6>
+        <a href="getting-started.html"><svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="m10.5 5.5-1.6 3.4-3.4 1.6 1.6-3.4 3.4-1.6Z"/></svg> Getting started</a>
+        <a href="install.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 3v8M5 8l3 3 3-3M3 13h10"/></svg> Install &amp; first launch</a>
+      </div>
+      <div class="group">
+        <h6>Using it</h6>
+        <a href="workflow.html"><svg class="ic" viewBox="0 0 16 16"><path d="M2 8h1M4 6v4M6 4v8M8 5v6M10 3v10M12 6v4M14 8h.5"/></svg> The workflow</a>
+        <a href="llm-setup.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2"/></svg> LLM setup</a>
+        <a href="codex.html"><svg class="ic" viewBox="0 0 16 16"><path d="m8 2 4 3-4 9-4-9 4-3ZM4 5h8M8 2v3M6 5l2 9M10 5l-2 9"/></svg> The Codex</a>
+        <a href="sync.html"><svg class="ic" viewBox="0 0 16 16"><path d="M4.5 12a3 3 0 0 1 0-6 3.5 3.5 0 0 1 6.7-1A2.8 2.8 0 0 1 12 12H4.5Z"/></svg> Multi-device sync</a>
+      </div>
+      <div class="group">
+        <h6>Help</h6>
+        <a href="troubleshooting.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg> Troubleshooting</a>
+        <a href="faq.html"><svg class="ic" viewBox="0 0 16 16"><path d="M3 2.5h7a2 2 0 0 1 2 2V14M3 2.5v11.5h7M3 2.5v11.5a1 1 0 0 0 1 1h8"/></svg> FAQ</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <div class="crumb">Docs / FAQ</div>
+      <h1>Frequently asked questions</h1>
+      <p class="page-lede">The questions people ask before they download.</p>
+
+      <div class="prose">
+        <h2 id="free">Is it free?</h2>
+        <p>The app is free and open source (MIT). Transcription is free and runs on your machine. The only money involved is optional: if you choose a <em>cloud</em> LLM, you pay that provider per use. Use <a href="llm-setup.html#ollama">Ollama</a> locally and it's free end to end.</p>
+
+        <h2 id="privacy">What data leaves my machine?</h2>
+        <p>Your <strong>audio is never uploaded</strong> — transcription is fully local. The only things that ever leave your computer are: the app and model downloads, and — <em>if you choose a cloud LLM</em> — the transcript text sent to that provider to write the summary. Pick Ollama and nothing leaves at all. There is no Chronicle Keeper server, even with <a href="sync.html">sync</a> on (that's a separate server you host yourself, and it never sees your audio or keys).</p>
+
+        <h2 id="offline">Does it work offline?</h2>
+        <p>Yes, once set up. After the one-time app and speech-model downloads, transcription works with no internet. A cloud LLM obviously needs a connection; a local Ollama model does not.</p>
+
+        <h2 id="languages">What languages does it handle?</h2>
+        <p>The speech engine (Parakeet TDT v3) covers 25 European languages, German included. Summary quality in your language depends on the LLM you pick.</p>
+
+        <h2 id="gpu">Do I need a powerful PC or a GPU?</h2>
+        <p>No GPU required — transcription runs on plain CPU at several× realtime. A faster CPU and more RAM help, especially if you also run a local LLM. There's no Python or CUDA toolchain to install.</p>
+
+        <h2 id="craig">Do I have to use Craig Bot?</h2>
+        <p>Chronicle Keeper is built around <a href="https://craig.chat" target="_blank" rel="noopener">Craig</a>'s multi-track recordings — one audio file per speaker — because that gives the cleanest, speaker-attributed transcripts without diarization. That's the supported path.</p>
+
+        <h2 id="editing">Can I edit notes in the app?</h2>
+        <p>Deliberately not. Chronicle Keeper generates the note and exports it; polishing happens in your editor or Obsidian vault. Keeping the app simple is a core design goal.</p>
+
+        <h2 id="obsidian">Do I need Obsidian?</h2>
+        <p>No. Exports are plain Markdown with YAML frontmatter — they open in any text editor. The frontmatter is just a bonus for Obsidian users.</p>
+
+        <h2 id="model-quality">Which LLM gives the best summaries?</h2>
+        <p>Generally, larger cloud models (e.g. Anthropic's Claude) write the most polished recaps. Local models are very usable and improving fast — try a 7–8B model with Ollama and step up to cloud only if you want more. The <a href="codex.html">Codex</a> improves name accuracy regardless of model.</p>
+
+        <h2 id="opensource">Is it open source? Can I contribute?</h2>
+        <p>Yes — MIT licensed. The Rust core lives in <code>crates/ck-core</code> inside a Tauri shell. PRs welcome; see <a href="https://github.com/aronjanosch/chronicle-keeper/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">CONTRIBUTING.md</a>.</p>
+
+        <div class="callout callout-tip">
+          <svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg>
+          <div class="c-body"><strong>Didn't find your answer?</strong><p>Ask on the <a href="https://github.com/aronjanosch/chronicle-keeper/issues" target="_blank" rel="noopener">issue tracker</a> — or read <a href="troubleshooting.html">Troubleshooting</a> for fixes to common problems.</p></div>
+        </div>
+      </div>
+
+      <div class="pager">
+        <a href="troubleshooting.html"><span class="dir">Previous</span><span class="ttl">← Troubleshooting</span></a>
+        <a class="next" href="getting-started.html"><span class="dir">Back to</span><span class="ttl">Getting started →</span></a>
+      </div>
+    </main>
+
+    <aside class="docs-toc"></aside>
+  </div>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="legal" style="border:0;margin:0;padding:0">
+        <span>© <span data-year>2026</span> Chronicle Keeper · MIT licensed · Built with ❤️ from Germany</span>
+        <span><a href="../">Home</a> · <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Getting started · Chronicle Keeper docs</title>
+  <meta name="description" content="Install Chronicle Keeper, point it at an LLM, and turn your first Craig recording into structured session notes." />
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="../assets/style.css" />
+</head>
+<body>
+
+  <header class="topnav">
+    <div class="wrap">
+      <a class="brand" href="../">
+        <span class="mark" style="width:30px;height:30px"><svg width="17" height="17" viewBox="0 0 20 20"><path d="M14.5 6.5C13.5 5.5 12 5 10.5 5c-3 0-5 2-5 5s2 5 5 5c1.5 0 3-.5 4-1.5" stroke="#F2D9D2" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg></span>
+        <span class="name">Chronicle Keeper<small>Docs</small></span>
+      </a>
+      <button class="nav-toggle btn btn-secondary btn-sm" aria-label="Toggle menu"><svg class="ic" viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12"/></svg></button>
+      <nav>
+        <a href="../#features">Features</a>
+        <a href="../#pipeline">How it works</a>
+        <a href="getting-started.html" class="is-active">Docs</a>
+        <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a>
+        <a class="btn btn-primary btn-sm" href="https://github.com/aronjanosch/chronicle-keeper/releases" style="color:#FBF6E9">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="docs">
+    <!-- ── Sidebar ───────────────────────────────────────────────── -->
+    <aside class="docs-sidebar">
+      <div class="group">
+        <h6>Start here</h6>
+        <a href="getting-started.html"><svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="m10.5 5.5-1.6 3.4-3.4 1.6 1.6-3.4 3.4-1.6Z"/></svg> Getting started</a>
+        <a href="install.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 3v8M5 8l3 3 3-3M3 13h10"/></svg> Install &amp; first launch</a>
+      </div>
+      <div class="group">
+        <h6>Using it</h6>
+        <a href="workflow.html"><svg class="ic" viewBox="0 0 16 16"><path d="M2 8h1M4 6v4M6 4v8M8 5v6M10 3v10M12 6v4M14 8h.5"/></svg> The workflow</a>
+        <a href="llm-setup.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2"/></svg> LLM setup</a>
+        <a href="codex.html"><svg class="ic" viewBox="0 0 16 16"><path d="m8 2 4 3-4 9-4-9 4-3ZM4 5h8M8 2v3M6 5l2 9M10 5l-2 9"/></svg> The Codex</a>
+        <a href="sync.html"><svg class="ic" viewBox="0 0 16 16"><path d="M4.5 12a3 3 0 0 1 0-6 3.5 3.5 0 0 1 6.7-1A2.8 2.8 0 0 1 12 12H4.5Z"/></svg> Multi-device sync</a>
+      </div>
+      <div class="group">
+        <h6>Help</h6>
+        <a href="troubleshooting.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg> Troubleshooting</a>
+        <a href="faq.html"><svg class="ic" viewBox="0 0 16 16"><path d="M3 2.5h7a2 2 0 0 1 2 2V14M3 2.5v11.5h7M3 2.5v11.5a1 1 0 0 0 1 1h8"/></svg> FAQ</a>
+      </div>
+    </aside>
+
+    <!-- ── Main ──────────────────────────────────────────────────── -->
+    <main class="docs-main">
+      <div class="crumb">Docs / Getting started</div>
+      <h1>Getting started</h1>
+      <p class="page-lede">From zero to your first finished session note in about ten minutes — most of which is the one-time downloads.</p>
+
+      <div class="prose">
+        <p>Chronicle Keeper is a desktop app that turns <a href="https://craig.chat" target="_blank" rel="noopener">Craig Bot</a> recordings of your D&amp;D sessions into clean, structured notes. Everything heavy — the transcription — happens <strong>on your own machine</strong>. You only reach the internet to download the app, the speech model (once), and to call a cloud LLM if you choose one over a local model.</p>
+
+        <div class="callout callout-tip">
+          <svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg>
+          <div class="c-body"><strong>New to all this?</strong><p>You don't need to be technical. If you can install an app and copy-paste a key, you can run Chronicle Keeper. The <a href="workflow.html">workflow guide</a> walks every screen with pictures.</p></div>
+        </div>
+
+        <h2 id="what-you-need">What you'll need</h2>
+        <ul>
+          <li>A <strong>Craig Bot recording</strong> of a session — the ZIP it emails you, with one audio track per speaker. (<a href="https://craig.chat" target="_blank" rel="noopener">How Craig works →</a>)</li>
+          <li>A Mac, Windows PC, or Linux machine.</li>
+          <li>An <strong>LLM to do the writing</strong> — either <a href="llm-setup.html#ollama">Ollama running locally</a> (free) or an <a href="llm-setup.html#getting-keys">API key</a> from a cloud provider.</li>
+        </ul>
+
+        <h2 id="quick-start">Quick start</h2>
+        <ol class="steps">
+          <li>
+            <h4>Install the app</h4>
+            <p>Grab the installer for your operating system from the Releases page. First launch shows a one-time "unknown developer" prompt — that's expected.</p>
+            <p><a class="btn btn-primary btn-sm" href="https://github.com/aronjanosch/chronicle-keeper/releases">Download <svg class="ic" viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a> &nbsp; <a href="install.html">Per-OS install steps →</a></p>
+          </li>
+          <li>
+            <h4>Choose your LLM in Settings</h4>
+            <p>Open <strong>Settings</strong> and either point it at a local Ollama server or paste a cloud API key. Keys never leave your machine.</p>
+            <p><a href="llm-setup.html">Full LLM setup guide →</a></p>
+          </li>
+          <li>
+            <h4>Create a campaign &amp; upload</h4>
+            <p>Make a campaign, start a new session, and drop in your Craig ZIP. Label which track is which player.</p>
+          </li>
+          <li>
+            <h4>Transcribe</h4>
+            <p>Hit transcribe. On the very first run the speech model (Parakeet TDT v3) downloads once, then every track is transcribed on-device.</p>
+          </li>
+          <li>
+            <h4>Summarize &amp; export</h4>
+            <p>Generate the summary with your chosen LLM, give it a read, then export to Markdown with Obsidian frontmatter.</p>
+            <p><a href="workflow.html">See the whole workflow →</a></p>
+          </li>
+        </ol>
+
+        <div class="callout callout-note">
+          <svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 5h.01"/></svg>
+          <div class="c-body"><strong>First-run downloads</strong><p>The app itself is small, but the speech model is a few hundred MB and downloads once on your first transcription. After that it's reused and you can work fully offline.</p></div>
+        </div>
+
+        <h2 id="where-next">Where to go next</h2>
+        <div class="cards" style="grid-template-columns:1fr 1fr">
+          <a class="card" href="install.html"><h3>Install &amp; first launch</h3><p>Per-OS steps and how to get past the "unknown developer" warning.</p></a>
+          <a class="card" href="llm-setup.html"><h3>LLM setup</h3><p>Run Ollama free, or get an API key from Anthropic, OpenAI, Groq and friends.</p></a>
+          <a class="card" href="workflow.html"><h3>The workflow</h3><p>Upload → label → transcribe → summarize → export, screen by screen.</p></a>
+          <a class="card" href="codex.html"><h3>The Codex</h3><p>Teach the summarizer your NPC and place names so it stops mangling them.</p></a>
+        </div>
+      </div>
+
+      <div class="pager">
+        <span></span>
+        <a class="next" href="install.html"><span class="dir">Next</span><span class="ttl">Install &amp; first launch →</span></a>
+      </div>
+    </main>
+
+    <aside class="docs-toc"></aside>
+  </div>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="legal" style="border:0;margin:0;padding:0">
+        <span>© <span data-year>2026</span> Chronicle Keeper · MIT licensed · Built with ❤️ from Germany</span>
+        <span><a href="../">Home</a> · <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLM setup · Chronicle Keeper docs</title>
+  <meta name="description" content="Point Chronicle Keeper at a free local model with Ollama, or paste an API key from Anthropic, OpenAI, Groq, DeepSeek, Mistral and more. Step-by-step for non-technical users." />
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="../assets/style.css" />
+</head>
+<body>
+
+  <header class="topnav">
+    <div class="wrap">
+      <a class="brand" href="../">
+        <span class="mark" style="width:30px;height:30px"><svg width="17" height="17" viewBox="0 0 20 20"><path d="M14.5 6.5C13.5 5.5 12 5 10.5 5c-3 0-5 2-5 5s2 5 5 5c1.5 0 3-.5 4-1.5" stroke="#F2D9D2" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg></span>
+        <span class="name">Chronicle Keeper<small>Docs</small></span>
+      </a>
+      <button class="nav-toggle btn btn-secondary btn-sm" aria-label="Toggle menu"><svg class="ic" viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12"/></svg></button>
+      <nav>
+        <a href="../#features">Features</a>
+        <a href="../#pipeline">How it works</a>
+        <a href="getting-started.html" class="is-active">Docs</a>
+        <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a>
+        <a class="btn btn-primary btn-sm" href="https://github.com/aronjanosch/chronicle-keeper/releases" style="color:#FBF6E9">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="docs">
+    <aside class="docs-sidebar">
+      <div class="group">
+        <h6>Start here</h6>
+        <a href="getting-started.html"><svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="m10.5 5.5-1.6 3.4-3.4 1.6 1.6-3.4 3.4-1.6Z"/></svg> Getting started</a>
+        <a href="install.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 3v8M5 8l3 3 3-3M3 13h10"/></svg> Install &amp; first launch</a>
+      </div>
+      <div class="group">
+        <h6>Using it</h6>
+        <a href="workflow.html"><svg class="ic" viewBox="0 0 16 16"><path d="M2 8h1M4 6v4M6 4v8M8 5v6M10 3v10M12 6v4M14 8h.5"/></svg> The workflow</a>
+        <a href="llm-setup.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2"/></svg> LLM setup</a>
+        <a href="codex.html"><svg class="ic" viewBox="0 0 16 16"><path d="m8 2 4 3-4 9-4-9 4-3ZM4 5h8M8 2v3M6 5l2 9M10 5l-2 9"/></svg> The Codex</a>
+        <a href="sync.html"><svg class="ic" viewBox="0 0 16 16"><path d="M4.5 12a3 3 0 0 1 0-6 3.5 3.5 0 0 1 6.7-1A2.8 2.8 0 0 1 12 12H4.5Z"/></svg> Multi-device sync</a>
+      </div>
+      <div class="group">
+        <h6>Help</h6>
+        <a href="troubleshooting.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg> Troubleshooting</a>
+        <a href="faq.html"><svg class="ic" viewBox="0 0 16 16"><path d="M3 2.5h7a2 2 0 0 1 2 2V14M3 2.5v11.5h7M3 2.5v11.5a1 1 0 0 0 1 1h8"/></svg> FAQ</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <div class="crumb">Docs / LLM setup</div>
+      <h1>Setting up your LLM</h1>
+      <p class="page-lede">Chronicle Keeper transcribes your audio on-device, but you choose which language model does the <em>writing</em>. Run one locally for free, or bring a cloud API key.</p>
+
+      <div class="prose">
+        <div class="callout callout-tip">
+          <svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg>
+          <div class="c-body"><strong>Your keys stay on your machine.</strong><p>API keys are stored locally and LLM calls go straight from your computer to the provider — never through any Chronicle Keeper server. There isn't one.</p></div>
+        </div>
+
+        <h2 id="which-to-pick">Which should I pick?</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Option</th><th>Cost</th><th>Privacy</th><th>Best for</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Ollama (local)</strong></td><td>Free</td><td>Stays on your device</td><td>Privacy, no bills, working offline</td></tr>
+              <tr><td><strong>Anthropic Claude</strong></td><td>Pay per use</td><td>Sent to Anthropic</td><td>Highest-quality recaps</td></tr>
+              <tr><td><strong>OpenAI-compatible</strong></td><td>Pay per use (Groq has a free tier)</td><td>Sent to provider</td><td>Speed, choice, existing keys</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="muted">Not sure? Start with <a href="#ollama">Ollama</a> if you value privacy and zero cost, or <a href="#anthropic">Anthropic</a> if you want the best writing and don't mind paying cents per session.</p>
+
+        <hr />
+
+        <h2 id="ollama">Option A — Ollama (local &amp; free)</h2>
+        <p>Ollama runs an open language model entirely on your own computer. No account, no key, no bill, and it works offline once the model is downloaded. It's the most private option.</p>
+
+        <ol class="steps">
+          <li>
+            <h4>Install Ollama</h4>
+            <p>Download it for your OS from <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a> and run the installer. On macOS and Windows it runs in the background automatically.</p>
+          </li>
+          <li>
+            <h4>Pull a model</h4>
+            <p>Open a terminal and download a model. A small, capable starting point:</p>
+            <pre><code>ollama pull gemma3:4b</code></pre>
+            <p>Larger models write better but need more RAM. See <a href="https://ollama.com/library" target="_blank" rel="noopener">the model library</a> — <code>llama3.1:8b</code> and <code>qwen2.5:7b</code> are solid all-rounders.</p>
+          </li>
+          <li>
+            <h4>Make sure it's running</h4>
+            <p>Ollama serves an API at <code>http://localhost:11434</code>. If the app can't reach it, start it manually:</p>
+            <pre><code>ollama serve</code></pre>
+          </li>
+          <li>
+            <h4>Point Chronicle Keeper at it</h4>
+            <p>In <strong>Settings → LLM</strong>, choose <strong>Ollama</strong>, confirm the base URL is <code>http://localhost:11434</code>, and pick the model you pulled. Hit <strong>Test</strong> to confirm the connection.</p>
+          </li>
+        </ol>
+
+        <div class="callout callout-note">
+          <svg class="ic" viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/><rect x="6" y="6" width="4" height="4"/><path d="M6 1.5v2M10 1.5v2M6 12.5v2M10 12.5v2M1.5 6h2M1.5 10h2M12.5 6h2M12.5 10h2"/></svg>
+          <div class="c-body"><strong>How big a model can I run?</strong><p>Rough rule: a model needs about as many GB of RAM as it has billions of parameters. A 7–8B model wants ~8&nbsp;GB free; pick a 3–4B model on lighter machines. Ollama's official docs cover hardware in detail: <a href="https://github.com/ollama/ollama/blob/main/docs/faq.md" target="_blank" rel="noopener">Ollama FAQ →</a></p></div>
+        </div>
+
+        <hr />
+
+        <h2 id="getting-keys">Option B — a cloud API key</h2>
+        <p>Cloud models often write the best recaps. You'll create an account with a provider, generate an <strong>API key</strong> (a long secret string), and paste it into Chronicle Keeper's Settings. The key is stored locally on your machine.</p>
+
+        <div class="callout callout-warn">
+          <svg class="ic" viewBox="0 0 16 16"><path d="M8 2 1.5 13.5h13L8 2Z"/><path d="M8 6.5v3.5M8 12h.01"/></svg>
+          <div class="c-body"><strong>Treat your API key like a password.</strong><p>Don't share it or commit it anywhere public. Most providers let you revoke and regenerate keys if one leaks. Cloud usage is billed per token, so set a spending limit in the provider's dashboard.</p></div>
+        </div>
+
+        <h3 id="anthropic">Anthropic (Claude)</h3>
+        <p>Built-in via the native Messages API. Great default for quality.</p>
+        <ol class="steps">
+          <li><h4>Create an account</h4><p>Sign up at <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a> and add billing credit.</p></li>
+          <li><h4>Generate a key</h4><p>Go to <strong>Settings → API Keys → Create Key</strong>, name it (e.g. "Chronicle Keeper"), and copy the <code>sk-ant-…</code> string. It's shown only once.</p></li>
+          <li><h4>Paste it in</h4><p>In Chronicle Keeper <strong>Settings → LLM</strong>, choose <strong>Anthropic</strong>, paste the key, pick a model (e.g. a current Claude), and hit <strong>Test</strong>.</p></li>
+        </ol>
+
+        <h3 id="openai-compatible">OpenAI-compatible providers</h3>
+        <p>One built-in client covers OpenAI and a family of compatible services. Pick whichever you already have an account with — the setup is the same: create a key, paste it, select the model.</p>
+
+        <div class="provider-grid">
+          <div class="provider">
+            <div class="head"><span class="badge" style="background:#10a37f">AI</span><h4>OpenAI</h4><span class="chip tag">Paid</span></div>
+            <p>The original GPT models.</p>
+            <p class="key">Key prefix: <code>sk-…</code></p>
+            <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys →</a>
+          </div>
+          <div class="provider">
+            <div class="head"><span class="badge" style="background:#f55036">Gq</span><h4>Groq</h4><span class="chip tag chip-moss">Free tier</span></div>
+            <p>Very fast inference; generous free tier to start.</p>
+            <p class="key">Key prefix: <code>gsk_…</code></p>
+            <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys →</a>
+          </div>
+          <div class="provider">
+            <div class="head"><span class="badge" style="background:#4d6bfe">Ds</span><h4>DeepSeek</h4><span class="chip tag">Paid</span></div>
+            <p>Strong, low-cost models.</p>
+            <p class="key">Key prefix: <code>sk-…</code></p>
+            <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">platform.deepseek.com →</a>
+          </div>
+          <div class="provider">
+            <div class="head"><span class="badge" style="background:#ff7000">Mi</span><h4>Mistral</h4><span class="chip tag">Paid</span></div>
+            <p>European models, good multilingual quality.</p>
+            <p class="key">From <em>La Plateforme</em>.</p>
+            <a href="https://console.mistral.ai/api-keys" target="_blank" rel="noopener">console.mistral.ai →</a>
+          </div>
+          <div class="provider">
+            <div class="head"><span class="badge" style="background:#5046e5">Tg</span><h4>Together</h4><span class="chip tag">Paid</span></div>
+            <p>Hosts many open models behind one key.</p>
+            <p class="key">Key prefix: <code>…</code></p>
+            <a href="https://api.together.xyz/settings/api-keys" target="_blank" rel="noopener">api.together.xyz →</a>
+          </div>
+          <div class="provider">
+            <div class="head"><span class="badge" style="background:#20808d">Px</span><h4>Perplexity</h4><span class="chip tag">Paid</span></div>
+            <p>Sonar models.</p>
+            <p class="key">Key prefix: <code>pplx-…</code></p>
+            <a href="https://www.perplexity.ai/settings/api" target="_blank" rel="noopener">perplexity.ai/settings/api →</a>
+          </div>
+          <div class="provider">
+            <div class="head"><span class="badge" style="background:#1a73e8">Ge</span><h4>Google Gemini</h4><span class="chip tag chip-moss">Free tier</span></div>
+            <p>Use Gemini's OpenAI-compatible endpoint.</p>
+            <p class="key">Key from AI Studio.</p>
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com →</a>
+          </div>
+          <div class="provider">
+            <div class="head"><span class="badge" style="background:#111">Mx</span><h4>MiniMax</h4><span class="chip tag">Paid</span></div>
+            <p>Also covered by the compatible client.</p>
+            <p class="key">From the MiniMax console.</p>
+            <a href="https://www.minimax.io" target="_blank" rel="noopener">minimax.io →</a>
+          </div>
+        </div>
+
+        <h4 style="font-family:var(--font-display);font-weight:500;font-size:17px;margin:22px 0 8px">General steps for any of them</h4>
+        <ol class="steps">
+          <li><h4>Sign up &amp; add billing</h4><p>Create an account on the provider's site (links above) and add a payment method or claim the free tier.</p></li>
+          <li><h4>Create an API key</h4><p>Find the <strong>API keys</strong> section, create a new key, and copy it. Keys are usually shown only once — store it somewhere safe.</p></li>
+          <li><h4>Add it in Settings</h4><p>In Chronicle Keeper, open <strong>Settings → LLM providers</strong>, pick the provider, paste the key, choose a model, and click <strong>Test</strong> to verify it works.</p></li>
+        </ol>
+
+        <div class="callout callout-note">
+          <svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 5h.01"/></svg>
+          <div class="c-body"><strong>Cohere?</strong><p>Cohere support is deferred for now. Any of the OpenAI-compatible providers above will work in the meantime.</p></div>
+        </div>
+
+        <h2 id="test">Test before you transcribe</h2>
+        <p>Whichever route you choose, use the <strong>Test</strong> / <strong>Ping</strong> button next to the provider in Settings. A green result means the key and model are good and you're ready to summarize. If it fails, see <a href="troubleshooting.html#llm">Troubleshooting → LLM</a>.</p>
+      </div>
+
+      <div class="pager">
+        <a href="install.html"><span class="dir">Previous</span><span class="ttl">← Install</span></a>
+        <a class="next" href="workflow.html"><span class="dir">Next</span><span class="ttl">The workflow →</span></a>
+      </div>
+    </main>
+
+    <aside class="docs-toc"></aside>
+  </div>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="legal" style="border:0;margin:0;padding:0">
+        <span>© <span data-year>2026</span> Chronicle Keeper · MIT licensed · Built with ❤️ from Germany</span>
+        <span><a href="../">Home</a> · <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../assets/site.js"></script>
+</body>
+</html>

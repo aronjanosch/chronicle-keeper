@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Codex · Chronicle Keeper docs</title>
+  <meta name="description" content="The Codex is the summarizer's memory — a per-campaign glossary of NPCs, places and factions that auto-corrects names the transcriber mangled." />
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="../assets/style.css" />
+</head>
+<body>
+
+  <header class="topnav">
+    <div class="wrap">
+      <a class="brand" href="../">
+        <span class="mark" style="width:30px;height:30px"><svg width="17" height="17" viewBox="0 0 20 20"><path d="M14.5 6.5C13.5 5.5 12 5 10.5 5c-3 0-5 2-5 5s2 5 5 5c1.5 0 3-.5 4-1.5" stroke="#F2D9D2" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg></span>
+        <span class="name">Chronicle Keeper<small>Docs</small></span>
+      </a>
+      <button class="nav-toggle btn btn-secondary btn-sm" aria-label="Toggle menu"><svg class="ic" viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12"/></svg></button>
+      <nav>
+        <a href="../#features">Features</a>
+        <a href="../#pipeline">How it works</a>
+        <a href="getting-started.html" class="is-active">Docs</a>
+        <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a>
+        <a class="btn btn-primary btn-sm" href="https://github.com/aronjanosch/chronicle-keeper/releases" style="color:#FBF6E9">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="docs">
+    <aside class="docs-sidebar">
+      <div class="group">
+        <h6>Start here</h6>
+        <a href="getting-started.html"><svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="m10.5 5.5-1.6 3.4-3.4 1.6 1.6-3.4 3.4-1.6Z"/></svg> Getting started</a>
+        <a href="install.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 3v8M5 8l3 3 3-3M3 13h10"/></svg> Install &amp; first launch</a>
+      </div>
+      <div class="group">
+        <h6>Using it</h6>
+        <a href="workflow.html"><svg class="ic" viewBox="0 0 16 16"><path d="M2 8h1M4 6v4M6 4v8M8 5v6M10 3v10M12 6v4M14 8h.5"/></svg> The workflow</a>
+        <a href="llm-setup.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2"/></svg> LLM setup</a>
+        <a href="codex.html"><svg class="ic" viewBox="0 0 16 16"><path d="m8 2 4 3-4 9-4-9 4-3ZM4 5h8M8 2v3M6 5l2 9M10 5l-2 9"/></svg> The Codex</a>
+        <a href="sync.html"><svg class="ic" viewBox="0 0 16 16"><path d="M4.5 12a3 3 0 0 1 0-6 3.5 3.5 0 0 1 6.7-1A2.8 2.8 0 0 1 12 12H4.5Z"/></svg> Multi-device sync</a>
+      </div>
+      <div class="group">
+        <h6>Help</h6>
+        <a href="troubleshooting.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg> Troubleshooting</a>
+        <a href="faq.html"><svg class="ic" viewBox="0 0 16 16"><path d="M3 2.5h7a2 2 0 0 1 2 2V14M3 2.5v11.5h7M3 2.5v11.5a1 1 0 0 0 1 1h8"/></svg> FAQ</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <div class="crumb">Docs / The Codex</div>
+      <h1>The Codex</h1>
+      <p class="page-lede">The summarizer's memory. A per-campaign glossary of the names that matter, so your write-ups stop saying "Mee-po" and start saying <strong>Meepo</strong>.</p>
+
+      <div class="prose">
+        <h2 id="why">Why it exists</h2>
+        <p>Speech recognition is excellent at common words and hopeless at invented fantasy names. "Neverwinter" might come through as "never winter," your warlock patron "Zariel" as "Zary L." The Codex fixes this: it's a short list of your campaign's <strong>named entities</strong> — NPCs, places, factions, items, player characters — that gets injected into <em>every</em> summary prompt. The LLM uses it to auto-correct mangled names as it writes.</p>
+
+        <div class="callout callout-note">
+          <svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 5h.01"/></svg>
+          <div class="c-body"><strong>It's a glossary, not a wiki.</strong><p>The Codex is derived, lossy, and lightly editable on purpose — just enough memory to keep names straight. It isn't meant to be your campaign bible; that's what your vault is for.</p></div>
+        </div>
+
+        <h2 id="entities">What goes in it</h2>
+        <div class="cards" style="grid-template-columns:repeat(2,1fr)">
+          <div class="card"><span class="sigil sigil-burgundy"><svg class="ic" viewBox="0 0 16 16"><circle cx="6" cy="6" r="2.4"/><path d="M2 13c0-2.4 1.8-4 4-4s4 1.6 4 4M10 6.5a2 2 0 1 0 0-4M14 13c0-2-1.4-3.4-3-3.8"/></svg></span><h3>NPCs &amp; PCs</h3><p>The cast — allies, villains, and your own party members.</p></div>
+          <div class="card"><span class="sigil sigil-moss"><svg class="ic" viewBox="0 0 16 16"><path d="m2 4 4-1 4 1 4-1v9l-4 1-4-1-4 1V4ZM6 3v10M10 4v10"/></svg></span><h3>Places</h3><p>Cities, dungeons, regions, taverns — wherever the story happens.</p></div>
+          <div class="card"><span class="sigil sigil-blue"><svg class="ic" viewBox="0 0 16 16"><path d="M2 8V3a1 1 0 0 1 1-1h5l6 6-6 6-6-6Z"/><circle cx="5" cy="5" r=".7" fill="currentColor"/></svg></span><h3>Factions</h3><p>Guilds, cults, noble houses, the bandits who keep showing up.</p></div>
+          <div class="card"><span class="sigil sigil-gilt"><svg class="ic" viewBox="0 0 16 16"><path d="m8 2 4 3-4 9-4-9 4-3ZM4 5h8M8 2v3M6 5l2 9M10 5l-2 9"/></svg></span><h3>Items</h3><p>Named artifacts, signature weapons, the MacGuffin everyone's after.</p></div>
+        </div>
+
+        <h2 id="filling">Three ways to fill it</h2>
+        <ol class="steps">
+          <li><h4>Type them in</h4><p>The fastest start: paste or type your key names into the Codex textarea. Even a dozen entries dramatically improves name accuracy.</p></li>
+          <li><h4>Auto-extract from summaries</h4><p>As you generate summaries, Chronicle Keeper can pull out the recurring named entities and offer them as Codex entries — the glossary grows with your campaign.</p></li>
+          <li><h4>Distill from a notes folder</h4><p>Already keep notes? Point the importer at a folder and an LLM reads through them to propose Codex entries. You review the preview, then commit the ones you want. (Desktop-only — it reads your local files and never runs server-side.)</p></li>
+        </ol>
+
+        <h2 id="editing">Reviewing &amp; editing</h2>
+        <p>Each entry opens in an inspector where you can rename it, set its type, and add aliases or a short note. Because the Codex is injected into prompts, keeping it tidy directly improves summary quality — prune duplicates and fix spellings as you go.</p>
+
+        <h2 id="links">Codex links in summaries</h2>
+        <p>When a summary mentions an entity that's in your Codex, Chronicle Keeper marks it with a subtle dotted underline so you can spot — at a glance — which names the glossary recognised. It's a quiet cue, not a loud hyperlink.</p>
+
+        <div class="callout callout-tip">
+          <svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg>
+          <div class="c-body"><strong>Best practice</strong><p>Seed the Codex with your main NPCs and locations before the first summary, then let auto-extraction top it up. Ten minutes up front saves a lot of find-and-replace later.</p></div>
+        </div>
+      </div>
+
+      <div class="pager">
+        <a href="workflow.html"><span class="dir">Previous</span><span class="ttl">← The workflow</span></a>
+        <a class="next" href="sync.html"><span class="dir">Next</span><span class="ttl">Multi-device sync →</span></a>
+      </div>
+    </main>
+
+    <aside class="docs-toc"></aside>
+  </div>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="legal" style="border:0;margin:0;padding:0">
+        <span>© <span data-year>2026</span> Chronicle Keeper · MIT licensed · Built with ❤️ from Germany</span>
+        <span><a href="../">Home</a> · <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../assets/site.js"></script>
+</body>
+</html>

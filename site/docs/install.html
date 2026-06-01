@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Install &amp; first launch · Chronicle Keeper docs</title>
+  <meta name="description" content="Install Chronicle Keeper on macOS, Windows or Linux, and get past the one-time unknown-developer warning." />
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="../assets/style.css" />
+</head>
+<body>
+
+  <header class="topnav">
+    <div class="wrap">
+      <a class="brand" href="../">
+        <span class="mark" style="width:30px;height:30px"><svg width="17" height="17" viewBox="0 0 20 20"><path d="M14.5 6.5C13.5 5.5 12 5 10.5 5c-3 0-5 2-5 5s2 5 5 5c1.5 0 3-.5 4-1.5" stroke="#F2D9D2" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg></span>
+        <span class="name">Chronicle Keeper<small>Docs</small></span>
+      </a>
+      <button class="nav-toggle btn btn-secondary btn-sm" aria-label="Toggle menu"><svg class="ic" viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12"/></svg></button>
+      <nav>
+        <a href="../#features">Features</a>
+        <a href="../#pipeline">How it works</a>
+        <a href="getting-started.html" class="is-active">Docs</a>
+        <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a>
+        <a class="btn btn-primary btn-sm" href="https://github.com/aronjanosch/chronicle-keeper/releases" style="color:#FBF6E9">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="docs">
+    <aside class="docs-sidebar">
+      <div class="group">
+        <h6>Start here</h6>
+        <a href="getting-started.html"><svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="m10.5 5.5-1.6 3.4-3.4 1.6 1.6-3.4 3.4-1.6Z"/></svg> Getting started</a>
+        <a href="install.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 3v8M5 8l3 3 3-3M3 13h10"/></svg> Install &amp; first launch</a>
+      </div>
+      <div class="group">
+        <h6>Using it</h6>
+        <a href="workflow.html"><svg class="ic" viewBox="0 0 16 16"><path d="M2 8h1M4 6v4M6 4v8M8 5v6M10 3v10M12 6v4M14 8h.5"/></svg> The workflow</a>
+        <a href="llm-setup.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2"/></svg> LLM setup</a>
+        <a href="codex.html"><svg class="ic" viewBox="0 0 16 16"><path d="m8 2 4 3-4 9-4-9 4-3ZM4 5h8M8 2v3M6 5l2 9M10 5l-2 9"/></svg> The Codex</a>
+        <a href="sync.html"><svg class="ic" viewBox="0 0 16 16"><path d="M4.5 12a3 3 0 0 1 0-6 3.5 3.5 0 0 1 6.7-1A2.8 2.8 0 0 1 12 12H4.5Z"/></svg> Multi-device sync</a>
+      </div>
+      <div class="group">
+        <h6>Help</h6>
+        <a href="troubleshooting.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg> Troubleshooting</a>
+        <a href="faq.html"><svg class="ic" viewBox="0 0 16 16"><path d="M3 2.5h7a2 2 0 0 1 2 2V14M3 2.5v11.5h7M3 2.5v11.5a1 1 0 0 0 1 1h8"/></svg> FAQ</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <div class="crumb">Docs / Install &amp; first launch</div>
+      <h1>Install &amp; first launch</h1>
+      <p class="page-lede">Pick the installer for your OS. Chronicle Keeper isn't code-signed yet, so every platform shows a one-time warning the first time — here's how to clear it.</p>
+
+      <div class="prose">
+        <p>Download the right file from the <a href="https://github.com/aronjanosch/chronicle-keeper/releases" target="_blank" rel="noopener">Releases page</a>, then follow the steps for your system below.</p>
+
+        <div class="callout callout-warn">
+          <svg class="ic" viewBox="0 0 16 16"><path d="M8 2 1.5 13.5h13L8 2Z"/><path d="M8 6.5v3.5M8 12h.01"/></svg>
+          <div class="c-body"><strong>"Unknown developer" is expected</strong><p>The app isn't signed yet (signing is planned). Your OS will warn you once on first launch. The steps below are the normal way to allow an unsigned app — nothing is wrong.</p></div>
+        </div>
+
+        <h2 id="macos">macOS <span style="font-weight:400;color:var(--ink-faint);font-size:.7em">(.dmg)</span></h2>
+        <ol class="steps">
+          <li><h4>Open the disk image</h4><p>Double-click the <code>.dmg</code> and drag <strong>Chronicle Keeper</strong> into your Applications folder.</p></li>
+          <li><h4>First launch: right-click → Open</h4><p>A plain double-click is blocked. Instead <strong>right-click (or Control-click) the app → Open → Open</strong>. You only do this once.</p></li>
+          <li><h4>Still blocked?</h4><p>Allow it under <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>, or run this in Terminal:</p>
+            <pre><code>xattr -dr com.apple.quarantine "/Applications/Chronicle Keeper.app"</code></pre>
+          </li>
+        </ol>
+
+        <h2 id="windows">Windows <span style="font-weight:400;color:var(--ink-faint);font-size:.7em">(.msi or .exe)</span></h2>
+        <ol class="steps">
+          <li><h4>Run the installer</h4><p>Launch the <code>.msi</code> or <code>.exe</code> you downloaded.</p></li>
+          <li><h4>If SmartScreen appears</h4><p>When Windows says <em>"Windows protected your PC,"</em> click <strong>More info → Run anyway</strong>.</p></li>
+        </ol>
+
+        <h2 id="linux">Linux <span style="font-weight:400;color:var(--ink-faint);font-size:.7em">(.AppImage or .deb)</span></h2>
+        <p><strong>AppImage</strong> — make it executable, then run it:</p>
+        <pre><code>chmod +x Chronicle*.AppImage
+./Chronicle*.AppImage</code></pre>
+        <p><strong>Debian / Ubuntu</strong> — install the package:</p>
+        <pre><code>sudo dpkg -i chronicle-keeper_*.deb</code></pre>
+        <div class="callout callout-note">
+          <svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 5h.01"/></svg>
+          <div class="c-body"><strong>WebKitGTK quirks</strong><p>On some Linux setups the window renders blank. Chronicle Keeper already bakes in the common fix (forces X11 + disables DMABUF only if you haven't set those yourself), so it should just work.</p></div>
+        </div>
+
+        <h2 id="first-run">First run: the speech model</h2>
+        <p>On your <strong>first transcription</strong>, the app downloads the Parakeet TDT v3 speech model once (a few hundred MB) into its app-data folder and reuses it forever after. There's no HuggingFace cache and no GPU requirement — it runs on plain CPU. After that download, transcription works fully offline.</p>
+
+        <h2 id="build-from-source">Build from source</h2>
+        <p>Prefer to build it yourself? You'll need <a href="https://rustup.rs" target="_blank" rel="noopener">Rust</a> and <a href="https://tauri.app" target="_blank" rel="noopener">Tauri</a>:</p>
+        <pre><code>cargo tauri dev      # build + run the desktop app
+cargo tauri build    # build installers for your OS</code></pre>
+        <p>See <a href="https://github.com/aronjanosch/chronicle-keeper/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">CONTRIBUTING.md</a> for the full developer setup.</p>
+      </div>
+
+      <div class="pager">
+        <a href="getting-started.html"><span class="dir">Previous</span><span class="ttl">← Getting started</span></a>
+        <a class="next" href="llm-setup.html"><span class="dir">Next</span><span class="ttl">LLM setup →</span></a>
+      </div>
+    </main>
+
+    <aside class="docs-toc"></aside>
+  </div>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="legal" style="border:0;margin:0;padding:0">
+        <span>© <span data-year>2026</span> Chronicle Keeper · MIT licensed · Built with ❤️ from Germany</span>
+        <span><a href="../">Home</a> · <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../assets/site.js"></script>
+</body>
+</html>

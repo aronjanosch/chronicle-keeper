@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Troubleshooting · Chronicle Keeper docs</title>
+  <meta name="description" content="Fixes for common Chronicle Keeper issues — the unknown-developer warning, a blank window on Linux, LLM connection failures, and slow transcription." />
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="../assets/style.css" />
+</head>
+<body>
+
+  <header class="topnav">
+    <div class="wrap">
+      <a class="brand" href="../">
+        <span class="mark" style="width:30px;height:30px"><svg width="17" height="17" viewBox="0 0 20 20"><path d="M14.5 6.5C13.5 5.5 12 5 10.5 5c-3 0-5 2-5 5s2 5 5 5c1.5 0 3-.5 4-1.5" stroke="#F2D9D2" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg></span>
+        <span class="name">Chronicle Keeper<small>Docs</small></span>
+      </a>
+      <button class="nav-toggle btn btn-secondary btn-sm" aria-label="Toggle menu"><svg class="ic" viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12"/></svg></button>
+      <nav>
+        <a href="../#features">Features</a>
+        <a href="../#pipeline">How it works</a>
+        <a href="getting-started.html" class="is-active">Docs</a>
+        <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a>
+        <a class="btn btn-primary btn-sm" href="https://github.com/aronjanosch/chronicle-keeper/releases" style="color:#FBF6E9">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="docs">
+    <aside class="docs-sidebar">
+      <div class="group">
+        <h6>Start here</h6>
+        <a href="getting-started.html"><svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="m10.5 5.5-1.6 3.4-3.4 1.6 1.6-3.4 3.4-1.6Z"/></svg> Getting started</a>
+        <a href="install.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 3v8M5 8l3 3 3-3M3 13h10"/></svg> Install &amp; first launch</a>
+      </div>
+      <div class="group">
+        <h6>Using it</h6>
+        <a href="workflow.html"><svg class="ic" viewBox="0 0 16 16"><path d="M2 8h1M4 6v4M6 4v8M8 5v6M10 3v10M12 6v4M14 8h.5"/></svg> The workflow</a>
+        <a href="llm-setup.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2"/></svg> LLM setup</a>
+        <a href="codex.html"><svg class="ic" viewBox="0 0 16 16"><path d="m8 2 4 3-4 9-4-9 4-3ZM4 5h8M8 2v3M6 5l2 9M10 5l-2 9"/></svg> The Codex</a>
+        <a href="sync.html"><svg class="ic" viewBox="0 0 16 16"><path d="M4.5 12a3 3 0 0 1 0-6 3.5 3.5 0 0 1 6.7-1A2.8 2.8 0 0 1 12 12H4.5Z"/></svg> Multi-device sync</a>
+      </div>
+      <div class="group">
+        <h6>Help</h6>
+        <a href="troubleshooting.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg> Troubleshooting</a>
+        <a href="faq.html"><svg class="ic" viewBox="0 0 16 16"><path d="M3 2.5h7a2 2 0 0 1 2 2V14M3 2.5v11.5h7M3 2.5v11.5a1 1 0 0 0 1 1h8"/></svg> FAQ</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <div class="crumb">Docs / Troubleshooting</div>
+      <h1>Troubleshooting</h1>
+      <p class="page-lede">The handful of things that trip people up, and how to clear them.</p>
+
+      <div class="prose">
+        <h2 id="install">"Unknown developer" / can't open the app</h2>
+        <p>The app isn't code-signed yet, so each OS warns you once. This is expected — follow the per-platform steps on the <a href="install.html">install page</a>:</p>
+        <ul>
+          <li><strong>macOS:</strong> right-click the app → <strong>Open</strong> → <strong>Open</strong>. Or clear quarantine: <code>xattr -dr com.apple.quarantine "/Applications/Chronicle Keeper.app"</code></li>
+          <li><strong>Windows:</strong> SmartScreen → <strong>More info → Run anyway</strong>.</li>
+        </ul>
+
+        <h2 id="blank-window">Blank or black window on Linux</h2>
+        <p>This is a known WebKitGTK rendering quirk. Chronicle Keeper already applies the standard fix (forces the X11 backend and disables DMABUF) unless you've set those variables yourself. If you still see a blank window, try launching with them explicitly:</p>
+        <pre><code>GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 ./Chronicle*.AppImage</code></pre>
+
+        <h2 id="model-download">Transcription model won't download</h2>
+        <p>On first transcription the Parakeet speech model downloads once (a few hundred MB). If it fails:</p>
+        <ul>
+          <li>Check your internet connection and that nothing is blocking the download.</li>
+          <li>Make sure you have enough free disk space in your app-data folder.</li>
+          <li>Try again — the download resumes/retries. Once it's cached, you're offline-capable.</li>
+        </ul>
+
+        <h2 id="slow">Transcription is slow</h2>
+        <p>Transcription runs on CPU and scales with your processor. A few pointers:</p>
+        <ul>
+          <li>It's normal for a multi-hour session to take a while — still a fraction of real time on most machines.</li>
+          <li>If your build supports it, the <code>transcription_accelerator</code> setting (<code>coreml</code> / <code>cuda</code> / <code>directml</code>) can use hardware acceleration; it falls back to CPU automatically if the runtime doesn't support your choice.</li>
+          <li>Close other heavy apps so the transcoder gets the cores.</li>
+        </ul>
+
+        <h2 id="llm">LLM test fails / no summary</h2>
+        <p>If the <strong>Test</strong> button in Settings is red, or summaries error out:</p>
+        <ul>
+          <li><strong>Ollama:</strong> confirm it's running (<code>ollama serve</code>) and reachable at <code>http://localhost:11434</code>, and that you've <code>ollama pull</code>-ed the model you selected.</li>
+          <li><strong>Cloud key:</strong> double-check the key was pasted in full with no stray spaces, that billing/credit is set up, and that the model name is one your account can access.</li>
+          <li><strong>Wrong provider selected:</strong> make sure the provider in Settings matches the key you pasted.</li>
+          <li>See the <a href="llm-setup.html">LLM setup guide</a> for the exact steps per provider.</li>
+        </ul>
+
+        <h2 id="logs">Getting detailed logs</h2>
+        <p>Building or running from source? Launch the core with verbose logging to see what's happening:</p>
+        <pre><code>RUST_LOG=debug cargo run -p ck-core --bin ck-serve</code></pre>
+
+        <h2 id="still-stuck">Still stuck?</h2>
+        <p>Open an issue with what you tried and any error text — <a href="https://github.com/aronjanosch/chronicle-keeper/issues" target="_blank" rel="noopener">github.com/aronjanosch/chronicle-keeper/issues</a>.</p>
+      </div>
+
+      <div class="pager">
+        <a href="sync.html"><span class="dir">Previous</span><span class="ttl">← Multi-device sync</span></a>
+        <a class="next" href="faq.html"><span class="dir">Next</span><span class="ttl">FAQ →</span></a>
+      </div>
+    </main>
+
+    <aside class="docs-toc"></aside>
+  </div>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="legal" style="border:0;margin:0;padding:0">
+        <span>© <span data-year>2026</span> Chronicle Keeper · MIT licensed · Built with ❤️ from Germany</span>
+        <span><a href="../">Home</a> · <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../assets/site.js"></script>
+</body>
+</html>

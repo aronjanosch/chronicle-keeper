@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Multi-device sync · Chronicle Keeper docs</title>
+  <meta name="description" content="Optionally keep your campaigns, sessions and notes in step across machines with a small self-hostable sync server. Text only, off by default." />
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="../assets/style.css" />
+</head>
+<body>
+
+  <header class="topnav">
+    <div class="wrap">
+      <a class="brand" href="../">
+        <span class="mark" style="width:30px;height:30px"><svg width="17" height="17" viewBox="0 0 20 20"><path d="M14.5 6.5C13.5 5.5 12 5 10.5 5c-3 0-5 2-5 5s2 5 5 5c1.5 0 3-.5 4-1.5" stroke="#F2D9D2" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg></span>
+        <span class="name">Chronicle Keeper<small>Docs</small></span>
+      </a>
+      <button class="nav-toggle btn btn-secondary btn-sm" aria-label="Toggle menu"><svg class="ic" viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12"/></svg></button>
+      <nav>
+        <a href="../#features">Features</a>
+        <a href="../#pipeline">How it works</a>
+        <a href="getting-started.html" class="is-active">Docs</a>
+        <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a>
+        <a class="btn btn-primary btn-sm" href="https://github.com/aronjanosch/chronicle-keeper/releases" style="color:#FBF6E9">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="docs">
+    <aside class="docs-sidebar">
+      <div class="group">
+        <h6>Start here</h6>
+        <a href="getting-started.html"><svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="m10.5 5.5-1.6 3.4-3.4 1.6 1.6-3.4 3.4-1.6Z"/></svg> Getting started</a>
+        <a href="install.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 3v8M5 8l3 3 3-3M3 13h10"/></svg> Install &amp; first launch</a>
+      </div>
+      <div class="group">
+        <h6>Using it</h6>
+        <a href="workflow.html"><svg class="ic" viewBox="0 0 16 16"><path d="M2 8h1M4 6v4M6 4v8M8 5v6M10 3v10M12 6v4M14 8h.5"/></svg> The workflow</a>
+        <a href="llm-setup.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2"/></svg> LLM setup</a>
+        <a href="codex.html"><svg class="ic" viewBox="0 0 16 16"><path d="m8 2 4 3-4 9-4-9 4-3ZM4 5h8M8 2v3M6 5l2 9M10 5l-2 9"/></svg> The Codex</a>
+        <a href="sync.html"><svg class="ic" viewBox="0 0 16 16"><path d="M4.5 12a3 3 0 0 1 0-6 3.5 3.5 0 0 1 6.7-1A2.8 2.8 0 0 1 12 12H4.5Z"/></svg> Multi-device sync</a>
+      </div>
+      <div class="group">
+        <h6>Help</h6>
+        <a href="troubleshooting.html"><svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg> Troubleshooting</a>
+        <a href="faq.html"><svg class="ic" viewBox="0 0 16 16"><path d="M3 2.5h7a2 2 0 0 1 2 2V14M3 2.5v11.5h7M3 2.5v11.5a1 1 0 0 0 1 1h8"/></svg> FAQ</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <div class="crumb">Docs / Multi-device sync</div>
+      <h1>Multi-device sync</h1>
+      <p class="page-lede">Optional. Keep your campaigns and notes in step across machines via a small server you host yourself. Text only, and completely off until you switch it on.</p>
+
+      <div class="prose">
+        <div class="callout callout-note">
+          <svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 5h.01"/></svg>
+          <div class="c-body"><strong>You don't need this.</strong><p>Chronicle Keeper is fully functional on a single machine with sync off. Only turn it on if you work across more than one computer and want them to share the same notes.</p></div>
+        </div>
+
+        <h2 id="what">What syncs (and what doesn't)</h2>
+        <ul>
+          <li><strong>Synced:</strong> campaigns, sessions, transcripts, summaries, the Codex, and metadata — the text that makes up your chronicle.</li>
+          <li><strong>Not synced:</strong> the bulky source <strong>audio files</strong>. They stay on the machine that did the recording, which keeps the server small and cheap to run.</li>
+        </ul>
+
+        <h2 id="how">How it works</h2>
+        <p>Sync is <strong>offline-first</strong>: you keep working locally and changes push and pull in the background when a server is reachable. The desktop app is purely a <em>client</em> of the sync server — all transcription and LLM work still happens on your machine. The server only stores and serves rows of data, with auth.</p>
+        <p>Importantly, there is <strong>no Chronicle Keeper cloud</strong>. The sync server is a separate, minimal component (<a href="https://github.com/aronjanosch/chronicle-keeper-sync-server" target="_blank" rel="noopener">chronicle-keeper-sync-server</a>) that you run yourself — your LLM keys and audio never touch it.</p>
+
+        <h2 id="enable">Turning it on</h2>
+        <ol class="steps">
+          <li><h4>Run a sync server</h4><p>Self-host the <a href="https://github.com/aronjanosch/chronicle-keeper-sync-server" target="_blank" rel="noopener">sync-server</a> (a small FastAPI service — data CRUD + auth only) on a VPS, home server, or anywhere you can reach.</p></li>
+          <li><h4>Add the server URL in Settings</h4><p>Paste your server's URL into <strong>Settings → Sync</strong> and authenticate. Sync stays off until a URL is present.</p></li>
+          <li><h4>Repeat on your other devices</h4><p>Point each machine at the same server. They'll converge on the same campaigns and notes.</p></li>
+        </ol>
+
+        <h2 id="protocol">For the technically curious</h2>
+        <p>The push/pull protocol — change tracking, conflict handling, and the row format — is documented in <a href="https://github.com/aronjanosch/chronicle-keeper/blob/main/docs/SYNC_PROTOCOL.md" target="_blank" rel="noopener"><code>docs/SYNC_PROTOCOL.md</code></a>. The client lives in <code>crates/ck-core/src/sync.rs</code>.</p>
+      </div>
+
+      <div class="pager">
+        <a href="codex.html"><span class="dir">Previous</span><span class="ttl">← The Codex</span></a>
+        <a class="next" href="troubleshooting.html"><span class="dir">Next</span><span class="ttl">Troubleshooting →</span></a>
+      </div>
+    </main>
+
+    <aside class="docs-toc"></aside>
+  </div>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="legal" style="border:0;margin:0;padding:0">
+        <span>© <span data-year>2026</span> Chronicle Keeper · MIT licensed · Built with ❤️ from Germany</span>
+        <span><a href="../">Home</a> · <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../assets/site.js"></script>
+</body>
+</html>

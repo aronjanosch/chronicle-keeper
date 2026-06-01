@@ -12,6 +12,9 @@ Obsidian frontmatter, ready to paste into your vault.
 - **Bring your own LLM.** Local [Ollama](https://ollama.com), Anthropic, or any
   OpenAI-compatible provider.
 - **The pipeline.** Record → transcribe → summarize → export.
+
+📖 **[Read the docs →](https://aronjanosch.github.io/chronicle-keeper/)** — install guides, LLM
+setup (Ollama + getting API keys), the full workflow, and FAQ.
 ## Screenshots
 <img width="305" height="218" alt="image" src="https://github.com/user-attachments/assets/437e6911-d5da-439c-b5bc-1e99ee6bba49" />
 <img width="305" height="218" alt="image" src="https://github.com/user-attachments/assets/0cfd2ced-eb97-4843-bed3-22fd6e2ce49f" />
@@ -79,4 +82,4 @@ The sync protocol is documented in [`docs/SYNC_PROTOCOL.md`](docs/SYNC_PROTOCOL.
 
 [MIT](LICENSE).
 
-Build with <3 from germany
+Build with ❤️ from germany

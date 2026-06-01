@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chronicle Keeper — D&D session notes from your recordings, on your machine</title>
+  <meta name="description" content="Turn your D&D session recordings into clean, structured notes — local-first, offline, with whatever LLM you like. Drop in a Craig recording and Chronicle Keeper transcribes and writes up the session." />
+  <meta property="og:title" content="Chronicle Keeper" />
+  <meta property="og:description" content="Turn your D&D session recordings into clean, structured notes — on your own machine, offline, with whatever LLM you like." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+
+  <!-- ── Top nav ─────────────────────────────────────────────────── -->
+  <header class="topnav">
+    <div class="wrap">
+      <a class="brand" href="./">
+        <span class="mark" style="width:30px;height:30px">
+          <svg width="17" height="17" viewBox="0 0 20 20"><path d="M14.5 6.5C13.5 5.5 12 5 10.5 5c-3 0-5 2-5 5s2 5 5 5c1.5 0 3-.5 4-1.5" stroke="#F2D9D2" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>
+        </span>
+        <span class="name">Chronicle Keeper<small>Scriptorium</small></span>
+      </a>
+      <button class="nav-toggle btn btn-secondary btn-sm" aria-label="Toggle menu">
+        <svg class="ic" viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+      </button>
+      <nav>
+        <a href="#features">Features</a>
+        <a href="#pipeline">How it works</a>
+        <a href="docs/">Docs</a>
+        <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a>
+        <a class="btn btn-primary btn-sm" href="https://github.com/aronjanosch/chronicle-keeper/releases" style="color:#FBF6E9">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ── Hero ────────────────────────────────────────────────────── -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="chip chip-moss"><span class="dot dot-moss"></span> Local-first · Offline · Open source</span>
+        <h1>Turn session recordings into <span class="accent">chronicle-worthy</span> notes.</h1>
+        <p class="lede">Drop in a Craig Bot recording, label who's who, and Chronicle Keeper transcribes every track on your own machine and writes up the session — Markdown with Obsidian frontmatter, ready for your vault.</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary btn-lg" href="https://github.com/aronjanosch/chronicle-keeper/releases">
+            <svg class="ic" viewBox="0 0 16 16"><path d="M8 3v8M5 8l3 3 3-3M3 13h10"/></svg>
+            Download for your OS
+          </a>
+          <a class="btn btn-secondary btn-lg" href="docs/">
+            Read the docs
+            <svg class="ic" viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
+          </a>
+          <span class="note">macOS · Windows · Linux</span>
+        </div>
+      </div>
+
+      <!-- App-window illustration: the pipeline in miniature -->
+      <div class="hero-art">
+        <div class="winbar"><i></i><i></i><i></i><span>chronicle-keeper</span></div>
+        <div class="winbody">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+            <span class="sigil sigil-burgundy"><svg class="ic" viewBox="0 0 16 16"><rect x="6" y="2" width="4" height="8" rx="2"/><path d="M3.5 8a4.5 4.5 0 0 0 9 0M8 12.5V14M5.5 14h5"/></svg></span>
+            <div>
+              <div class="display" style="font-size:16px">The Sunless Citadel — Session 7</div>
+              <div class="muted" style="font-size:12px">4 tracks · 3h 12m · transcribed on-device</div>
+            </div>
+          </div>
+          <div class="pipeline" style="grid-template-columns:1fr 1fr;box-shadow:none">
+            <div class="step"><div class="n">01</div><h4>Upload</h4><p class="muted">Craig ZIP</p></div>
+            <div class="step"><div class="n">02</div><h4>Transcribe</h4><p class="muted">Parakeet · CPU</p></div>
+            <div class="step" style="border-top:1px solid var(--rule-soft)"><div class="n">03</div><h4>Summarize</h4><p class="muted">Your LLM</p></div>
+            <div class="step" style="border-top:1px solid var(--rule-soft)"><div class="n">04</div><h4>Export</h4><p class="muted">Obsidian MD</p></div>
+          </div>
+          <div style="margin-top:14px;padding:14px;background:var(--surface-inset);border:1px solid var(--rule);border-radius:var(--r-md)">
+            <div class="eyebrow" style="margin-bottom:6px">Summary · excerpt</div>
+            <div class="display" style="font-size:14.5px;line-height:1.6;color:var(--ink-soft)">The party descended into the overgrown ravine, where <strong style="color:var(--burgundy)">Meepo</strong> the kobold begged their help against the goblins of the <strong style="color:var(--burgundy)">Durbuluk</strong> tribe…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Trust row ───────────────────────────────────────────────── -->
+  <div class="wrap" style="padding:8px 24px 0">
+    <div class="flourish">✦</div>
+  </div>
+
+  <!-- ── Features ────────────────────────────────────────────────── -->
+  <section class="section" id="features">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="eyebrow">Why Chronicle Keeper</span>
+        <h2>Your table's history, kept honestly.</h2>
+        <p>Built for one job: hours of messy audio in, a clean session write-up out — without sending your campaign anywhere you don't choose.</p>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <span class="sigil sigil-moss"><svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg></span>
+          <h3>Local-first &amp; private</h3>
+          <p>Transcription runs on your device with a native speech model. The app binds to localhost and works fully offline — your audio never leaves your machine.</p>
+        </div>
+        <div class="card">
+          <span class="sigil sigil-burgundy"><svg class="ic" viewBox="0 0 16 16"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2"/></svg></span>
+          <h3>Bring your own LLM</h3>
+          <p>Run a local model with <strong>Ollama</strong> for free, or paste an Anthropic / OpenAI-compatible key. Your keys stay on-device and calls go straight from your machine.</p>
+        </div>
+        <div class="card">
+          <span class="sigil sigil-blue"><svg class="ic" viewBox="0 0 16 16"><path d="M3 2.5h7a2 2 0 0 1 2 2V14M3 2.5v11.5h7M3 2.5v11.5a1 1 0 0 0 1 1h8"/></svg></span>
+          <h3>Obsidian-ready export</h3>
+          <p>Notes land as clean Markdown with YAML frontmatter — paste straight into your vault, or export the full transcript alongside.</p>
+        </div>
+        <div class="card">
+          <span class="sigil sigil-gilt"><svg class="ic" viewBox="0 0 16 16"><path d="m8 2 4 3-4 9-4-9 4-3ZM4 5h8M8 2v3M6 5l2 9M10 5l-2 9"/></svg></span>
+          <h3>The Codex</h3>
+          <p>A per-campaign glossary of NPCs, places and factions. It's injected into every summary so the LLM auto-corrects names the transcriber mangled — "Mee-po" becomes <strong>Meepo</strong>.</p>
+        </div>
+        <div class="card">
+          <span class="sigil sigil-ochre"><svg class="ic" viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/><rect x="6" y="6" width="4" height="4"/><path d="M6 1.5v2M10 1.5v2M6 12.5v2M10 12.5v2M1.5 6h2M1.5 10h2M12.5 6h2M12.5 10h2"/></svg></span>
+          <h3>No fuss, no GPU</h3>
+          <p>Native Parakeet TDT runs several× realtime on plain CPU across 25 European languages, German included. No Python, no CUDA, no cloud transcription bill.</p>
+        </div>
+        <div class="card">
+          <span class="sigil"><svg class="ic" viewBox="0 0 16 16"><path d="M4.5 12a3 3 0 0 1 0-6 3.5 3.5 0 0 1 6.7-1A2.8 2.8 0 0 1 12 12H4.5Z"/></svg></span>
+          <h3>Optional multi-device sync</h3>
+          <p>Keep notes in step across machines via a small self-hostable server. Text only, off by default — turn it on with a server URL when you want it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Pipeline ────────────────────────────────────────────────── -->
+  <section class="section alt" id="pipeline">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="eyebrow">The pipeline</span>
+        <h2>Record → transcribe → summarize → export.</h2>
+        <p>Four steps from a pile of audio tracks to a finished session note. Most of it is one click.</p>
+      </div>
+      <div class="pipeline">
+        <div class="step">
+          <div class="n">01</div>
+          <h4><svg class="ic" viewBox="0 0 16 16" style="color:var(--burgundy)"><path d="M8 11V3M5 6l3-3 3 3M3 13h10"/></svg> Upload</h4>
+          <p>Drop in the ZIP your Craig Bot recording produces — one audio track per speaker.</p>
+        </div>
+        <div class="step">
+          <div class="n">02</div>
+          <h4><svg class="ic" viewBox="0 0 16 16" style="color:var(--burgundy)"><rect x="6" y="2" width="4" height="8" rx="2"/><path d="M3.5 8a4.5 4.5 0 0 0 9 0M8 12.5V14M5.5 14h5"/></svg> Label</h4>
+          <p>Tell it who each track belongs to. The model fills in the rest.</p>
+        </div>
+        <div class="step">
+          <div class="n">03</div>
+          <h4><svg class="ic" viewBox="0 0 16 16" style="color:var(--burgundy)"><path d="M2 8h1M4 6v4M6 4v8M8 5v6M10 3v10M12 6v4M14 8h.5"/></svg> Transcribe</h4>
+          <p>Every track is transcribed on-device — fast, offline, no diarization needed.</p>
+        </div>
+        <div class="step">
+          <div class="n">04</div>
+          <h4><svg class="ic" viewBox="0 0 16 16" style="color:var(--burgundy)"><path d="M8 2v4M8 10v4M2 8h4M10 8h4M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2"/></svg> Summarize</h4>
+          <p>Your chosen LLM writes a structured recap, Codex-corrected names and all.</p>
+        </div>
+        <div class="step">
+          <div class="n">05</div>
+          <h4><svg class="ic" viewBox="0 0 16 16" style="color:var(--burgundy)"><path d="M8 2v8M5 5l3-3 3 3M3 9v4h10V9"/></svg> Export</h4>
+          <p>Markdown + Obsidian frontmatter, ready to drop into your vault.</p>
+        </div>
+      </div>
+      <div style="text-align:center;margin-top:30px">
+        <a class="btn btn-primary btn-lg" href="docs/workflow.html">Walk through it step by step
+          <svg class="ic" viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── LLM choices ─────────────────────────────────────────────── -->
+  <section class="section" id="llm">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="eyebrow">Bring your own brain</span>
+        <h2>Free and local, or any cloud key you like.</h2>
+        <p>Chronicle Keeper does the transcription. You decide which model does the writing — and the keys never leave your computer.</p>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <span class="chip chip-moss"><span class="dot dot-moss"></span> Free</span>
+          <h3 style="margin-top:12px">Ollama (local)</h3>
+          <p>Run an open model entirely on your machine. No key, no bill, no internet required after the model is pulled.</p>
+          <p style="margin-top:10px"><a href="docs/llm-setup.html#ollama">Set up Ollama →</a></p>
+        </div>
+        <div class="card">
+          <span class="chip chip-burgundy">Cloud</span>
+          <h3 style="margin-top:12px">Anthropic Claude</h3>
+          <p>Paste an API key for top-tier summaries. The native Messages API is built in.</p>
+          <p style="margin-top:10px"><a href="docs/llm-setup.html#anthropic">Get an Anthropic key →</a></p>
+        </div>
+        <div class="card">
+          <span class="chip chip-blue">Cloud</span>
+          <h3 style="margin-top:12px">OpenAI-compatible</h3>
+          <p>OpenAI, Groq, DeepSeek, Mistral, Together, Perplexity, MiniMax or Gemini's compat endpoint — one client covers them all.</p>
+          <p style="margin-top:10px"><a href="docs/llm-setup.html#openai-compatible">Pick a provider →</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Final CTA ───────────────────────────────────────────────── -->
+  <section class="section alt">
+    <div class="wrap" style="text-align:center;max-width:640px">
+      <div class="flourish" style="margin-bottom:22px">✦</div>
+      <h2 class="display" style="font-size:36px">Keep the chronicle.</h2>
+      <p class="lede" style="margin:12px auto 26px">Free, open source, and built with ❤️ from Germany. Your campaign deserves better notes than nobody-took-any.</p>
+      <div class="hero-actions" style="justify-content:center">
+        <a class="btn btn-primary btn-lg" href="https://github.com/aronjanosch/chronicle-keeper/releases">
+          <svg class="ic" viewBox="0 0 16 16"><path d="M8 3v8M5 8l3 3 3-3M3 13h10"/></svg> Download free
+        </a>
+        <a class="btn btn-secondary btn-lg" href="docs/getting-started.html">Getting started</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ──────────────────────────────────────────────────── -->
+  <footer class="footer">
+    <div class="wrap">
+      <div class="cols">
+        <div style="max-width:280px">
+          <a class="brand" href="./" style="margin-bottom:12px">
+            <span class="mark" style="width:28px;height:28px"><svg width="16" height="16" viewBox="0 0 20 20"><path d="M14.5 6.5C13.5 5.5 12 5 10.5 5c-3 0-5 2-5 5s2 5 5 5c1.5 0 3-.5 4-1.5" stroke="#F2D9D2" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg></span>
+            <span class="name">Chronicle Keeper</span>
+          </a>
+          <p class="muted" style="font-size:13.5px">Local-first D&amp;D session notes from your recordings. Offline, private, bring-your-own-LLM.</p>
+        </div>
+        <div>
+          <h5>Documentation</h5>
+          <a href="docs/getting-started.html">Getting started</a>
+          <a href="docs/install.html">Install</a>
+          <a href="docs/workflow.html">The workflow</a>
+          <a href="docs/llm-setup.html">LLM setup</a>
+          <a href="docs/codex.html">The Codex</a>
+        </div>
+        <div>
+          <h5>Guides</h5>
+          <a href="docs/llm-setup.html#ollama">Run Ollama locally</a>
+          <a href="docs/llm-setup.html#getting-keys">Get an API key</a>
+          <a href="docs/sync.html">Multi-device sync</a>
+          <a href="docs/troubleshooting.html">Troubleshooting</a>
+          <a href="docs/faq.html">FAQ</a>
+        </div>
+        <div>
+          <h5>Project</h5>
+          <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a>
+          <a href="https://github.com/aronjanosch/chronicle-keeper/releases">Releases</a>
+          <a href="https://github.com/aronjanosch/chronicle-keeper/blob/main/CONTRIBUTING.md">Contributing</a>
+          <a href="https://github.com/aronjanosch/chronicle-keeper/blob/main/LICENSE">License (MIT)</a>
+        </div>
+      </div>
+      <div class="legal">
+        <span>© <span data-year>2026</span> Chronicle Keeper · MIT licensed</span>
+        <span>Not affiliated with Wizards of the Coast or Craig.</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="assets/site.js"></script>
+</body>
+</html>

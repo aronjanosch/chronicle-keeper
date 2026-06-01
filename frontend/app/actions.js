@@ -308,13 +308,38 @@ export async function runTranscribe() {
   finally { stop(); }
 }
 
-// ── Summarize ─────────────────────────────────────────────────────
-export async function loadPromptPresets() {
-  if (store.promptPresets) return store.promptPresets;
-  let p = {};
-  try { p = await apiFetch('/prompts'); } catch (e) { console.warn('loadPromptPresets failed:', e); }
-  setState({ promptPresets: p });
-  return p;
+// ── Summary prompt templates ──────────────────────────────────────
+// The user-managed library of system prompts. Two builtins (EN/DE) are seeded
+// server-side; the user can add, edit, delete (even the builtins) and restore.
+export async function loadPromptTemplates(force) {
+  if (store.promptTemplates && !force) return store.promptTemplates;
+  let list = [];
+  try { list = await apiFetch('/prompt-templates'); } catch (e) { console.warn('loadPromptTemplates failed:', e); }
+  setState({ promptTemplates: list });
+  return list;
+}
+
+export async function createPromptTemplate({ label, text }) {
+  const created = await apiJson('/prompt-templates', 'POST', { label, text });
+  await loadPromptTemplates(true);
+  return created;
+}
+
+export async function updatePromptTemplate(id, patch) {
+  const updated = await apiJson(`/prompt-templates/${id}`, 'PUT', patch);
+  await loadPromptTemplates(true);
+  return updated;
+}
+
+export async function deletePromptTemplate(id) {
+  await apiFetch(`/prompt-templates/${id}`, { method: 'DELETE' });
+  await loadPromptTemplates(true);
+}
+
+export async function restorePromptDefaults() {
+  const list = await apiJson('/prompt-templates/restore-defaults', 'POST', {});
+  setState({ promptTemplates: list });
+  return list;
 }
 
 export async function runSummarize({ transcriptId, provider, model, title, context, systemPrompt }) {

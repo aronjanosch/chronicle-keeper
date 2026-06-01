@@ -224,5 +224,21 @@ fn migrate(conn: &Connection) -> Result<()> {
         [],
     )?;
 
+    // Summary prompt templates: the user-managed library of system prompts shown
+    // in the Summarize template picker. Two builtins (EN/DE) are seeded on first
+    // run by `store::prompts` (guarded by a config flag so a deleted builtin
+    // stays deleted). Local-only — not synced, like config and provider keys.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS prompt_templates (
+            id         TEXT PRIMARY KEY,
+            label      TEXT NOT NULL,
+            text       TEXT NOT NULL,
+            builtin    INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT ''
+        )",
+        [],
+    )?;
+
     Ok(())
 }

@@ -7,6 +7,7 @@ import {
   runExport,
   loadLlmProviders, saveLlmProvider, testLlmProvider,
   importCodex, commitCodexImport,
+  createPromptTemplate, updatePromptTemplate,
 } from './actions.js';
 
 const PRONOUNS = ['she/her', 'he/him', 'they/them'];
@@ -370,6 +371,36 @@ function CodexImportModal() {
   </${ModalShell}>`;
 }
 
+// ── Summary prompt template editor ────────────────────────────────
+function PromptTemplateModal({ edit }) {
+  const [label, setLabel] = useState(edit?.label || '');
+  const [text, setText] = useState(edit?.text || '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function save() {
+    if (!label.trim()) { setErr('Name is required'); return; }
+    if (!text.trim()) { setErr('Prompt text is required'); return; }
+    setBusy(true); setErr(null);
+    try {
+      if (edit) await updatePromptTemplate(edit.id, { label: label.trim(), text });
+      else await createPromptTemplate({ label: label.trim(), text });
+      closeModal();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+
+  return html`<${ModalShell} wide title=${edit ? 'Edit prompt template' : 'New prompt template'} footer=${html`
+    <${Btn} kind="ghost" onClick=${closeModal}>Cancel</${Btn}>
+    <${Btn} kind="primary" disabled=${busy} onClick=${save}>${busy ? 'Saving…' : (edit ? 'Save changes' : 'Create template')}</${Btn}>`}>
+    ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
+    ${edit?.builtin && html`<div style=${{ fontSize: 12, color: 'var(--ink-muted)' }}>This is a built-in template. Your edits stick; "Restore defaults" only brings back ones you've deleted.</div>`}
+    <${Field} label="Name"><${Input} value=${label} onInput=${setLabel} placeholder="e.g. English – D&D / TTRPG" /></${Field}>
+    <${Field} label="System prompt" hint="The instructions sent to the LLM. The transcript and campaign context are appended automatically.">
+      <${Textarea} value=${text} onInput=${setText} rows=${16} placeholder="You are an RPG assistant for the GM…" />
+    </${Field}>
+  </${ModalShell}>`;
+}
+
 // ── Content viewer ────────────────────────────────────────────────
 function ViewerModal({ title, text }) {
   return html`<${ModalShell} wide title=${title} footer=${html`<${Btn} kind="secondary" onClick=${closeModal}>Close</${Btn}>`}>
@@ -386,6 +417,7 @@ export function ModalHost({ modal }) {
     case 'export': return html`<${ExportModal} />`;
     case 'provider': return html`<${ProviderModal} ...${modal.props} />`;
     case 'codexImport': return html`<${CodexImportModal} />`;
+    case 'promptTemplate': return html`<${PromptTemplateModal} ...${modal.props} />`;
     case 'viewer': return html`<${ViewerModal} ...${modal.props} />`;
     case 'confirm': return html`<${ConfirmModal} ...${modal.props} />`;
     default: return null;

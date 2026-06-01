@@ -1,7 +1,7 @@
 // Screen 06 — Summarize workspace. Configure on the left, preview on the right.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, fmtDateTime } from '../core.js';
-import { loadLlmProviders, loadPromptPresets, runSummarize, openCampaign } from '../actions.js';
+import { loadLlmProviders, loadPromptTemplates, runSummarize, openCampaign } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Btn, Markdown, Empty } from '../ui.js';
 
@@ -28,18 +28,18 @@ export function SummarizeScreen({ store }) {
   const c = store.campaign;
   const cam = sess?.campaign || {};
   const providers = store.llmProviders || [];
-  const presets = store.promptPresets || {};
+  const templates = store.promptTemplates || [];
 
   const [provider, setProvider] = useState((store.config?.summary_provider || 'ollama').toLowerCase());
   const [model, setModel] = useState('');
   const [transcriptId, setTranscriptId] = useState(store.transcripts[0]?.id || null);
   const [title, setTitle] = useState(cam.title || '');
   const [context, setContext] = useState('');
-  const [presetKey, setPresetKey] = useState(null);
+  const [templateId, setTemplateId] = useState(null);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [custom, setCustom] = useState(false);
 
-  useEffect(() => { loadLlmProviders(); loadPromptPresets(); }, []);
+  useEffect(() => { loadLlmProviders(); loadPromptTemplates(); }, []);
 
   // default model when provider changes
   useEffect(() => {
@@ -47,16 +47,15 @@ export function SummarizeScreen({ store }) {
     if (p) setModel(p.saved_model || p.default_model || '');
   }, [provider, store.llmProviders]);
 
-  // default preset once presets load
+  // default template once templates load
   useEffect(() => {
-    const keys = Object.keys(presets);
-    if (keys.length && presetKey == null) { setPresetKey(keys[0]); setSystemPrompt(presets[keys[0]].text || ''); }
-  }, [store.promptPresets]);
+    if (templates.length && templateId == null) { setTemplateId(templates[0].id); setSystemPrompt(templates[0].text || ''); }
+  }, [store.promptTemplates]);
 
   if (!sess) return html`<div />`;
   const provOptions = providers.map((p) => ({ id: p.id, label: p.needs_key ? (p.has_key ? `${p.name} ✓` : `${p.name} (no key)`) : p.name }));
 
-  function pickPreset(k) { setCustom(false); setPresetKey(k); setSystemPrompt(presets[k]?.text || ''); }
+  function pickTemplate(t) { setCustom(false); setTemplateId(t.id); setSystemPrompt(t.text || ''); }
   function generate() {
     runSummarize({ transcriptId, provider, model: model.trim() || null, title: title.trim() || null, context: context.trim() || null, systemPrompt: systemPrompt.trim() || null });
   }
@@ -79,7 +78,7 @@ export function SummarizeScreen({ store }) {
       <div style=${{ borderRight: '1px solid var(--rule-soft)', overflow: 'auto', padding: '22px 24px' }}>
         <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 4 }}>Session ${cam.session_number || ''} · summarize</div>
         <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 500, letterSpacing: '-0.015em', color: 'var(--ink)', lineHeight: 1.15 }}>${cam.title || 'Untitled session'}</h1>
-        <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 4, fontFamily: 'var(--font-display)', fontStyle: 'italic' }}>Configure the model and voice, then generate.</div>
+        <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 4, fontFamily: 'var(--font-display)', fontStyle: 'italic' }}>Configure the model and prompt template, then generate.</div>
 
         ${!store.transcripts.length && html`<div style=${{ marginTop: 16, padding: '10px 12px', background: 'var(--ochre-50)', border: '1px solid rgba(168,115,40,.22)', borderRadius: 6, fontSize: 12.5, color: 'var(--ochre)' }}>No transcript yet — transcribe the recording first.</div>`}
 
@@ -103,10 +102,13 @@ export function SummarizeScreen({ store }) {
         </div>
 
         <div style=${{ marginTop: 22 }}>
-          <${Label}>Voice & style</${Label}>
+          <div style=${{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+            <${Label}>Prompt template</${Label}>
+            <span onClick=${() => navigate('settings')} style=${{ fontSize: 11, color: 'var(--ink-faint)', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2 }}>Manage in settings</span>
+          </div>
           <div style=${{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            ${Object.keys(presets).map((k) => html`<${PromptPreset} key=${k} active=${!custom && presetKey === k} name=${presets[k].label || k} desc=${(presets[k].text || '').slice(0, 90)} onClick=${() => pickPreset(k)} />`)}
-            <${PromptPreset} active=${custom} name="Custom prompt" desc="Write your own system instructions below." onClick=${() => setCustom(true)} />
+            ${templates.map((t) => html`<${PromptPreset} key=${t.id} active=${!custom && templateId === t.id} name=${t.label} desc=${(t.text || '').slice(0, 90)} onClick=${() => pickTemplate(t)} />`)}
+            <${PromptPreset} active=${custom} name="Custom prompt" desc="Write your own system instructions below — this run only." onClick=${() => setCustom(true)} />
           </div>
           ${custom && html`<textarea value=${systemPrompt} onInput=${(e) => setSystemPrompt(e.target.value)} rows=${6} placeholder="System prompt…"
             style=${{ marginTop: 8, width: '100%', padding: '8px 10px', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 4, fontSize: 13, lineHeight: 1.4, resize: 'vertical', fontFamily: 'inherit', color: 'var(--ink)' }}></textarea>`}
@@ -142,7 +144,7 @@ export function SummarizeScreen({ store }) {
           <div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, padding: '32px 44px', boxShadow: '0 1px 0 rgba(120,90,40,.06), 0 2px 8px rgba(60,40,10,.05)' }}>
             ${store.summaryPreview
               ? html`<${Markdown} text=${store.summaryPreview.text} />`
-              : html`<${Empty} icon="feather" title="No summary yet">Pick a model and voice, then generate. Your latest summary will preview here.</${Empty}>`}
+              : html`<${Empty} icon="feather" title="No summary yet">Pick a model and prompt template, then generate. Your latest summary will preview here.</${Empty}>`}
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 pub mod artifacts;
 pub mod campaigns;
 pub mod codex;
+pub mod prompts;
 pub mod sessions;
 pub mod tags;
 

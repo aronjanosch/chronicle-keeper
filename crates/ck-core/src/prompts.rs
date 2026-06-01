@@ -25,13 +25,13 @@ pub fn get_prompt_text(language: &str) -> &'static str {
     }
 }
 
-/// `/prompts` payload: `{lang: {label, text}}`.
-pub fn available_prompts() -> Value {
-    json!({
-        "en": { "label": "English – D&D / TTRPG", "text": SUMMARY_EN },
-        "de": { "label": "Deutsch – D&D / TTRPG", "text": SUMMARY_DE },
-    })
-}
+/// The prompt templates shipped by default: `(id, label, text)`. Seeded into the
+/// `prompt_templates` table on first run and re-creatable via "restore defaults".
+/// The user may edit or delete them and add their own — see `store::prompts`.
+pub const BUILTIN_TEMPLATES: [(&str, &str, &str); 2] = [
+    ("default-en", "English – D&D / TTRPG", SUMMARY_EN),
+    ("default-de", "Deutsch – D&D / TTRPG", SUMMARY_DE),
+];
 
 /// Format campaign/session metadata + speakers into a context block.
 pub fn build_session_context(ctx: Option<&Value>, language: &str) -> String {

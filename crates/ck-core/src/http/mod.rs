@@ -2,6 +2,7 @@ mod artifacts;
 mod campaigns;
 mod codex;
 mod llm;
+mod prompts;
 mod sessions;
 mod transcribe;
 mod upload;
@@ -74,8 +75,20 @@ pub fn router(state: AppState) -> Router {
         .route("/providers", get(transcribe::providers))
         .route("/transcribe", post(transcribe::transcribe))
         .route("/model-status", get(model_status))
+        // summary prompt templates (user-managed library)
+        .route(
+            "/prompt-templates",
+            get(prompts::list).post(prompts::create),
+        )
+        .route(
+            "/prompt-templates/restore-defaults",
+            post(prompts::restore_defaults),
+        )
+        .route(
+            "/prompt-templates/:id",
+            axum::routing::put(prompts::update).delete(prompts::delete),
+        )
         // summarization + export + llm providers
-        .route("/prompts", get(llm::list_prompts))
         .route("/summarize", post(llm::summarize))
         .route("/export", post(llm::export_notes))
         .route("/llm-providers", get(llm::list_providers))

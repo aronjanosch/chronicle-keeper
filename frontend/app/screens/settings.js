@@ -1,7 +1,7 @@
 // Screen 08 — Settings. Calm single page, grouped into cards. Real config.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { store, setOp, openModal } from '../core.js';
-import { loadConfig, saveConfig, loadLlmProviders } from '../actions.js';
+import { loadConfig, saveConfig, loadLlmProviders, loadPromptTemplates, deletePromptTemplate, restorePromptDefaults } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Btn } from '../ui.js';
 
@@ -50,6 +50,48 @@ function ProviderCard({ p }) {
   </div>`;
 }
 
+function TemplateRow({ t, onDelete }) {
+  return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', background: 'var(--surface)', border: '1px solid var(--rule-soft)', borderRadius: 6 }}>
+    <div style=${{ width: 28, height: 28, borderRadius: 5, flex: '0 0 auto', background: 'var(--paper-deep)', color: 'var(--ink-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><${Icon} name="feather" size=${13} /></div>
+    <div style=${{ flex: 1, minWidth: 0 }}>
+      <div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style=${{ fontSize: 13.5, fontWeight: 500, color: 'var(--ink)' }}>${t.label}</span>
+        ${t.builtin && html`<span style=${{ padding: '2px 6px', borderRadius: 999, background: 'var(--paper-deep)', color: 'var(--ink-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', border: '1px solid var(--rule-soft)' }}>Built-in</span>`}
+      </div>
+      <div style=${{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>${(t.text || '').slice(0, 80)}</div>
+    </div>
+    <${Btn} kind="ghost" size="sm" onClick=${() => openModal('promptTemplate', { edit: t })}>Edit ›</${Btn}>
+    <${Btn} kind="ghost" size="sm" icon="trash" onClick=${onDelete} />
+  </div>`;
+}
+
+function TemplatesCard() {
+  const templates = store.promptTemplates || [];
+  function del(t) {
+    openModal('confirm', {
+      title: 'Delete template',
+      message: html`Delete the prompt template ${html`<strong>${t.label}</strong>`}? ${t.builtin ? 'You can bring built-in templates back with “Restore defaults”.' : 'This cannot be undone.'}`,
+      confirmLabel: 'Delete',
+      onConfirm: () => deletePromptTemplate(t.id),
+    });
+  }
+  async function restore() {
+    try { await restorePromptDefaults(); setOp('Default templates restored', 'done'); }
+    catch (e) { setOp(e.message, 'err'); }
+  }
+  return html`<${SettingsCard} icon="feather" title="Summary templates" desc="The prompt presets offered on the Summarize screen. Edit, add your own, or delete the built-ins.">
+    <div style=${{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 12 }}>
+      ${templates.length
+        ? templates.map((t) => html`<${TemplateRow} key=${t.id} t=${t} onDelete=${() => del(t)} />`)
+        : html`<div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', padding: '8px 0' }}>No templates yet — add one, or restore the built-in defaults.</div>`}
+    </div>
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+      <${Btn} kind="secondary" size="sm" icon="plus" onClick=${() => openModal('promptTemplate', {})}>New template</${Btn}>
+      <${Btn} kind="ghost" size="sm" onClick=${restore}>Restore defaults</${Btn}>
+    </div>
+  </${SettingsCard}>`;
+}
+
 export function SettingsScreen({ store }) {
   const [f, setF] = useState(null);
   const [apiBase, setApiBase] = useState(store.apiBase);
@@ -60,7 +102,7 @@ export function SettingsScreen({ store }) {
   useEffect(() => {
     (async () => {
       let cfg;
-      try { cfg = await loadConfig(); await loadLlmProviders(); }
+      try { cfg = await loadConfig(); await loadLlmProviders(); await loadPromptTemplates(true); }
       catch (e) { setOp(`Can't load settings: ${e.message}`, 'err'); return; }
       setF({
         output_root: cfg.output_root || '',
@@ -127,6 +169,8 @@ export function SettingsScreen({ store }) {
             ${providers.map((p) => html`<${ProviderCard} key=${p.id} p=${p} />`)}
           </div>
         </${SettingsCard}>
+
+        <${TemplatesCard} />
 
         <${SettingsCard} icon="folder" title="Storage" desc="Where Chronicle Keeper keeps its database, audio and model.">
           <${Row} label="Data folder" hint="Sessions, transcripts and the model live here. Absolute path.">

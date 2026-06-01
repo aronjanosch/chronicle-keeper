@@ -2,7 +2,6 @@ use std::time::Instant;
 
 use axum::extract::{Path, State};
 use axum::Json;
-use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
 use crate::llm::{self, SavedKey};
@@ -11,11 +10,7 @@ use crate::models::{
     ProviderTestResult, SummarizeRequest, SummarizeResponse,
 };
 use crate::state::AppState;
-use crate::{export, prompts, summarize};
-
-pub async fn list_prompts() -> Json<Value> {
-    Json(prompts::available_prompts())
-}
+use crate::{export, summarize};
 
 fn provider_info(p: &llm::Provider, saved: Option<&SavedKey>) -> ProviderInfo {
     ProviderInfo {

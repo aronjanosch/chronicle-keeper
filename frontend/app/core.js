@@ -25,7 +25,7 @@ export const store = {
   providers: null,        // transcription engines
   llmProviders: null,     // LLM provider registry
   providerStatus: null,   // { ok, reason } for the active summary provider (null = unknown)
-  promptPresets: null,
+  promptTemplates: null,  // user-managed summary prompt templates [{id, label, text, builtin}]
 
   // transient UI
   op: null,               // { msg, state: ''|'done'|'err' } global op banner

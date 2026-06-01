@@ -287,6 +287,31 @@ pub struct RecapResponse {
     pub sessions_used: usize,
 }
 
+// --- Summary prompt templates ---
+
+#[derive(Debug, Serialize, Clone)]
+pub struct PromptTemplate {
+    pub id: String,
+    pub label: String,
+    pub text: String,
+    /// True for the two shipped defaults. The user may still edit or delete them;
+    /// the flag only drives the "restore defaults" affordance and a UI badge.
+    pub builtin: bool,
+    pub sort_order: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PromptTemplateCreate {
+    pub label: String,
+    pub text: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct PromptTemplateUpdate {
+    pub label: Option<String>,
+    pub text: Option<String>,
+}
+
 /// Paste-and-distill import: raw notes in, proposed entries out (reviewed before save).
 #[derive(Debug, Deserialize)]
 pub struct CodexImportRequest {

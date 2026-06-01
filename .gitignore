@@ -11,3 +11,7 @@ debug-exports/
 # Stray frontend tooling (frontend is vanilla JS, no build step)
 node_modules/
 frontend/dist/
+
+# Internal docs — kept private, must never be committed here
+CLAUDE.md
+docs/internal/

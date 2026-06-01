@@ -134,6 +134,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         // covers that; a recursive recap would compound drift — see ROADMAP).
         "ALTER TABLE campaigns ADD COLUMN recap TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE campaigns ADD COLUMN recap_updated_at TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE campaigns ADD COLUMN gm_pronouns TEXT NOT NULL DEFAULT ''",
     ];
     for sql in add_columns {
         if let Err(e) = conn.execute(sql, []) {

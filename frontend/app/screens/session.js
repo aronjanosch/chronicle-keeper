@@ -1,7 +1,7 @@
 // Screen 04 — Session Detail. Pipeline strip, summary prose, speakers, metadata.
 import { html } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal, fmtDate, fmtDateTime, toneFor } from '../core.js';
-import { deleteArtifact, artifactContent, deleteSession, openCampaign } from '../actions.js';
+import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Sigil, Btn, Pipeline, Markdown, Empty } from '../ui.js';
 
@@ -78,7 +78,7 @@ export function SessionScreen({ store }) {
   const primary = !tracks.length
     ? html`<${Btn} kind="primary" icon="upload" onClick=${() => navigate('newSession', { id: cam.campaign_id, attach: sess.session_id })}>Upload recording</${Btn}>`
     : !hasT
-      ? html`<${Btn} kind="primary" icon="mic" onClick=${() => openModal('transcribe', {})}>Transcribe</${Btn}>`
+      ? html`<${Btn} kind="primary" icon="mic" onClick=${() => runTranscribe()}>Transcribe</${Btn}>`
       : html`<${Btn} kind="primary" icon="sparkle" onClick=${() => navigate('summarize', { id: sess.session_id })}>${hasS ? 'Re-summarize' : 'Summarize'}</${Btn}>`;
 
   return html`<${Shell}
@@ -95,6 +95,7 @@ export function SessionScreen({ store }) {
           message: 'Delete this session? This removes its transcripts and summaries permanently.',
           onConfirm: () => deleteSession(sess.session_id),
         })} />
+        ${tracks.length > 0 && !hasT ? html`<${Btn} kind="secondary" icon="users" onClick=${() => navigate('newSession', { id: cam.campaign_id, attach: sess.session_id })}>Label speakers</${Btn}>` : ''}
         <${Btn} kind="secondary" icon="export" disabled=${!hasS} onClick=${() => openModal('export', {})}>Export</${Btn}>
         ${primary}
       </div>`} />`}
@@ -149,7 +150,12 @@ export function SessionScreen({ store }) {
           <div style=${{ padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
             ${speakers.length
               ? speakers.map((s) => html`<${SpeakerChip} key=${s.track_id} s=${s} />`)
-              : html`<div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic', padding: '8px 4px' }}>No speakers labelled.</div>`}
+              : tracks.length
+                ? html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start', padding: '8px 4px' }}>
+                    <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic' }}>${tracks.length} track${tracks.length === 1 ? '' : 's'} uploaded, not labelled yet.</div>
+                    <${Btn} kind="secondary" size="sm" icon="users" onClick=${() => navigate('newSession', { id: cam.campaign_id, attach: sess.session_id })}>Label speakers</${Btn}>
+                  </div>`
+                : html`<div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic', padding: '8px 4px' }}>No speakers labelled.</div>`}
           </div>
         </div>
 

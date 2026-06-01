@@ -12,7 +12,9 @@ const METADATA_GUIDE_EN: &str = "Metadata guidelines:\n- characters: List import
 const METADATA_GUIDE_DE: &str = "Metadaten-Richtlinien:\n- characters: Liste wichtige SCs und NPCs. Verwende spezifische Namen.\n- locations: Liste spezifische besuchte oder erwähnte Orte.\n- events: Liste 3-5 kurze Stichpunkte zu Hauptereignissen.\n- items: Liste bedeutende erhaltene oder erwähnte Gegenstände.\n- tags: Liste 3-5 Tags. Z.B. \"Kampf\", \"Sozial\", \"Erkundung\", \"Mysterium\".\n\nStelle sicher, dass ALLE Felder ausgefüllt sind. Gib KEINE leeren Listen zurück.";
 
 fn is_de(language: &str) -> bool {
-    language == "de"
+    // Stored config values are user-entered ("de", "De", "DE", " de ") — match
+    // case- and whitespace-insensitively so the German presets actually fire.
+    language.trim().eq_ignore_ascii_case("de")
 }
 
 pub fn get_prompt_text(language: &str) -> &'static str {
@@ -310,6 +312,35 @@ mod tests {
     }
 
     #[test]
+    fn language_match_is_case_and_whitespace_insensitive() {
+        // Config stores user-entered values like "De" — German presets must still fire.
+        assert!(is_de("De"));
+        assert!(is_de("DE"));
+        assert!(is_de(" de "));
+        assert!(!is_de("en"));
+        assert!(get_prompt_text("De").starts_with("Du bist"));
+        assert!(build_metadata_prompt("s", "De", &[]).contains("Analysiere"));
+    }
+
+    #[test]
+    fn metadata_prompt_injects_known_tags() {
+        let tags = vec!["Kampf".to_string(), "Mysterium".to_string()];
+        let de = build_metadata_prompt("summary", "de", &tags);
+        assert!(de.contains("Tag-Bibliothek"));
+        assert!(de.contains("Kampf, Mysterium"));
+
+        let en = build_metadata_prompt("summary", "en", &tags);
+        assert!(en.contains("tag library"));
+        assert!(en.contains("Kampf, Mysterium"));
+    }
+
+    #[test]
+    fn metadata_prompt_omits_tag_block_when_empty() {
+        let p = build_metadata_prompt("summary", "de", &[]);
+        assert!(!p.contains("Tag-Bibliothek"));
+    }
+
+    #[test]
     fn codex_entries_alone_still_render() {
         let ctx = json!({
             "codex_entries": [{ "name": "Bree", "kind": "place", "body": "" }],
@@ -348,7 +379,7 @@ pub fn build_recap_prompt(campaign_name: &str, sessions_block: &str, language: &
     format!("{header}\n\n{name_line}{label}\n{sessions_block}\n\n{closing}")
 }
 
-pub fn build_metadata_prompt(summary: &str, language: &str) -> String {
+pub fn build_metadata_prompt(summary: &str, language: &str, known_tags: &[String]) -> String {
     let de = is_de(language);
     let analysis = if de {
         "Analysiere diese TTRPG-Sitzungszusammenfassung und extrahiere Metadaten. Gib NUR gültiges JSON mit dieser exakten Struktur zurück:"
@@ -364,5 +395,37 @@ pub fn build_metadata_prompt(summary: &str, language: &str) -> String {
         "characters": [], "locations": [], "events": [], "items": [], "tags": []
     }))
     .unwrap();
-    format!("{analysis}\n\n{structure}\n\n{guidelines}\n\nSummary:\n{summary}\n\nReturn only valid JSON.")
+    // Tag library: the campaign's existing tag vocabulary. Reusing it keeps tags
+    // consistent across sessions (one campaign-wide set, one language) instead of
+    // a fresh, differently-cased set every time.
+    let tag_block = build_tag_library_block(known_tags, de);
+    format!("{analysis}\n\n{structure}\n\n{guidelines}\n{tag_block}\nSummary:\n{summary}\n\nReturn only valid JSON.")
+}
+
+/// Render the "reuse these existing tags" instruction, or empty if the campaign
+/// has no tags yet.
+fn build_tag_library_block(known_tags: &[String], de: bool) -> String {
+    let tags: Vec<&str> = known_tags
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if tags.is_empty() {
+        return String::new();
+    }
+    let list = tags.join(", ");
+    if de {
+        format!(
+            "\nVorhandene Tags dieser Kampagne (Tag-Bibliothek): {list}\n\
+             Verwende für `tags` MÖGLICHST diese vorhandenen Tags (exakt gleiche Schreibweise), \
+             damit Tags über alle Sitzungen konsistent bleiben. Erfinde nur dann einen neuen Tag, \
+             wenn wirklich kein passender existiert.\n"
+        )
+    } else {
+        format!(
+            "\nExisting tags for this campaign (tag library): {list}\n\
+             For `tags`, PREFER reusing these existing tags (exact same spelling) so tags stay \
+             consistent across sessions. Only invent a new tag when none of the existing ones fit.\n"
+        )
+    }
 }

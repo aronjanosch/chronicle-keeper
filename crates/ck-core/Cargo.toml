@@ -1,6 +1,6 @@
 [package]
 name = "ck-core"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 
 # Chronicle Keeper core: storage + HTTP API shared by the standalone Tauri app

@@ -64,10 +64,6 @@ export function SettingsScreen({ store }) {
       catch (e) { setOp(`Can't load settings: ${e.message}`, 'err'); return; }
       setF({
         output_root: cfg.output_root || '',
-        transcription_provider: cfg.transcription_provider || 'auto',
-        transcription_accelerator: cfg.transcription_accelerator || 'cpu',
-        default_language: cfg.default_language || '',
-        whisperx_model: cfg.whisperx_model || '',
         summary_provider: (cfg.summary_provider || 'ollama').toLowerCase(),
         sync_url: cfg.sync_url || '',
         has_sync_token: !!cfg.has_sync_token,
@@ -83,11 +79,7 @@ export function SettingsScreen({ store }) {
     try {
       const payload = {
         output_root: f.output_root.trim(),
-        transcription_provider: f.transcription_provider || 'auto',
-        transcription_accelerator: f.transcription_accelerator || 'cpu',
         summary_provider: f.summary_provider || 'ollama',
-        default_language: f.default_language.trim(),
-        whisperx_model: f.whisperx_model.trim(),
         sync_url: f.sync_url.trim(),
       };
       if (syncToken) payload.sync_token = syncToken;
@@ -99,7 +91,6 @@ export function SettingsScreen({ store }) {
     finally { setSaving(false); }
   }
 
-  const accels = [['cpu', 'CPU'], ['coreml', 'CoreML'], ['cuda', 'CUDA'], ['directml', 'DirectML']];
   const providers = store.llmProviders || [];
 
   return html`<${Shell}
@@ -120,33 +111,10 @@ export function SettingsScreen({ store }) {
               <div style=${{ padding: '7px 10px', background: 'var(--paper-deep)', border: '1px solid var(--rule-soft)', borderRadius: 4, fontSize: 12.5, color: 'var(--ink-faint)' }}>Dark (soon)</div>
             </div>
           </${Row}>
-          <${Row} label="Default language" hint="Pre-fills Transcribe and the summarizer (BCP-47, e.g. en, de).">
-            <input value=${f.default_language} onInput=${(e) => set('default_language', e.target.value)} placeholder="en" style=${inp({ width: 200, fontFamily: 'var(--font-mono)' })} />
-          </${Row}>
           ${!store.shellMode && html`
           <${Row} label="Backend URL" hint="Where the Chronicle Keeper core is running. Stored in this browser only.">
             <input value=${apiBase} onInput=${(e) => setApiBase(e.target.value)} placeholder="http://127.0.0.1:8000" style=${inp({ width: 340, fontFamily: 'var(--font-mono)' })} />
           </${Row}>`}
-        </${SettingsCard}>
-
-        <${SettingsCard} icon="mic" title="Transcription" desc="Always on-device. Configure once.">
-          <${Row} label="Engine" hint="Auto picks the native Parakeet engine today.">
-            <select value=${f.transcription_provider} onChange=${(e) => set('transcription_provider', e.target.value)} style=${inp({ width: 340, cursor: 'pointer' })}>
-              <option value="auto">Auto (recommended)</option>
-              <option value="sherpa">Parakeet (native, on-device)</option>
-            </select>
-          </${Row}>
-          <${Row} label="Hardware acceleration" hint="Falls back to CPU if your build can't use it.">
-            <div style=${{ display: 'flex', gap: 8 }}>
-              ${accels.map(([val, lbl]) => {
-                const on = f.transcription_accelerator === val;
-                return html`<button key=${val} onClick=${() => set('transcription_accelerator', val)} style=${{ padding: '6px 11px', fontSize: 12, cursor: 'pointer', background: on ? 'var(--burgundy)' : 'var(--surface-raised)', color: on ? '#FBF6E9' : 'var(--ink-soft)', border: on ? '1px solid var(--burgundy-700)' : '1px solid var(--rule)', borderRadius: 4 }}>${lbl}</button>`;
-              })}
-            </div>
-          </${Row}>
-          <${Row} label="Model" hint="Defaults to Parakeet v3 if unknown.">
-            <input value=${f.whisperx_model} onInput=${(e) => set('whisperx_model', e.target.value)} placeholder="nemo-parakeet-tdt-0.6b-v3" style=${inp({ width: 340, fontFamily: 'var(--font-mono)' })} spellcheck="false" />
-          </${Row}>
         </${SettingsCard}>
 
         <${SettingsCard} icon="sparkle" title="LLM providers" desc="Bring your own. Keys never leave this machine.">

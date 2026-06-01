@@ -5,7 +5,7 @@ use crate::llm;
 use crate::models::{RecapRequest, RecapResponse, SummarizeRequest, SummarizeResponse};
 use crate::prompts::{build_metadata_prompt, build_recap_prompt, build_summary_prompt};
 use crate::state::AppState;
-use crate::store::{artifacts, campaigns, codex, sessions};
+use crate::store::{artifacts, campaigns, codex, sessions, tags};
 
 pub async fn summarize_session(
     state: &AppState,
@@ -41,14 +41,24 @@ pub async fn summarize_session(
             .and_then(|c| c.get("campaign_id"))
             .and_then(Value::as_str)
             .map(str::to_string);
-        let codex_text = campaign_id
+        let campaign = campaign_id
             .as_deref()
-            .and_then(|cid| campaigns::get_campaign(conn, cid).ok().flatten())
-            .map(|c| campaigns::codex_freeform_text(&c))
+            .and_then(|cid| campaigns::get_campaign(conn, cid).ok().flatten());
+        let codex_text = campaign
+            .as_ref()
+            .map(campaigns::codex_freeform_text)
             .unwrap_or_default();
+        let gm = campaign.as_ref().map(|c| c.gm.clone()).unwrap_or_default();
         let codex_entries = campaign_id
             .as_deref()
             .map(|cid| codex::list_entries(conn, cid))
+            .transpose()?
+            .unwrap_or_default();
+        // Campaign tag vocabulary so metadata extraction reuses canonical tags
+        // instead of inventing a fresh (differently-cased / English) set.
+        let known_tags = campaign_id
+            .as_deref()
+            .map(|cid| tags::distinct_tags(conn, cid))
             .transpose()?
             .unwrap_or_default();
         Ok((
@@ -57,13 +67,21 @@ pub async fn summarize_session(
             language,
             codex_text,
             codex_entries,
+            gm,
+            known_tags,
             resolved,
         ))
     })?;
-    let (session, transcript_text, language, codex_text, codex_entries, resolved) = prep;
+    let (session, transcript_text, language, codex_text, codex_entries, gm, known_tags, resolved) =
+        prep;
 
-    let session_context =
-        build_context(&session, req.title.as_deref(), &codex_text, &codex_entries);
+    let session_context = build_context(
+        &session,
+        req.title.as_deref(),
+        &codex_text,
+        &codex_entries,
+        &gm,
+    );
     let summary_prompt = build_summary_prompt(
         &transcript_text,
         req.title.as_deref(),
@@ -98,7 +116,7 @@ pub async fn summarize_session(
         &resolved.api_base,
         &resolved.api_key,
         &resolved.model,
-        &build_metadata_prompt(&summary_text, &language),
+        &build_metadata_prompt(&summary_text, &language, &known_tags),
         resolved.timeout,
         true,
     )
@@ -240,6 +258,7 @@ fn build_context(
     title_override: Option<&str>,
     codex: &str,
     codex_entries: &[crate::models::CodexEntry],
+    gm: &str,
 ) -> Value {
     let campaign = session
         .get("campaign")
@@ -250,6 +269,7 @@ fn build_context(
         "session_number": campaign.get("session_number"),
         "title": title_override.map(Value::from).or_else(|| campaign.get("title").cloned()),
         "date": campaign.get("date"),
+        "gm": gm,
         "speakers": session.get("speakers").cloned().unwrap_or_else(|| json!([])),
         "codex": codex,
         "codex_entries": codex_entries.iter().map(|e| json!({
@@ -292,12 +312,26 @@ fn merge_metadata(
     };
     let mut existing: Map<String, Value> = serde_json::from_str(&existing_json).unwrap_or_default();
 
+    // Tags fold through the campaign vocabulary so case/language variants collapse
+    // onto the established spelling (a freshly extracted `combat` becomes `Kampf`).
+    let tag_vocab = campaign_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|cid| tags::vocab(conn, cid))
+        .transpose()?
+        .unwrap_or_default();
+
     if let Value::Object(new_map) = metadata {
         for (key, values) in new_map {
             let Some(new_list) = values.as_array() else {
                 continue;
             };
             let entry = existing.entry(key.clone()).or_insert_with(|| json!([]));
+            if key == "tags" {
+                let existing_tags = entry.as_array().cloned().unwrap_or_default();
+                *entry = json!(tags::merge_into(&existing_tags, new_list, &tag_vocab));
+                continue;
+            }
             let mut merged: Vec<Value> = entry.as_array().cloned().unwrap_or_default();
             for v in new_list {
                 if !v.is_null() && !merged.contains(v) {

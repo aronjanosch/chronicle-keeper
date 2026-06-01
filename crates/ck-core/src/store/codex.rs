@@ -72,7 +72,29 @@ pub fn get_entry(conn: &Connection, entry_id: &str) -> AppResult<Option<CodexEnt
     Ok(r)
 }
 
+/// Fold every quote-like character to one canonical `'` so quotation marks never
+/// split a dedup: ASR/LLM emit `Mac 'the Scrap Jack'` while the hand-written
+/// entry has `Mac "the Scrap Jack"` — same name. Single, double, curly variants
+/// and backtick all collapse to `'`. (No lowercasing here; the SQL does that.)
+fn fold_quotes(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '"' | '`' | '\u{2018}' | '\u{2019}' | '\u{201C}' | '\u{201D}' | '\u{2032}'
+            | '\u{2033}' => '\'',
+            other => other,
+        })
+        .collect()
+}
+
+/// SQL expression folding the same quote variants on a column, mirroring
+/// [`fold_quotes`] so both sides of the dedup comparison match. Wrapped in
+/// `lower()` by the caller. (`''''` is an escaped single-quote literal.)
+const NAME_FOLD_SQL: &str = "replace(replace(replace(replace(replace(replace(replace(replace(\
+     name, '\"', ''''), char(96), ''''), char(8216), ''''), char(8217), ''''), \
+     char(8220), ''''), char(8221), ''''), char(8242), ''''), char(8243), '''')";
+
 /// Look up an active entry by (campaign, name, kind) using the dedup key.
+/// Match is case-insensitive and quote-variant-insensitive.
 fn find_by_natural_key(
     conn: &Connection,
     campaign_id: &str,
@@ -83,9 +105,9 @@ fn find_by_natural_key(
         .query_row(
             &format!(
                 "SELECT {COLS} FROM codex_entries \
-                 WHERE campaign_id = ?1 AND lower(name) = lower(?2) AND kind = ?3 AND deleted = 0",
+                 WHERE campaign_id = ?1 AND lower({NAME_FOLD_SQL}) = lower(?2) AND kind = ?3 AND deleted = 0",
             ),
-            params![campaign_id, name, kind],
+            params![campaign_id, fold_quotes(name), kind],
             row_to_entry,
         )
         .optional()?;
@@ -177,6 +199,12 @@ pub fn upsert_auto(
         return Ok(false);
     }
     if find_by_natural_key(conn, campaign_id, name, kind)?.is_some() {
+        return Ok(false);
+    }
+    // PCs are characters too: the summarizer extracts them under `characters` and
+    // they arrive here as `npc`. If a `pc` with this name already exists, that's
+    // the same person — skip, don't create a duplicate npc row.
+    if kind == "npc" && find_by_natural_key(conn, campaign_id, name, "pc")?.is_some() {
         return Ok(false);
     }
     let entry_id = Uuid::new_v4().to_string();
@@ -371,6 +399,40 @@ mod tests {
             "manual body must not be overwritten"
         );
         assert_eq!(still.source, "manual");
+    }
+
+    #[test]
+    fn dedup_folds_quote_variants() {
+        let conn = crate::db::open_in_memory().unwrap();
+        let cid = seed_campaign(&conn);
+        create_entry(
+            &conn,
+            &cid,
+            &CodexEntryCreate {
+                name: "Mac \"the Scrap Jack\"".into(),
+                kind: "npc".into(),
+                body: "Junk dealer".into(),
+                detail: String::new(),
+            },
+        )
+        .unwrap();
+        // Smart/straight quote variants resolve to the same entry — no dup created.
+        assert!(exists(&conn, &cid, "Mac \u{2018}the Scrap Jack\u{2019}", "npc").unwrap());
+        assert!(!upsert_auto(&conn, &cid, "Mac 'the Scrap Jack'", "npc").unwrap());
+        assert_eq!(list_entries(&conn, &cid).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn auto_npc_skips_existing_pc() {
+        let conn = crate::db::open_in_memory().unwrap();
+        let cid = seed_campaign(&conn);
+        // PC roster entry (from sync_pc_entries).
+        assert!(upsert_auto(&conn, &cid, "Cordy", "pc").unwrap());
+        // Summarizer extracts "Cordy" under characters -> arrives as npc: must skip.
+        assert!(!upsert_auto(&conn, &cid, "Cordy", "npc").unwrap());
+        let list = list_entries(&conn, &cid).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].kind, "pc");
     }
 
     #[test]

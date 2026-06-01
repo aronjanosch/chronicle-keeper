@@ -24,6 +24,9 @@ fn row_to_detail(row: &rusqlite::Row, fallback_lang: &str) -> rusqlite::Result<C
         next_session_number: row.get("next_session_number")?,
         system: row.get::<_, Option<String>>("system")?.unwrap_or_default(),
         gm: row.get::<_, Option<String>>("gm")?.unwrap_or_default(),
+        gm_pronouns: row
+            .get::<_, Option<String>>("gm_pronouns")?
+            .unwrap_or_default(),
         setting: row.get::<_, Option<String>>("setting")?.unwrap_or_default(),
         default_language: lang
             .filter(|s| !s.is_empty())
@@ -86,9 +89,13 @@ pub fn codex_freeform_text(detail: &CampaignDetail) -> String {
 pub fn get_campaigns(conn: &Connection) -> AppResult<Vec<CampaignDetail>> {
     let lang = default_language(conn);
     let mut stmt = conn.prepare("SELECT * FROM campaigns WHERE deleted = 0 ORDER BY name")?;
-    let out = stmt
+    let mut out = stmt
         .query_map([], |r| row_to_detail(r, &lang))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(stmt);
+    for d in &mut out {
+        d.next_session_number = next_session_number(conn, Some(&d.campaign_id))?;
+    }
     Ok(out)
 }
 
@@ -101,7 +108,13 @@ pub fn get_campaign(conn: &Connection, campaign_id: &str) -> AppResult<Option<Ca
             |r| row_to_detail(r, &lang),
         )
         .optional()?;
-    Ok(c)
+    Ok(match c {
+        Some(mut d) => {
+            d.next_session_number = next_session_number(conn, Some(&d.campaign_id))?;
+            Some(d)
+        }
+        None => None,
+    })
 }
 
 pub fn campaign_infos(conn: &Connection) -> AppResult<Vec<CampaignInfo>> {
@@ -159,6 +172,7 @@ pub fn update_campaign(
     push_str!("name", req.name);
     push_str!("system", req.system);
     push_str!("gm", req.gm);
+    push_str!("gm_pronouns", req.gm_pronouns);
     push_str!("setting", req.setting);
     push_str!("default_language", req.default_language);
     push_str!("extra_info", req.extra_info);
@@ -228,20 +242,31 @@ pub fn delete_campaign(conn: &Connection, campaign_id: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Next free session number. Derived from the live sessions (`MAX + 1`) so it
+/// can't drift; only when a campaign has no sessions yet do we fall back to its
+/// configured start value in `next_session_number`.
 pub fn next_session_number(conn: &Connection, campaign_id: Option<&str>) -> AppResult<i64> {
     let target = match campaign_id {
         Some(id) if !id.is_empty() => Some(id.to_string()),
         _ => current_campaign_id(conn)?,
     };
     let Some(target) = target else { return Ok(1) };
-    let n: Option<i64> = conn
+    let max_used: Option<i64> = conn.query_row(
+        "SELECT MAX(session_number) FROM sessions WHERE campaign_id = ?1 AND deleted = 0",
+        params![target],
+        |r| r.get(0),
+    )?;
+    if let Some(m) = max_used {
+        return Ok(m + 1);
+    }
+    let start: Option<i64> = conn
         .query_row(
             "SELECT next_session_number FROM campaigns WHERE campaign_id = ?1",
             params![target],
             |r| r.get(0),
         )
         .optional()?;
-    Ok(n.unwrap_or(1))
+    Ok(start.unwrap_or(1))
 }
 
 pub fn current_campaign_id(conn: &Connection) -> AppResult<Option<String>> {

@@ -31,6 +31,8 @@ pub struct Campaign {
     pub next_session_number: i64,
     pub system: String,
     pub gm: String,
+    #[serde(default)]
+    pub gm_pronouns: String,
     pub setting: String,
     pub default_language: String,
     #[serde(default)]
@@ -126,7 +128,7 @@ pub fn collect_dirty(conn: &Connection) -> AppResult<SyncPayload> {
     let mut payload = SyncPayload::default();
 
     let mut stmt = conn.prepare(
-        "SELECT campaign_id, name, next_session_number, system, gm, setting, \
+        "SELECT campaign_id, name, next_session_number, system, gm, gm_pronouns, setting, \
          default_language, players_json, extra_info, codex, codex_notes, recap, recap_updated_at, \
          updated_at, deleted \
          FROM campaigns WHERE dirty = 1",
@@ -139,6 +141,9 @@ pub fn collect_dirty(conn: &Connection) -> AppResult<SyncPayload> {
             next_session_number: r.get("next_session_number")?,
             system: r.get::<_, Option<String>>("system")?.unwrap_or_default(),
             gm: r.get::<_, Option<String>>("gm")?.unwrap_or_default(),
+            gm_pronouns: r
+                .get::<_, Option<String>>("gm_pronouns")?
+                .unwrap_or_default(),
             setting: r.get::<_, Option<String>>("setting")?.unwrap_or_default(),
             default_language: r
                 .get::<_, Option<String>>("default_language")?
@@ -285,18 +290,19 @@ pub fn apply_pull(conn: &Connection, pull: &SyncPayload) -> AppResult<()> {
         };
         conn.execute(
             "INSERT INTO campaigns \
-             (campaign_id, name, next_session_number, system, gm, setting, default_language, \
+             (campaign_id, name, next_session_number, system, gm, gm_pronouns, setting, default_language, \
               players_json, extra_info, codex, codex_notes, recap, recap_updated_at, updated_at, deleted, dirty) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 0) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 0) \
              ON CONFLICT(campaign_id) DO UPDATE SET \
               name = excluded.name, next_session_number = excluded.next_session_number, \
-              system = excluded.system, gm = excluded.gm, setting = excluded.setting, \
+              system = excluded.system, gm = excluded.gm, gm_pronouns = excluded.gm_pronouns, \
+              setting = excluded.setting, \
               default_language = excluded.default_language, players_json = excluded.players_json, \
               extra_info = excluded.extra_info, codex = excluded.codex, codex_notes = excluded.codex_notes, \
               recap = excluded.recap, recap_updated_at = excluded.recap_updated_at, \
               updated_at = excluded.updated_at, deleted = excluded.deleted, dirty = 0",
             params![
-                c.campaign_id, c.name, c.next_session_number, c.system, c.gm, c.setting,
+                c.campaign_id, c.name, c.next_session_number, c.system, c.gm, c.gm_pronouns, c.setting,
                 c.default_language, players.to_string(), c.extra_info, c.codex, c.codex_notes,
                 c.recap, c.recap_updated_at, c.updated_at, c.deleted as i64,
             ],

@@ -27,7 +27,7 @@ fn default_config() -> Vec<(&'static str, String)> {
         ("litellm_timeout_seconds", "120".into()),
         ("default_language", "en".into()),
         ("whisperx_model", "nemo-parakeet-tdt-0.6b-v3".into()),
-        ("transcription_accelerator", "cpu".into()),
+        ("transcription_accelerator", "auto".into()),
         ("transcription_timeout_seconds", "3600".into()),
         ("current_campaign_id", "".into()),
     ]
@@ -36,16 +36,44 @@ fn default_config() -> Vec<(&'static str, String)> {
 /// Native transcription provider id (replaces the old mlx-audio/onnx-asr split).
 pub const NATIVE_TRANSCRIPTION_PROVIDER: &str = "sherpa";
 
-/// Hardware backends accepted for `transcription_accelerator`. `cpu` is the
-/// safe default; the rest are opt-in and only effective if the bundled
-/// onnxruntime was built with that execution provider — otherwise the engine
-/// falls back to CPU at recognizer-create time (see `transcription::mod`).
-pub const ACCELERATORS: [&str; 4] = ["cpu", "coreml", "cuda", "directml"];
+/// Hardware backends accepted for `transcription_accelerator`. `auto` is the
+/// default and picks the best provider for the host OS (see
+/// [`resolve_accelerator`]); the explicit values are opt-in overrides and only
+/// effective if the bundled onnxruntime was built with that execution provider
+/// — otherwise the engine falls back to CPU at recognizer-create time (see
+/// `transcription::mod`).
+pub const ACCELERATORS: [&str; 5] = ["auto", "cpu", "coreml", "cuda", "directml"];
 
 pub fn resolve_transcription_provider(pref: &str) -> String {
     match pref.trim() {
         "" | "auto" => NATIVE_TRANSCRIPTION_PROVIDER.to_string(),
         other => other.to_string(),
+    }
+}
+
+/// Resolve `transcription_accelerator` into a concrete onnxruntime execution
+/// provider. `auto` (and empty/unknown) maps to the best provider for the host
+/// OS; explicit values pass through. The engine still degrades to CPU at
+/// recognizer-create time if the linked onnxruntime lacks the chosen provider.
+pub fn resolve_accelerator(pref: &str) -> &'static str {
+    match pref.trim() {
+        "cpu" => "cpu",
+        "coreml" => "coreml",
+        "cuda" => "cuda",
+        "directml" => "directml",
+        // "auto" + anything unexpected: pick per-OS. macOS keeps CPU — CoreML is
+        // measurably slower than CPU for transducer ASR and ships int8-only.
+        // Windows → DirectML (all DX12 GPUs). Linux → CUDA (NVIDIA). Each falls
+        // back to CPU if that provider isn't in the linked onnxruntime.
+        _ => {
+            if cfg!(target_os = "windows") {
+                "directml"
+            } else if cfg!(target_os = "linux") {
+                "cuda"
+            } else {
+                "cpu"
+            }
+        }
     }
 }
 

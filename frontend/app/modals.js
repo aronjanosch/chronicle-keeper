@@ -4,10 +4,12 @@ import { store, closeModal, setOp } from './core.js';
 import { Icon, Btn, Field, Input, Textarea, Select, Spinner } from './ui.js';
 import {
   createCampaign, updateCampaign, saveSessionMetadata, loadSession,
-  loadTranscriptionProviders, runTranscribe, runExport,
+  runExport,
   loadLlmProviders, saveLlmProvider, testLlmProvider,
   importCodex, commitCodexImport,
 } from './actions.js';
+
+const PRONOUNS = ['she/her', 'he/him', 'they/them'];
 
 const CODEX_KINDS = [
   { value: 'pc', label: 'PC' }, { value: 'npc', label: 'NPC' }, { value: 'place', label: 'Place' },
@@ -43,24 +45,33 @@ function ModalShell({ title, children, footer, wide }) {
 }
 
 // ── Campaign create / edit ────────────────────────────────────────
+function PronounSelect({ value, onChange }) {
+  return html`<select value=${value || ''} onChange=${(e) => onChange(e.target.value)}
+    style=${{ flex: '0 0 116px', padding: '7px 10px', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 4, fontSize: 13, fontFamily: 'inherit', color: 'var(--ink)', cursor: 'pointer' }}>
+    <option value="">pronouns</option>
+    ${PRONOUNS.map((p) => html`<option key=${p} value=${p}>${p}</option>`)}
+  </select>`;
+}
+
 function PlayerRows({ players, onChange }) {
   const upd = (i, k, v) => onChange(players.map((p, j) => j === i ? { ...p, [k]: v } : p));
   return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 6 }}>
     ${players.map((p, i) => html`<div key=${i} style=${{ display: 'flex', gap: 6 }}>
       <${Input} value=${p.player_name} placeholder="Player" onInput=${(v) => upd(i, 'player_name', v)} />
       <${Input} value=${p.character_name} placeholder="Character" onInput=${(v) => upd(i, 'character_name', v)} />
+      <${PronounSelect} value=${p.pronouns} onChange=${(v) => upd(i, 'pronouns', v)} />
       <${Btn} kind="ghost" size="sm" icon="x" onClick=${() => onChange(players.filter((_, j) => j !== i))} />
     </div>`)}
-    <${Btn} kind="ghost" size="sm" icon="plus" onClick=${() => onChange([...players, { player_name: '', character_name: '' }])}>Add player</${Btn}>
+    <${Btn} kind="ghost" size="sm" icon="plus" onClick=${() => onChange([...players, { player_name: '', character_name: '', pronouns: '' }])}>Add player</${Btn}>
   </div>`;
 }
 
 function CampaignModal({ edit }) {
   const [f, setF] = useState(() => edit ? {
     name: edit.name || '', system: edit.system || '', setting: edit.setting || '',
-    default_language: edit.default_language || '', gm: edit.gm || '',
+    default_language: edit.default_language || '', gm: edit.gm || '', gm_pronouns: edit.gm_pronouns || '',
     players: edit.players?.length ? edit.players : [], extra_info: edit.extra_info || '', start: edit.next_session_number || 1,
-  } : { name: '', system: '', setting: '', default_language: '', gm: '', players: [{ player_name: '', character_name: '' }], extra_info: '', start: 1 });
+  } : { name: '', system: '', setting: '', default_language: '', gm: '', gm_pronouns: '', players: [{ player_name: '', character_name: '', pronouns: '' }], extra_info: '', start: 1 });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
@@ -70,7 +81,7 @@ function CampaignModal({ edit }) {
     setBusy(true); setErr(null);
     const players = f.players.filter((p) => p.player_name.trim() || p.character_name.trim());
     try {
-      if (edit) await updateCampaign({ name: f.name.trim(), system: f.system.trim(), setting: f.setting.trim(), default_language: f.default_language.trim(), gm: f.gm.trim(), players, extra_info: f.extra_info.trim() });
+      if (edit) await updateCampaign({ name: f.name.trim(), system: f.system.trim(), setting: f.setting.trim(), default_language: f.default_language.trim(), gm: f.gm.trim(), gm_pronouns: f.gm_pronouns, players, extra_info: f.extra_info.trim() });
       else await createCampaign({ ...f, name: f.name.trim(), players });
       closeModal();
     } catch (e) { setErr(e.message); setBusy(false); }
@@ -84,7 +95,10 @@ function CampaignModal({ edit }) {
     <div style=${{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
       <${Field} label="System"><${Input} value=${f.system} onInput=${(v) => set('system', v)} placeholder="D&D 5e" /></${Field}>
       <${Field} label="Setting"><${Input} value=${f.setting} onInput=${(v) => set('setting', v)} placeholder="Forgotten Realms" /></${Field}>
-      <${Field} label="GM / DM"><${Input} value=${f.gm} onInput=${(v) => set('gm', v)} /></${Field}>
+      <${Field} label="GM / DM"><div style=${{ display: 'flex', gap: 6 }}>
+        <${Input} value=${f.gm} onInput=${(v) => set('gm', v)} />
+        <${PronounSelect} value=${f.gm_pronouns} onChange=${(v) => set('gm_pronouns', v)} />
+      </div></${Field}>
       <${Field} label="Default language"><${Input} value=${f.default_language} onInput=${(v) => set('default_language', v)} placeholder="en" mono /></${Field}>
     </div>
     ${!edit && html`<${Field} label="Start session #" hint="First session number for this campaign."><${Input} type="number" value=${f.start} onInput=${(v) => set('start', v)} style=${{ width: 120 }} /></${Field}>`}
@@ -135,47 +149,6 @@ function SessionModal({ session }) {
     <${Field} label="Locations" hint="Comma-separated."><${Input} value=${f.locations} onInput=${(v) => set('locations', v)} /></${Field}>
     <${Field} label="Items" hint="Comma-separated."><${Input} value=${f.items} onInput=${(v) => set('items', v)} /></${Field}>
     <${Field} label="Tags" hint="Comma-separated."><${Input} value=${f.tags} onInput=${(v) => set('tags', v)} /></${Field}>
-  </${ModalShell}>`;
-}
-
-// ── Transcribe ────────────────────────────────────────────────────
-function TranscribeModal() {
-  const [providers, setProviders] = useState(null);
-  const [provider, setProvider] = useState('');
-  const [model, setModel] = useState('');
-  const [language, setLanguage] = useState(store.config?.default_language || '');
-
-  useEffect(() => {
-    (async () => {
-      const list = await loadTranscriptionProviders();
-      setProviders(list);
-      const cfg = store.config || {};
-      const want = cfg.transcription_provider && cfg.transcription_provider !== 'auto' ? cfg.transcription_provider : (list[0]?.name || 'sherpa');
-      const p = list.find((x) => x.name === want) || list[0];
-      if (p) { setProvider(p.name); setModel(cfg.whisperx_model && p.models.some((m) => m.id === cfg.whisperx_model) ? cfg.whisperx_model : p.default_model); }
-    })();
-  }, []);
-
-  const current = (providers || []).find((p) => p.name === provider);
-  function run() { closeModal(); runTranscribe({ provider, model, language: language.trim() }); }
-
-  return html`<${ModalShell} title="Transcribe session" footer=${html`
-    <${Btn} kind="ghost" onClick=${closeModal}>Cancel</${Btn}>
-    <${Btn} kind="primary" icon="mic" disabled=${!providers} onClick=${run}>Run</${Btn}>`}>
-    ${!providers ? html`<div style=${{ display: 'flex', justifyContent: 'center', padding: 20 }}><${Spinner} /></div>` : html`
-      <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)' }}>Transcription runs on-device. The first run downloads the model once.</div>
-      <${Field} label="Engine">
-        <select value=${provider} onChange=${(e) => { setProvider(e.target.value); const p = providers.find((x) => x.name === e.target.value); if (p) setModel(p.default_model); }} style=${{ width: '100%', padding: '7px 10px', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 4, fontSize: 13, cursor: 'pointer' }}>
-          ${providers.map((p) => html`<option key=${p.name} value=${p.name}>${p.display_name}</option>`)}
-        </select>
-      </${Field}>
-      <${Field} label="Model">
-        <select value=${model} onChange=${(e) => setModel(e.target.value)} style=${{ width: '100%', padding: '7px 10px', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 4, fontSize: 13, cursor: 'pointer' }}>
-          ${(current?.models || []).map((m) => html`<option key=${m.id} value=${m.id}>${m.name}</option>`)}
-        </select>
-      </${Field}>
-      <${Field} label="Language" hint="Defaults from Settings if left empty."><${Input} value=${language} onInput=${setLanguage} placeholder="en, de, …" /></${Field}>
-    `}
   </${ModalShell}>`;
 }
 
@@ -410,7 +383,6 @@ export function ModalHost({ modal }) {
   switch (modal.kind) {
     case 'campaign': return html`<${CampaignModal} ...${modal.props} />`;
     case 'session': return html`<${SessionModal} ...${modal.props} />`;
-    case 'transcribe': return html`<${TranscribeModal} />`;
     case 'export': return html`<${ExportModal} />`;
     case 'provider': return html`<${ProviderModal} ...${modal.props} />`;
     case 'codexImport': return html`<${CodexImportModal} />`;

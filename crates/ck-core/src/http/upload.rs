@@ -211,8 +211,8 @@ mod tests {
     fn make_zip(files: &[(&str, &[u8])]) -> Vec<u8> {
         let mut buf = Vec::new();
         let mut w = zip::ZipWriter::new(Cursor::new(&mut buf));
-        let opts =
-            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
         for (name, data) in files {
             w.start_file(*name, opts).unwrap();
             w.write_all(data).unwrap();

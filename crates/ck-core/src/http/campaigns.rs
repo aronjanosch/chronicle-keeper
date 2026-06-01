@@ -9,7 +9,7 @@ use crate::models::{
     CreateCampaignSessionRequest, NextSessionNumberResponse, RecapRequest, RecapResponse,
 };
 use crate::state::AppState;
-use crate::store::{campaigns, sessions};
+use crate::store::{campaigns, sessions, tags};
 use crate::summarize;
 
 pub async fn list(State(state): State<AppState>) -> AppResult<Json<CampaignsResponse>> {
@@ -104,6 +104,56 @@ pub async fn generate_recap(
     Ok(Json(
         summarize::generate_recap(&state, &campaign_id, &req).await?,
     ))
+}
+
+/// Campaign tag vocabulary with usage counts (the tag-manager UI).
+pub async fn list_tags(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+) -> AppResult<Json<Value>> {
+    state.with_db(|conn| {
+        let tags = tags::tag_counts(conn, &campaign_id)?
+            .into_iter()
+            .map(|(tag, count)| json!({ "tag": tag, "count": count }))
+            .collect::<Vec<_>>();
+        Ok(Json(json!({ "tags": tags })))
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RenameTagRequest {
+    pub from: String,
+    /// Empty target deletes the tag (merge into nothing).
+    pub to: String,
+}
+
+/// Rename/merge a tag across every session in the campaign.
+pub async fn rename_tag(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<RenameTagRequest>,
+) -> AppResult<Json<Value>> {
+    state.with_db(|conn| {
+        let changed = tags::rename(conn, &campaign_id, &req.from, &req.to)?;
+        Ok(Json(json!({ "status": "ok", "sessions_changed": changed })))
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteTagRequest {
+    pub tag: String,
+}
+
+/// Drop a tag from every session in the campaign.
+pub async fn delete_tag(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<DeleteTagRequest>,
+) -> AppResult<Json<Value>> {
+    state.with_db(|conn| {
+        let changed = tags::delete(conn, &campaign_id, &req.tag)?;
+        Ok(Json(json!({ "status": "ok", "sessions_changed": changed })))
+    })
 }
 
 #[derive(Debug, Deserialize)]

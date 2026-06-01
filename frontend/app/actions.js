@@ -57,7 +57,8 @@ export async function createCampaign(form) {
   await apiJson('/campaigns', 'POST', { campaign_id: id, name: form.name, start_session_number: Number(form.start) || 1 });
   await apiJson(`/campaigns/${id}`, 'PUT', {
     name: form.name, system: form.system, setting: form.setting,
-    default_language: form.default_language, gm: form.gm, players: form.players, extra_info: form.extra_info,
+    default_language: form.default_language, gm: form.gm, gm_pronouns: form.gm_pronouns,
+    players: form.players, extra_info: form.extra_info,
   });
   await loadCampaigns();
   await openCampaign(id);
@@ -121,6 +122,34 @@ export async function deleteCodexEntry(entryId) {
   const id = store.campaign.campaign_id;
   await apiFetch(`/campaigns/${id}/codex/entries/${entryId}`, { method: 'DELETE' });
   await loadCodexEntries(id);
+}
+
+// ── Campaign tags ─────────────────────────────────────────────────
+// Tags are session metadata; these manage the campaign-wide vocabulary
+// (rename/merge/delete across all sessions) so it stays one consistent set.
+export async function loadCampaignTags(campaignId) {
+  const id = campaignId || store.campaign?.campaign_id;
+  if (!id) return [];
+  const r = await apiFetch(`/campaigns/${id}/tags`).catch((e) => {
+    console.warn('loadCampaignTags failed:', e);
+    return { tags: [] };
+  });
+  setState({ campaignTags: r.tags || [] });
+  return r.tags || [];
+}
+
+export async function renameCampaignTag(from, to) {
+  const id = store.campaign.campaign_id;
+  await apiJson(`/campaigns/${id}/tags/rename`, 'POST', { from, to });
+  await loadCampaignTags(id);
+  await refreshCampaignSessions();
+}
+
+export async function deleteCampaignTag(tag) {
+  const id = store.campaign.campaign_id;
+  await apiJson(`/campaigns/${id}/tags/delete`, 'POST', { tag });
+  await loadCampaignTags(id);
+  await refreshCampaignSessions();
 }
 
 // Sessions whose saved metadata (characters/locations/items) name this entry.
@@ -264,26 +293,19 @@ function pollModelStatus() {
   return () => { stopped = true; };
 }
 
-export async function runTranscribe({ provider, model, language }) {
+// On-device, single engine, language from the campaign — no options, just run.
+export async function runTranscribe() {
   const sid = store.session?.session_id;
   if (!sid) return;
   setOp('Transcribing…');
   const stop = pollModelStatus();
   try {
-    await apiJson('/transcribe', 'POST', { session_id: sid, provider: provider || null, model: model || null, language: language || null });
+    await apiJson('/transcribe', 'POST', { session_id: sid });
     await loadSession(sid);
     await refreshCampaignSessions();
     setOp('Transcription complete', 'done');
   } catch (e) { setOp(e.message, 'err'); }
   finally { stop(); }
-}
-
-export async function loadTranscriptionProviders() {
-  if (!store.providers) {
-    try { setState({ providers: await apiFetch('/providers') }); }
-    catch (e) { console.warn('loadTranscriptionProviders failed:', e); }
-  }
-  return store.providers || [];
 }
 
 // ── Summarize ─────────────────────────────────────────────────────

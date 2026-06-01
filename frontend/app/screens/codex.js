@@ -6,7 +6,8 @@ import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mj
 import { navigate, openModal, useStore } from '../core.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Btn, Empty, Icon, Markdown, Input, Textarea, Select } from '../ui.js';
-import { loadCodexEntries, createCodexEntry, openCampaign, updateCampaign } from '../actions.js';
+import { loadCodexEntries, createCodexEntry, openCampaign, updateCampaign,
+  loadCampaignTags, renameCampaignTag, deleteCampaignTag } from '../actions.js';
 
 export const KINDS = [
   { value: 'pc',      label: 'PC',      plural: 'PCs',      tone: 'gilt' },
@@ -106,7 +107,31 @@ export function EntryForm({ initial, onSubmit, onCancel, withDetail }) {
   </div>`;
 }
 
-function KindRail({ entries, selected, onSelect, notesCount }) {
+// Segmented all/manual/auto filter. Counts so the GM can see at a glance how
+// many entries the summarizer auto-pulled vs. ones they curated by hand.
+function SourceFilter({ value, onChange, counts }) {
+  const opts = [
+    { v: 'all', label: 'All' },
+    { v: 'manual', label: 'Manual' },
+    { v: 'auto', label: 'Auto' },
+  ];
+  return html`<div style=${{ display: 'inline-flex', border: '1px solid var(--rule)', borderRadius: 5, overflow: 'hidden' }}>
+    ${opts.map((o, i) => {
+      const active = value === o.v;
+      return html`<button key=${o.v} onClick=${() => onChange(o.v)} style=${{
+        font: 'inherit', fontSize: 12, cursor: 'pointer', padding: '4px 10px',
+        border: 'none', borderLeft: i ? '1px solid var(--rule)' : 'none',
+        background: active ? 'var(--burgundy-50)' : 'var(--surface)',
+        color: active ? 'var(--burgundy)' : 'var(--ink-soft)',
+        fontWeight: active ? 500 : 400,
+      }}>
+        ${o.label}<span style=${{ marginLeft: 5, fontFamily: 'var(--font-mono)', fontSize: 10.5, color: active ? 'var(--burgundy)' : 'var(--ink-faint)' }}>${counts[o.v]}</span>
+      </button>`;
+    })}
+  </div>`;
+}
+
+function KindRail({ entries, selected, onSelect, notesCount, tagsCount }) {
   const counts = { all: entries.length };
   for (const k of KINDS) counts[k.value] = entries.filter((e) => e.kind === k.value).length;
   const Row = ({ value, icon, label, n }) => {
@@ -130,6 +155,7 @@ function KindRail({ entries, selected, onSelect, notesCount }) {
     <div style=${{ height: 1, background: 'var(--rule-soft)', margin: '8px 8px' }} />
     <div style=${{ padding: '0 8px 8px', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>Campaign-wide</div>
     <${Row} value="notes" icon="feather" label="Freeform notes" n=${notesCount} />
+    <${Row} value="tags" icon="tag" label="Tags" n=${tagsCount} />
   </aside>`;
 }
 
@@ -208,25 +234,103 @@ function NotesSection({ campaign, standalone }) {
   </div>`;
 }
 
+// One tag row: name, usage count, rename (which merges if the target exists),
+// and delete-across-all-sessions.
+function TagRow({ t, onRename, onDelete }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(t.tag);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    const to = val.trim();
+    if (!to || to === t.tag) { setEditing(false); setVal(t.tag); return; }
+    setBusy(true);
+    try { await onRename(t.tag, to); } catch (e) { console.warn(e); }
+    setBusy(false); setEditing(false);
+  }
+
+  return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 6 }}>
+    <${Icon} name="tag" size=${12} className="ck-ink-faint" />
+    ${editing
+      ? html`<${Input} value=${val} onInput=${setVal} style=${{ flex: 1 }}
+          onKeyDown=${(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { setEditing(false); setVal(t.tag); } }} />`
+      : html`<span style=${{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--ink)' }}>${t.tag}</span>`}
+    <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-faint)' }}>${t.count}×</span>
+    ${editing
+      ? html`<div style=${{ display: 'flex', gap: 4 }}>
+          <${Btn} kind="primary" size="sm" icon="check" disabled=${busy} onClick=${save}>Save</${Btn}>
+          <${Btn} kind="ghost" size="sm" onClick=${() => { setEditing(false); setVal(t.tag); }}>Cancel</${Btn}>
+        </div>`
+      : html`<div style=${{ display: 'flex', gap: 4 }}>
+          <${Btn} kind="ghost" size="sm" icon="edit" onClick=${() => setEditing(true)}>Rename</${Btn}>
+          <${Btn} kind="ghost" size="sm" icon="trash" onClick=${() => onDelete(t.tag)}>Delete</${Btn}>
+        </div>`}
+  </div>`;
+}
+
+function TagsSection() {
+  const store = useStore();
+  const tags = store.campaignTags || [];
+
+  async function onDelete(tag) {
+    if (!window.confirm(`Remove "${tag}" from every session in this campaign?`)) return;
+    try { await deleteCampaignTag(tag); } catch (e) { console.warn(e); }
+  }
+  async function onRename(from, to) { await renameCampaignTag(from, to); }
+
+  return html`<div>
+    <p style=${{ fontSize: 12.5, color: 'var(--ink-muted)', margin: '0 0 18px', lineHeight: 1.5, maxWidth: 640, fontFamily: 'var(--font-display)', fontStyle: 'italic' }}>
+      The campaign's tag vocabulary, pulled from every session's metadata. Rename to fix or merge a tag
+      across all sessions at once (rename onto an existing tag to merge them); delete to drop one everywhere.
+      New summaries reuse this set, so keeping it tidy keeps future tags consistent.
+    </p>
+    <div style=${{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
+      <h3 style=${{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 500, margin: 0 }}>Tags</h3>
+      <span style=${{ fontSize: 11.5, color: 'var(--ink-faint)' }}>${tags.length} in use</span>
+    </div>
+    ${tags.length === 0
+      ? html`<div style=${{ fontSize: 12.5, color: 'var(--ink-faint)', fontStyle: 'italic', padding: '4px 0' }}>
+          No tags yet — they appear once you summarize a session.
+        </div>`
+      : html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 560 }}>
+          ${tags.map((t) => html`<${TagRow} key=${t.tag} t=${t} onRename=${onRename} onDelete=${onDelete} />`)}
+        </div>`}
+  </div>`;
+}
+
 export function CodexScreen() {
   const store = useStore();
   const c = store.campaign;
   const [adding, setAdding] = useState(false);
   const [selectedKind, setSelectedKind] = useState('all');
   const [query, setQuery] = useState('');
+  const [source, setSource] = useState('all'); // all | manual | auto
 
   useEffect(() => {
-    if (c?.campaign_id) loadCodexEntries(c.campaign_id);
+    if (c?.campaign_id) { loadCodexEntries(c.campaign_id); loadCampaignTags(c.campaign_id); }
   }, [c?.campaign_id]);
 
   if (!c) { navigate('library'); return null; }
 
   const entries = store.codexEntries || [];
   const notesCount = effectiveNotes(c).length;
+  const tagsCount = (store.campaignTags || []).length;
   const showingNotes = selectedKind === 'notes';
+  const showingTags = selectedKind === 'tags';
   const q = query.trim().toLowerCase();
+  // 'manual' is the historical default for rows with no source set.
+  const sourceOf = (e) => e.source || 'manual';
+  // Counts for the source toggle reflect the active kind, but not the source
+  // filter itself (so each segment shows its own total).
+  const inKind = entries.filter((e) => selectedKind === 'all' || e.kind === selectedKind);
+  const sourceCounts = {
+    all: inKind.length,
+    manual: inKind.filter((e) => sourceOf(e) === 'manual').length,
+    auto: inKind.filter((e) => sourceOf(e) === 'auto').length,
+  };
   const filtered = entries.filter((e) => {
     if (selectedKind !== 'all' && e.kind !== selectedKind) return false;
+    if (source !== 'all' && sourceOf(e) !== source) return false;
     if (!q) return true;
     return e.name.toLowerCase().includes(q) || (e.body || '').toLowerCase().includes(q);
   });
@@ -237,9 +341,10 @@ export function CodexScreen() {
     { label: c.name, onClick: () => openCampaign(c.campaign_id) },
     'Codex',
   ]}
-    right=${showingNotes
+    right=${(showingNotes || showingTags)
       ? html`<${Btn} kind="ghost" size="sm" icon="compass" onClick=${() => setSelectedKind('all')}>Back to entries</${Btn}>`
       : html`<div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <${SourceFilter} value=${source} onChange=${setSource} counts=${sourceCounts} />
       <${Input} value=${query} onInput=${setQuery} placeholder="Search the codex…" style=${{ width: 220 }} />
       <${Btn} kind="ghost" size="sm" icon="sparkle" onClick=${() => openModal('codexImport')}>Import</${Btn}>
       <${Btn} kind="primary" size="sm" icon="plus" onClick=${() => setAdding(true)}>Add entry</${Btn}>
@@ -252,11 +357,13 @@ export function CodexScreen() {
 
   return html`<${Shell} sidebar=${sidebar} topbar=${topbar} bodyStyle=${{ padding: 0 }}>
     <div style=${{ display: 'grid', gridTemplateColumns: '220px 1fr', height: '100%' }}>
-      <${KindRail} entries=${entries} selected=${selectedKind} onSelect=${setSelectedKind} notesCount=${notesCount} />
+      <${KindRail} entries=${entries} selected=${selectedKind} onSelect=${setSelectedKind} notesCount=${notesCount} tagsCount=${tagsCount} />
 
       <div style=${{ padding: '20px 24px', overflow: 'auto' }}>
         ${showingNotes
           ? html`<${NotesSection} campaign=${c} standalone=${true} />`
+          : showingTags
+          ? html`<${TagsSection} />`
           : html`
         <p style=${{ fontSize: 12.5, color: 'var(--ink-muted)', margin: '0 0 18px', lineHeight: 1.5, maxWidth: 640, fontFamily: 'var(--font-display)', fontStyle: 'italic' }}>
           What the summarizer remembers about ${c.name}. Each entry's one-liner is fed to the LLM when it

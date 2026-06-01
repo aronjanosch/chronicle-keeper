@@ -46,6 +46,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/next-session-number", get(campaigns::next_session_number))
         .route("/campaigns/:id/recap", post(campaigns::generate_recap))
+        // campaign tag vocabulary (tag manager)
+        .route("/campaigns/:id/tags", get(campaigns::list_tags))
+        .route("/campaigns/:id/tags/rename", post(campaigns::rename_tag))
+        .route("/campaigns/:id/tags/delete", post(campaigns::delete_tag))
         // codex entries (Phase 2)
         .route(
             "/campaigns/:id/codex/entries",

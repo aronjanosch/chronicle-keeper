@@ -57,7 +57,7 @@ function PartyMember({ player, onClick }) {
     <${Sigil} ch=${(ch[0] || '?').toUpperCase()} tone=${toneFor(player.player_name || ch)} size="lg" />
     <div style=${{ flex: 1, minWidth: 0 }}>
       <div style=${{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 500, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${ch}</div>
-      <div style=${{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 1 }}>${player.player_name || '—'}</div>
+      <div style=${{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 1 }}>${player.player_name || '—'}${player.pronouns ? ` · ${player.pronouns}` : ''}</div>
     </div>
   </div>`;
 }
@@ -190,7 +190,7 @@ export function CampaignScreen({ store }) {
         </div>
         <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, letterSpacing: '-0.015em', color: 'var(--ink)', lineHeight: 1.1 }}>${c.name}</h1>
         <div style=${{ fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: 14, color: 'var(--ink-muted)', marginTop: 6 }}>
-          ${[c.setting, c.gm && `GM ${c.gm}`].filter(Boolean).join(' · ') || 'No setting recorded yet'}
+          ${[c.setting, c.gm && `GM ${c.gm}${c.gm_pronouns ? ` (${c.gm_pronouns})` : ''}`].filter(Boolean).join(' · ') || 'No setting recorded yet'}
         </div>
         <div style=${{ display: 'flex', gap: 22, marginTop: 16 }}>
           <${Stat} value=${sessions.length} label="Sessions" />

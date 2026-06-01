@@ -33,11 +33,13 @@ pub async fn transcribe(
     use std::path::PathBuf;
 
     use crate::error::AppError;
-    use crate::store::sessions;
+    use crate::store::{campaigns, sessions};
     use crate::transcript_format::{segments_to_plain_text, speaker_label};
     use crate::transcription::{model, transcribe_tracks};
 
-    // Gather session inputs.
+    // Gather session inputs. Language comes from the session's campaign — it's
+    // fixed per campaign (a multilingual GM uses one campaign per language), so
+    // there's no per-transcription language choice.
     let (tracks_val, speakers_val, session_path, default_lang, accelerator) =
         state.with_db(|conn| {
             let tracks = sessions::get_tracks(conn, &req.session_id)?;
@@ -45,16 +47,20 @@ pub async fn transcribe(
             let path = sessions::session_path_of(conn, &req.session_id)?.ok_or_else(|| {
                 AppError::NotFound(format!("Session not found: {}", req.session_id))
             })?;
-            let cfg = crate::config::get_config_map(conn)?;
-            let lang = cfg
-                .get("default_language")
-                .cloned()
+            let lang = sessions::get_session_object(conn, &req.session_id)
+                .ok()
+                .as_ref()
+                .and_then(|s| s.get("campaign"))
+                .and_then(|c| c.get("campaign_id"))
+                .and_then(Value::as_str)
+                .and_then(|cid| campaigns::get_campaign(conn, cid).ok().flatten())
+                .map(|c| c.default_language)
                 .unwrap_or_else(|| "en".into());
-            let accel = cfg
+            let accel = crate::config::get_config_map(conn)?
                 .get("transcription_accelerator")
                 .cloned()
                 .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "cpu".into());
+                .unwrap_or_else(|| "auto".into());
             Ok::<_, AppError>((tracks, speakers, path, lang, accel))
         })?;
 
@@ -125,13 +131,17 @@ pub async fn transcribe(
         .filter(|&s: &u64| s > 0)
         .unwrap_or(3600);
 
+    // Resolve the accelerator preference (default "auto") to a concrete provider
+    // for this OS; the engine still falls back to CPU if it isn't linked in.
+    let accelerator = crate::config::resolve_accelerator(&accelerator);
+
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_worker = cancel.clone();
     let progress = state.model_progress.clone();
     let handle = tokio::task::spawn_blocking(move || {
         transcribe_tracks(
             &model_dir,
-            &accelerator,
+            accelerator,
             vad_model.as_deref(),
             &tracks,
             &cancel_worker,

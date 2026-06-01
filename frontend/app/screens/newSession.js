@@ -36,7 +36,7 @@ function TrackCard({ track, index, sp, roster, onChange }) {
         onInput=${(e) => {
           const v = e.target.value;
           const match = roster.find((p) => (p.player_name || '').toLowerCase() === v.trim().toLowerCase());
-          onChange({ ...sp, player_name: v, ...(match && !sp.character_name ? { character_name: match.character_name || '', pronouns: sp.pronouns || '' } : {}) });
+          onChange({ ...sp, player_name: v, ...(match ? { character_name: sp.character_name || match.character_name || '', pronouns: sp.pronouns || match.pronouns || '' } : {}) });
         }} />
       <input placeholder="Character" value=${sp.character_name} style=${inputStyle}
         onInput=${(e) => onChange({ ...sp, character_name: e.target.value })} />
@@ -50,9 +50,9 @@ function TrackCard({ track, index, sp, roster, onChange }) {
     </div>
     ${!assigned && roster.length ? html`<div style=${{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--ink-muted)', flexWrap: 'wrap' }}>
       <${Icon} name="sparkle" size=${11} /> <span>From roster:</span>
-      ${roster.slice(0, 4).map((p, i) => html`<button key=${i} onClick=${() => onChange({ ...sp, player_name: p.player_name || '', character_name: p.character_name || '' })} style=${{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 9px 4px 4px', background: 'var(--paper-deep)', border: '1px solid var(--rule)', borderRadius: 999, fontSize: 11.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
+      ${roster.slice(0, 5).map((p, i) => html`<button key=${i} onClick=${() => onChange({ ...sp, player_name: p.player_name || '', character_name: p.character_name || '', pronouns: p.pronouns || '' })} style=${{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 9px 4px 4px', background: p.is_gm ? 'var(--ochre-50)' : 'var(--paper-deep)', border: `1px solid ${p.is_gm ? 'rgba(168,115,40,.3)' : 'var(--rule)'}`, borderRadius: 999, fontSize: 11.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
         <span style=${{ width: 16, height: 16, borderRadius: '50%', background: `var(--${toneFor(p.player_name)}-50)`, color: `var(--${toneFor(p.player_name)})`, fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>${(p.character_name || p.player_name || '?')[0].toUpperCase()}</span>
-        ${p.player_name}${p.character_name ? ` · ${p.character_name}` : ''}
+        ${p.is_gm ? `GM · ${p.player_name}` : `${p.player_name}${p.character_name ? ` · ${p.character_name}` : ''}`}
       </button>`)}
     </div>` : ''}
   </div>`;
@@ -75,48 +75,70 @@ export function NewSessionScreen({ store }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const fileRef = useRef(null);
+  const sidRef = useRef(null);
 
   useEffect(() => {
     let live = true;
     (async () => {
       try {
-        // Attach mode prefills from the already-loaded session; create mode
-        // makes a draft row then reads it back for a uniform shape.
-        let s;
         if (attachId) {
-          s = (store.session && store.session.session_id === attachId) ? store.session : await fetchSession(attachId);
+          const s = (store.session && store.session.session_id === attachId) ? store.session : await fetchSession(attachId);
+          if (!live) return;
+          const cam = s.campaign || {};
+          sidRef.current = s.session_id;
+          setSid(s.session_id);
+          setNumber(cam.session_number || c?.next_session_number || '');
+          setTitle(cam.title || '');
+          setDate(cam.date || new Date().toISOString().slice(0, 10));
+          setNotes(cam.notes || '');
+          setMeta(s.metadata || EMPTY_META);
+          const t = s.tracks || [];
+          setTracks(t);
+          const sp = {};
+          (s.speakers || []).forEach((x) => { sp[x.track_id] = { track_id: x.track_id, player_name: x.player_name || '', character_name: x.character_name || '', pronouns: x.pronouns || '' }; });
+          t.forEach((tr) => { if (!sp[tr.id]) sp[tr.id] = { track_id: tr.id, player_name: '', character_name: '', pronouns: '' }; });
+          setSpeakers(sp);
         } else {
-          const created = await createSession();
-          s = await fetchSession(created.session_id);
+          // No backend row until first upload/save, so cancel leaves nothing behind.
+          if (!live) return;
+          sidRef.current = null;
+          setSid(null);
+          setNumber(c?.next_session_number || '');
+          setTitle('');
+          setDate(new Date().toISOString().slice(0, 10));
+          setNotes('');
+          setMeta(EMPTY_META);
+          setTracks([]);
+          setSpeakers({});
         }
-        if (!live) return;
-        const cam = s.campaign || {};
-        setSid(s.session_id);
-        setNumber(cam.session_number || c?.next_session_number || '');
-        setTitle(cam.title || '');
-        setDate(cam.date || new Date().toISOString().slice(0, 10));
-        setNotes(cam.notes || '');
-        setMeta(s.metadata || EMPTY_META);
-        const t = s.tracks || [];
-        setTracks(t);
-        const sp = {};
-        (s.speakers || []).forEach((x) => { sp[x.track_id] = { track_id: x.track_id, player_name: x.player_name || '', character_name: x.character_name || '', pronouns: x.pronouns || '' }; });
-        t.forEach((tr) => { if (!sp[tr.id]) sp[tr.id] = { track_id: tr.id, player_name: '', character_name: '', pronouns: '' }; });
-        setSpeakers(sp);
       } catch (e) { if (live) setErr(e.message); }
     })();
     return () => { live = false; };
   }, [c?.campaign_id, attachId]);
 
-  const roster = c?.players || [];
+  async function ensureSession() {
+    if (sidRef.current) return sidRef.current;
+    const created = await createSession();
+    sidRef.current = created.session_id;
+    setSid(created.session_id);
+    if (created.session_number) setNumber((n) => n || created.session_number);
+    return created.session_id;
+  }
+
+  const gmName = (c?.gm || '').trim();
+  const roster = [
+    ...(gmName ? [{ player_name: gmName, character_name: '', pronouns: c?.gm_pronouns || '', is_gm: true }] : []),
+    ...(c?.players || []),
+  ];
   const assignedCount = Object.values(speakers).filter((s) => s.player_name || s.character_name).length;
 
   async function onFile(e) {
     const file = e.target.files?.[0];
-    if (!file || !sid) return;
+    if (!file) return;
     setUploading(true); setErr(null);
     try {
-      const t = await uploadZip(sid, file);
+      const id = await ensureSession();
+      const t = await uploadZip(id, file);
       setTracks(t);
       const init = {};
       t.forEach((tr) => { init[tr.id] = { track_id: tr.id, player_name: '', character_name: '', pronouns: '' }; });
@@ -128,22 +150,20 @@ export function NewSessionScreen({ store }) {
   function update(trackId, sp) { setSpeakers((m) => ({ ...m, [trackId]: { ...sp, track_id: trackId } })); }
 
   async function begin(transcribeNow) {
-    if (!sid) { setErr('Session not ready yet — one moment.'); return; }
     if (transcribeNow && !tracks.length) { setErr('Upload a recording before transcribing.'); return; }
     setBusy(true); setErr(null);
     try {
-      // Speakers only matter once a recording exists; metadata is preserved
-      // (it's authored on the session screen, not here).
+      const id = await ensureSession();
       if (tracks.length) {
-        await saveSpeakers(sid, tracks.map((t) => speakers[t.id] || { track_id: t.id, player_name: '', character_name: '', pronouns: '' }));
+        await saveSpeakers(id, tracks.map((t) => speakers[t.id] || { track_id: t.id, player_name: '', character_name: '', pronouns: '' }));
       }
       await saveSessionMetadata({
-        session_id: sid, campaign_id: c.campaign_id, session_number: Number(number) || null,
+        session_id: id, campaign_id: c.campaign_id, session_number: Number(number) || null,
         title: title.trim() || null, date: date || null,
         metadata: meta || EMPTY_META, notes: notes.trim() || null,
       });
-      await loadSession(sid);          // navigates to session screen
-      if (transcribeNow) runTranscribe({});  // fire-and-forget; banner shows progress
+      await loadSession(id);          // navigates to session screen
+      if (transcribeNow) runTranscribe();  // fire-and-forget; banner shows progress
     } catch (e) { setErr(e.message); setBusy(false); }
   }
 
@@ -180,7 +200,7 @@ export function NewSessionScreen({ store }) {
             ${uploading ? html`<${Spinner} size=${22} />` : html`<div style=${{ width: 44, height: 44, borderRadius: 8, background: 'var(--paper-deep)', border: '1px solid var(--rule)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--burgundy)' }}><${Icon} name="upload" size=${18} /></div>`}
             <div style=${{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 500, color: 'var(--ink-soft)' }}>${uploading ? 'Unpacking recording…' : 'Drop a Craig recording'}</div>
             <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic', fontFamily: 'var(--font-display)' }}>A Craig Bot .zip with one audio track per speaker.</div>
-            <input ref=${fileRef} type="file" accept=".zip" style=${{ display: 'none' }} onChange=${onFile} disabled=${uploading || !sid} />
+            <input ref=${fileRef} type="file" accept=".zip" style=${{ display: 'none' }} onChange=${onFile} disabled=${uploading} />
           </div>` : html`
           <div style=${{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: 'var(--moss-50)', border: '1px solid rgba(74,93,58,.22)', borderRadius: 8, marginBottom: 16 }}>
             <div style=${{ width: 36, height: 36, borderRadius: 8, background: 'var(--moss)', color: '#FBF6E9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><${Icon} name="check" size=${14} /></div>

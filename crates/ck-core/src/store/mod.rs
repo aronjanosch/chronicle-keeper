@@ -2,6 +2,7 @@ pub mod artifacts;
 pub mod campaigns;
 pub mod codex;
 pub mod sessions;
+pub mod tags;
 
 use chrono::Utc;
 

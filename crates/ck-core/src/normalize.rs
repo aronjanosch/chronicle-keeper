@@ -13,26 +13,28 @@ pub fn normalize_players(value: &Value) -> Value {
     };
     let mut out = Vec::new();
     for item in raw {
-        let (player, character) = match &item {
-            Value::Object(o) => (
-                o.get("player_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim()
-                    .to_string(),
-                o.get("character_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim()
-                    .to_string(),
-            ),
-            Value::String(s) => (s.trim().to_string(), String::new()),
+        let (player, character, pronouns) = match &item {
+            Value::Object(o) => {
+                let get = |k| {
+                    o.get(k)
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string()
+                };
+                (get("player_name"), get("character_name"), get("pronouns"))
+            }
+            Value::String(s) => (s.trim().to_string(), String::new(), String::new()),
             _ => continue,
         };
         if player.is_empty() && character.is_empty() {
             continue;
         }
-        out.push(json!({ "player_name": player, "character_name": character }));
+        out.push(json!({
+            "player_name": player,
+            "character_name": character,
+            "pronouns": pronouns,
+        }));
     }
     Value::Array(out)
 }

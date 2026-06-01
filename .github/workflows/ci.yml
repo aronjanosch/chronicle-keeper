@@ -1,0 +1,60 @@
+name: CI
+
+# Fast feedback on every push / PR. Deliberately does NOT build the Tauri app or
+# link sherpa-onnx — that heavy, per-platform build lives in release.yml (matrix).
+# This lane is just "does the Rust core type-check and is it formatted/lint-clean".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: rust check / fmt / clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable + rustfmt + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Don't let the heavy src-tauri/sherpa build pollute this lane's cache.
+          workspaces: . -> target
+          shared-key: ci-core
+
+      - name: rustfmt
+        run: cargo fmt --all --check
+
+      # ck-core only, both feature modes off/on at the type level. The
+      # transcription feature pulls sherpa-onnx (native lib download in its build
+      # script) so the full link is left to the per-OS matrix — here we just
+      # type-check the gated code paths.
+      - name: cargo check (no transcription)
+        run: cargo check -p ck-core
+
+      - name: clippy (no transcription)
+        run: cargo clippy -p ck-core -- -D warnings
+
+  frontend:
+    name: frontend syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # No build step (vendored ESM bundle) — just parse-check every module.
+      - name: node --check all frontend modules
+        run: |
+          find frontend -name '*.mjs' -o -name '*.js' | while read -r f; do
+            node --check "$f" || exit 1
+          done

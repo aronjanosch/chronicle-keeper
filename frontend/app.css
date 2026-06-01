@@ -1,0 +1,94 @@
+/* Chronicle Keeper — global layout on top of tokens.css (the .ck design system).
+   tokens.css owns colors/type/atoms. This file owns full-window layout, the
+   markdown prose renderer, scrollbars, and a few animations. */
+
+html, body { height: 100%; }
+body { margin: 0; }
+#root { height: 100%; }
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* The webview root is one big .ck surface. */
+.ck { height: 100%; }
+
+/* Buttons reset (tokens.css scopes most of this, but be safe outside .ck too). */
+button { font-family: inherit; }
+
+/* ── Focus ring for keyboard users ─────────────────────────────── */
+.ck :focus-visible { outline: 2px solid var(--burgundy-300); outline-offset: 1px; }
+
+/* ── Scrollbars — quiet, parchment-toned ───────────────────────── */
+.ck *::-webkit-scrollbar { width: 10px; height: 10px; }
+.ck *::-webkit-scrollbar-thumb {
+  background: var(--rule-strong); border-radius: 6px;
+  border: 2px solid var(--paper);
+}
+.ck *::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Spinner ───────────────────────────────────────────────────── */
+@keyframes ck-spin { to { transform: rotate(360deg); } }
+.ck-spin { animation: ck-spin .8s linear infinite; }
+
+/* ── Indeterminate progress shimmer for pipeline running state ──── */
+@keyframes ck-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+.ck-pulse { animation: ck-pulse 1.4s ease-in-out infinite; }
+
+/* ── Toast / op-status banner ──────────────────────────────────── */
+@keyframes ck-rise { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+.ck-toast {
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+  z-index: 1000; animation: ck-rise .18s ease-out;
+  min-width: 320px; max-width: 560px;
+}
+
+/* ── Modal backdrop ────────────────────────────────────────────── */
+@keyframes ck-fade { from { opacity: 0; } to { opacity: 1; } }
+.ck-backdrop {
+  position: fixed; inset: 0; z-index: 900;
+  background: rgba(31,24,19,.38);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; animation: ck-fade .14s ease-out;
+}
+
+/* ── Markdown prose (summary / transcript rendering) ───────────── */
+.ck-prose { font-family: var(--font-display); font-size: 15px; line-height: 1.7; color: var(--ink); }
+.ck-prose h1 { font-size: 26px; font-weight: 500; letter-spacing: -0.015em; margin: 0 0 12px; line-height: 1.15; }
+.ck-prose h2 {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-faint); font-family: var(--font-ui); margin: 26px 0 8px;
+}
+.ck-prose h3 {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--burgundy); font-family: var(--font-ui); margin: 20px 0 6px;
+}
+.ck-prose p { margin: 0 0 12px; }
+.ck-prose ul, .ck-prose ol { margin: 0 0 12px; padding-left: 22px; }
+.ck-prose li { margin: 3px 0; list-style: disc; }
+.ck-prose ol li { list-style: decimal; }
+.ck-prose strong { font-weight: 600; color: var(--ink); }
+.ck-prose em { font-style: italic; color: var(--ink-soft); }
+.ck-prose code {
+  font-family: var(--font-mono); font-size: 13px; background: var(--surface-inset);
+  padding: 1px 5px; border-radius: 3px;
+}
+.ck-prose blockquote {
+  border-left: 3px solid var(--rule-strong); margin: 0 0 12px; padding: 2px 0 2px 14px;
+  color: var(--ink-muted); font-style: italic;
+}
+.ck-prose hr { border: 0; height: 1px; background: var(--rule); margin: 20px 0; }
+.ck-prose a { color: var(--burgundy); text-decoration: underline; text-underline-offset: 2px; }
+/* Codex name-links inside summaries: subtle dotted burgundy, not loud like real links. */
+.ck-prose a.ck-codex-link {
+  color: var(--burgundy); text-decoration: none;
+  border-bottom: 1px dotted var(--burgundy-300); cursor: pointer;
+}
+.ck-prose a.ck-codex-link:hover { border-bottom-color: var(--burgundy); }
+
+/* Monospace transcript block */
+.ck-pre {
+  font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; color: var(--ink-soft);
+  white-space: pre-wrap; word-break: break-word; margin: 0;
+}
+
+/* utility used by some inline icon placements */
+.ck-inline-ic { display: inline; vertical-align: -2px; }

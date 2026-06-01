@@ -1,0 +1,50 @@
+[package]
+name = "ck-core"
+version = "0.5.1"
+edition = "2021"
+license = "MIT"
+
+# Chronicle Keeper core: storage + HTTP API shared by the standalone Tauri app
+# and (later) the sync VPS. Transcription is feature-gated so the server build
+# can drop the heavy onnxruntime dependency.
+
+[lib]
+name = "ck_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ck-serve"
+path = "src/bin/ck_serve.rs"
+
+# Manual VAD smoke test — needs the heavy transcription stack to build.
+[[example]]
+name = "vad_smoke"
+required-features = ["transcription"]
+
+[features]
+default = []
+transcription = ["dep:sherpa-onnx", "dep:symphonia", "dep:tar", "dep:bzip2"]
+
+[dependencies]
+axum = { version = "0.7", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+anyhow = "1"
+thiserror = "2"
+directories = "5"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+futures-util = "0.3"
+
+# transcription feature (heavy; dropped from the server build)
+sherpa-onnx = { version = "1.13.2", default-features = false, features = ["static"], optional = true }
+symphonia = { version = "0.5", default-features = false, features = ["flac"], optional = true }
+tar = { version = "0.4", optional = true }
+bzip2 = { version = "0.4", optional = true }

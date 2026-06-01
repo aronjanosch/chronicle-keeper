@@ -1,0 +1,32 @@
+[package]
+name = "chronicle-keeper"
+version = "0.5.1"
+description = "Generate structured D&D session notes from Craig Bot recordings — local-first, bring-your-own-LLM."
+authors = ["Aron Wiederkehr"]
+edition = "2021"
+license = "MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "chronicle_keeper_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.1", features = [] }
+tauri-plugin-opener = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ck-core = { path = "../crates/ck-core", features = ["transcription"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+anyhow = "1"
+getrandom = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+

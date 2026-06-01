@@ -1,0 +1,332 @@
+/* Chronicle Keeper — design tokens & shared atoms
+   Light parchment, ink type, heraldic burgundy accent, mossy "done" green.
+   Subtly fantasy without being kitsch — feels like a calm scriptorium. */
+
+@import url('https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+.ck {
+  /* ── Surfaces ─────────────────────────────────────────────────── */
+  --paper:           #F2EBD9;   /* app background — warm parchment */
+  --paper-deep:      #E8DEC4;   /* under-card / sunken */
+  --surface:         #FBF6E9;   /* card / panel */
+  --surface-raised:  #FFFCF3;   /* modals, popovers */
+  --surface-inset:   #ECE3CB;   /* code blocks, transcript bg */
+
+  /* ── Ink (text) ───────────────────────────────────────────────── */
+  --ink:             #1F1813;
+  --ink-soft:        #3D3225;
+  --ink-muted:       #6B5D4E;
+  --ink-faint:       #A89880;
+  --ink-ghost:       #C9BB9F;
+
+  /* ── Rules / borders ──────────────────────────────────────────── */
+  --rule:            #DDD0AE;
+  --rule-soft:       #E9DEC0;
+  --rule-strong:     #C7B68E;
+
+  /* ── Accents ──────────────────────────────────────────────────── */
+  --burgundy:        #7A2E1F;     /* primary heraldic accent */
+  --burgundy-700:    #5C2317;
+  --burgundy-300:    #B47465;
+  --burgundy-50:     #F2D9D2;
+
+  --moss:            #4A5D3A;     /* done / complete / on-device */
+  --moss-300:        #8FA378;
+  --moss-50:         #DDE3CD;
+
+  --ochre:           #A87328;     /* warning / amber */
+  --ochre-50:        #F1E2C2;
+
+  --ink-blue:        #355370;     /* cool ink — lore / links */
+  --ink-blue-50:     #D9E1EB;
+
+  --gilt:            #B8924A;     /* used very sparingly */
+  --gilt-50:         #F0DFB1;     /* tint for gilt-toned tiles (PCs, lore) */
+
+  /* ── Type ─────────────────────────────────────────────────────── */
+  --font-display: 'Spectral', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --font-ui:      'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono:    'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* ── Radii / shadow ───────────────────────────────────────────── */
+  --r-sm: 4px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --shadow-soft: 0 1px 0 rgba(120,90,40,.05), 0 1px 2px rgba(60,40,10,.06);
+  --shadow-card: 0 1px 0 rgba(120,90,40,.06), 0 2px 8px rgba(60,40,10,.08);
+  --shadow-raised: 0 1px 0 rgba(120,90,40,.08), 0 12px 28px rgba(60,40,10,.14);
+
+  /* paper texture — extremely subtle noise */
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── Reset within .ck scope ─────────────────────────────────────── */
+.ck * { box-sizing: border-box; margin: 0; padding: 0; }
+.ck button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+.ck input, .ck textarea, .ck select { font: inherit; color: inherit; }
+.ck h1, .ck h2, .ck h3, .ck h4, .ck h5, .ck h6 { font-weight: inherit; }
+.ck ul, .ck ol { list-style: none; }
+.ck a { color: inherit; text-decoration: none; }
+.ck svg { display: block; }
+
+/* ── Display & body type ────────────────────────────────────────── */
+.ck .display     { font-family: var(--font-display); font-weight: 500; letter-spacing: -0.015em; line-height: 1.15; }
+.ck .display-i   { font-family: var(--font-display); font-style: italic; font-weight: 400; }
+.ck .label-sm    { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-muted); }
+.ck .label-xs    { font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
+.ck .meta        { font-size: 12px; color: var(--ink-muted); }
+.ck .mono        { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0; }
+.ck .num         { font-variant-numeric: tabular-nums; }
+
+/* ── Surface primitives ─────────────────────────────────────────── */
+.ck .panel {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+}
+.ck .panel-raised {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
+}
+.ck .hr { height: 1px; background: var(--rule-soft); border: 0; }
+
+/* ── Bookish section header: a small caps eyebrow with hairline rule ── */
+.ck .ch-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.ck .ch-head .ch-title {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.ck .ch-head .ch-sub {
+  font-size: 12px;
+  color: var(--ink-muted);
+  flex: 1;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────── */
+.ck .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  border: 1px solid transparent;
+  transition: background .14s, border-color .14s, color .14s;
+  white-space: nowrap;
+}
+.ck .btn-primary    { background: var(--burgundy); color: #FBF6E9; border-color: var(--burgundy-700); }
+.ck .btn-primary:hover { background: var(--burgundy-700); }
+.ck .btn-secondary  { background: var(--surface); color: var(--ink); border-color: var(--rule); }
+.ck .btn-secondary:hover { border-color: var(--rule-strong); background: var(--surface-raised); }
+.ck .btn-ghost      { color: var(--ink-soft); padding: 6px 10px; }
+.ck .btn-ghost:hover{ background: rgba(120,90,40,.08); }
+.ck .btn-icon       { width: 28px; height: 28px; padding: 0; justify-content: center; border-radius: var(--r-sm); color: var(--ink-muted); }
+.ck .btn-icon:hover { background: rgba(120,90,40,.08); color: var(--ink); }
+.ck .btn-sm { padding: 5px 9px; font-size: 12px; }
+
+/* ── Chip / tag ─────────────────────────────────────────────────── */
+.ck .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  background: var(--paper-deep);
+  color: var(--ink-soft);
+  border: 1px solid var(--rule);
+}
+.ck .chip-mono { font-family: var(--font-mono); font-size: 11px; }
+.ck .chip-burgundy { background: var(--burgundy-50); color: var(--burgundy-700); border-color: rgba(122,46,31,.18); }
+.ck .chip-moss     { background: var(--moss-50);     color: var(--moss);         border-color: rgba(74,93,58,.22); }
+.ck .chip-ochre    { background: var(--ochre-50);    color: var(--ochre);        border-color: rgba(168,115,40,.24); }
+.ck .chip-blue     { background: var(--ink-blue-50); color: var(--ink-blue);     border-color: rgba(53,83,112,.22); }
+.ck .chip-ghost    { background: transparent; }
+
+/* ── Status dot ─────────────────────────────────────────────────── */
+.ck .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.ck .dot-moss { background: var(--moss); box-shadow: 0 0 0 2px rgba(74,93,58,.16); }
+.ck .dot-burgundy { background: var(--burgundy); box-shadow: 0 0 0 2px rgba(122,46,31,.14); }
+.ck .dot-ochre { background: var(--ochre); box-shadow: 0 0 0 2px rgba(168,115,40,.14); }
+.ck .dot-faint { background: var(--ink-ghost); }
+
+/* ── Field ──────────────────────────────────────────────────────── */
+.ck .field { display: flex; flex-direction: column; gap: 4px; }
+.ck .field > label { font-size: 12px; font-weight: 500; color: var(--ink-soft); }
+.ck .field > .hint { font-size: 12px; color: var(--ink-faint); }
+.ck .input, .ck .select, .ck .textarea {
+  width: 100%;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--ink);
+  font-family: inherit;
+  transition: border-color .14s, box-shadow .14s;
+}
+.ck .input:focus, .ck .select:focus, .ck .textarea:focus {
+  outline: none;
+  border-color: var(--burgundy-300);
+  box-shadow: 0 0 0 3px rgba(122,46,31,.10);
+}
+.ck .input::placeholder { color: var(--ink-faint); }
+
+/* ── Avatar / sigil (initials in a square with a hair of color) ─── */
+.ck .sigil {
+  width: 32px; height: 32px; flex: 0 0 auto;
+  border-radius: var(--r-sm);
+  background: var(--paper-deep);
+  color: var(--ink-soft);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--rule);
+  position: relative;
+}
+.ck .sigil-lg { width: 44px; height: 44px; font-size: 17px; border-radius: var(--r-md); }
+.ck .sigil-xl { width: 64px; height: 64px; font-size: 24px; border-radius: var(--r-md); }
+.ck .sigil-burgundy { background: var(--burgundy-50); color: var(--burgundy-700); border-color: rgba(122,46,31,.18); }
+.ck .sigil-moss     { background: var(--moss-50);     color: var(--moss);         border-color: rgba(74,93,58,.22); }
+.ck .sigil-blue     { background: var(--ink-blue-50); color: var(--ink-blue);     border-color: rgba(53,83,112,.22); }
+.ck .sigil-ochre    { background: var(--ochre-50);    color: var(--ochre);        border-color: rgba(168,115,40,.24); }
+.ck .sigil-gilt     { background: #F0DFB1;            color: #6B5121;             border-color: #D9C188; }
+
+/* ── App shell ──────────────────────────────────────────────────── */
+.ck .shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  height: 100%;
+  background: var(--paper);
+}
+.ck .nav {
+  background: var(--paper-deep);
+  border-right: 1px solid var(--rule);
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ck .nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 8px 14px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.ck .nav-brand .mark {
+  width: 28px; height: 28px;
+  background: var(--burgundy);
+  color: #F2D9D2;
+  border-radius: var(--r-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+}
+.ck .nav-brand .name { font-family: var(--font-display); font-size: 15px; font-weight: 500; letter-spacing: -0.01em; }
+.ck .nav-brand .name small { display: block; font-family: var(--font-ui); font-size: 10.5px; font-weight: 500; color: var(--ink-muted); letter-spacing: 0.06em; text-transform: uppercase; }
+
+.ck .nav-group { padding: 10px 8px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
+.ck .nav-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 9px;
+  border-radius: var(--r-sm);
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ck .nav-item:hover { background: rgba(120,90,40,.08); color: var(--ink); }
+.ck .nav-item.is-active { background: var(--surface); color: var(--ink); border: 1px solid var(--rule-soft); box-shadow: var(--shadow-soft); }
+.ck .nav-item .count { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); }
+.ck .nav-item.is-active .count { color: var(--burgundy); }
+
+.ck .main { overflow: hidden; display: flex; flex-direction: column; }
+.ck .topbar {
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--rule-soft);
+  display: flex; align-items: center; gap: 12px;
+  background: var(--paper);
+  flex: 0 0 auto;
+}
+.ck .topbar .crumb { font-size: 12px; color: var(--ink-muted); }
+.ck .topbar .crumb b { color: var(--ink); font-weight: 500; }
+.ck .topbar .spacer { flex: 1; }
+.ck .body { padding: 22px 28px; overflow: auto; flex: 1; }
+
+/* ── Card ───────────────────────────────────────────────────────── */
+.ck .card {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+.ck .card-pad { padding: 16px 18px; }
+
+/* ── Icons (tiny inline SVG, 14px) ──────────────────────────────── */
+.ck .ic { width: 14px; height: 14px; stroke: currentColor; stroke-width: 1.6; fill: none; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+.ck .ic-sm { width: 12px; height: 12px; }
+.ck .ic-lg { width: 16px; height: 16px; }
+
+/* ── Inline editorial flourish ──────────────────────────────────── */
+.ck .rule-flourish {
+  display: flex; align-items: center; gap: 12px;
+  color: var(--rule-strong);
+  font-family: var(--font-display);
+  font-size: 14px;
+}
+.ck .rule-flourish::before, .ck .rule-flourish::after {
+  content: ''; flex: 1; height: 1px; background: var(--rule);
+}
+
+/* ── Source badges (Obsidian / Notion / folder / manual) ────────── */
+.ck .src {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 500;
+  color: var(--ink-muted);
+}
+.ck .src .sq { width: 12px; height: 12px; border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 9px; font-weight: 700; font-family: var(--font-mono); }
+.ck .src-obsidian .sq { background: #7C3AED; }
+.ck .src-notion .sq { background: #1F1813; color: white; }
+.ck .src-folder .sq { background: var(--ochre); }
+.ck .src-manual .sq { background: var(--ink-muted); }
+
+/* ── Utility ────────────────────────────────────────────────────── */
+.ck .row { display: flex; align-items: center; gap: 8px; }
+.ck .col { display: flex; flex-direction: column; }
+.ck .stack-1 > * + * { margin-top: 4px; }
+.ck .stack-2 > * + * { margin-top: 8px; }
+.ck .stack-3 > * + * { margin-top: 12px; }
+.ck .stack-4 > * + * { margin-top: 16px; }
+.ck .stack-6 > * + * { margin-top: 24px; }
+.ck .grow { flex: 1; min-width: 0; }
+.ck .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

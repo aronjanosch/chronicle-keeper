@@ -1,0 +1,98 @@
+name: Release
+
+# Per-OS installer build. Tauri cannot cross-compile across OSes, so each target
+# builds on its own native runner. This is also where the sherpa-onnx native lib
+# is linked and the WebView (WebView2 / WebKitGTK / WKWebView) is exercised —
+# i.e. this workflow IS the "does it build on Windows?" spike.
+#
+# Triggers:
+#   - tag v*        → builds all targets AND publishes a GitHub Release with the installers.
+#   - workflow_dispatch (manual) → builds all targets, uploads installers as run artifacts,
+#                                  no Release. Use this to prove the build before tagging.
+#
+# Unsigned for now. macOS notarization + Windows code-signing get wired in later
+# (Apple cert / signing secrets) — see docs/LAUNCH_PUNCHLIST.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# tauri-action creates/updates the GitHub Release on tag builds, which needs
+# write access to repo contents (default GITHUB_TOKEN is read-only).
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            label: macos-x64
+          - platform: ubuntu-22.04          # oldest supported glibc = widest AppImage compat
+            target: ""
+            label: linux-x64
+          - platform: windows-latest
+            target: ""
+            label: windows-x64
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.label }}
+
+      # Tauri v2 Linux runtime deps (WebKitGTK 4.1 + bundling tools).
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            patchelf \
+            build-essential curl wget file libssl-dev
+
+      - name: Build app (tauri-action)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # On a tag, publish a Release with all installers; on manual dispatch,
+          # tagName is empty so tauri-action only builds (artifacts uploaded below).
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Chronicle Keeper {0}', github.ref_name) || '' }}
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
+
+      # Always keep the installers as run artifacts — the only output on manual
+      # dispatch, and a convenient mirror of the Release on tag builds.
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: chronicle-keeper-${{ matrix.label }}
+          if-no-files-found: error
+          path: |
+            target/release/bundle/**/*.dmg
+            target/${{ matrix.target }}/release/bundle/**/*.dmg
+            target/release/bundle/**/*.AppImage
+            target/release/bundle/**/*.deb
+            target/release/bundle/**/*.msi
+            target/release/bundle/**/*.exe

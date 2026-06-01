@@ -70,8 +70,9 @@ fn seed_once(conn: &Connection) -> AppResult<()> {
 
 pub fn list(conn: &Connection) -> AppResult<Vec<PromptTemplate>> {
     seed_once(conn)?;
-    let mut stmt =
-        conn.prepare(&format!("SELECT {COLS} FROM prompt_templates ORDER BY sort_order, id"))?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {COLS} FROM prompt_templates ORDER BY sort_order, id"
+    ))?;
     let rows = stmt.query_map([], row_to_template)?;
     let mut out = Vec::new();
     for r in rows {

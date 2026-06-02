@@ -582,9 +582,7 @@ fn parse_stream_line(transport: Transport, line: &str) -> Result<LineOutcome, Ll
                     Some("content_block_delta") => {
                         let token = v
                             .get("delta")
-                            .filter(|d| {
-                                d.get("type").and_then(Value::as_str) == Some("text_delta")
-                            })
+                            .filter(|d| d.get("type").and_then(Value::as_str) == Some("text_delta"))
                             .and_then(|d| d.get("text"))
                             .and_then(Value::as_str)
                             .filter(|s| !s.is_empty())
@@ -837,14 +835,18 @@ mod tests {
         let json_delta = r#"data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{"}}"#;
         assert_eq!(tok(Transport::Anthropic, json_delta), None);
         // message_stop ends the stream; event:/ping/blank lines are inert.
-        assert!(done(Transport::Anthropic, r#"data: {"type":"message_stop"}"#));
+        assert!(done(
+            Transport::Anthropic,
+            r#"data: {"type":"message_stop"}"#
+        ));
         assert!(!done(Transport::Anthropic, "event: message_stop"));
         assert_eq!(tok(Transport::Anthropic, r#"data: {"type":"ping"}"#), None);
     }
 
     #[test]
     fn anthropic_stream_error_propagates() {
-        let err = r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        let err =
+            r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
         let res = parse_stream_line(Transport::Anthropic, err);
         assert!(matches!(res, Err(LlmError(m)) if m == "Overloaded"));
     }

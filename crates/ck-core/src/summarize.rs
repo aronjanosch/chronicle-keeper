@@ -378,7 +378,10 @@ fn replace_metadata(
                 // Fold the fresh tags through the campaign vocabulary so
                 // case/language variants land on the established spelling, then
                 // replace — no carry-over of the previous run's tags.
-                existing.insert(key.clone(), json!(tags::merge_into(&[], new_list, &tag_vocab)));
+                existing.insert(
+                    key.clone(),
+                    json!(tags::merge_into(&[], new_list, &tag_vocab)),
+                );
                 continue;
             }
             let cleaned: Vec<Value> = new_list.iter().filter(|v| !v.is_null()).cloned().collect();

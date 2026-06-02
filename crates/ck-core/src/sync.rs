@@ -535,7 +535,9 @@ pub async fn force_mirror_sync(state: &AppState) -> AppResult<()> {
         .map_err(|e| AppError::Internal(anyhow::anyhow!("mirror sync server error: {e}")))?
         .json()
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("mirror sync response decode failed: {e}")))?;
+        .map_err(|e| {
+            AppError::Internal(anyhow::anyhow!("mirror sync response decode failed: {e}"))
+        })?;
 
     state.with_db(|conn| -> AppResult<()> {
         apply_pull(conn, &resp.pull)?;
@@ -866,7 +868,10 @@ mod tests {
         assert_eq!(entries.len(), 1, "the duplicate was resolved, not doubled");
         assert_eq!(entries[0].entry_id, "remote-id", "server copy wins");
         assert_eq!(entries[0].body, "remote");
-        assert_ne!(entries[0].entry_id, local.entry_id, "local duplicate dropped");
+        assert_ne!(
+            entries[0].entry_id, local.entry_id,
+            "local duplicate dropped"
+        );
     }
 
     #[test]

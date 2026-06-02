@@ -7,9 +7,43 @@ use crate::prompts::{build_metadata_prompt, build_recap_prompt, build_summary_pr
 use crate::state::AppState;
 use crate::store::{artifacts, campaigns, codex, sessions, tags};
 
+/// Progress signal for a streaming summarize run. The prose summary streams
+/// token by token (`Token`); the JSON metadata pass never streams (partial JSON
+/// is garbage), so it's a single `Metadata` stage flip before the blocking call.
+pub enum SummaryProgress {
+    /// Prep done, prompt sent, waiting on the model's first token. Covers the
+    /// long prefill dead zone on big local prompts.
+    Reading,
+    /// One chunk of the summary text as it arrives.
+    Token(String),
+    /// Summary finished; the metadata/tag extraction call is now running.
+    Metadata,
+}
+
+/// Blocking summarize: same contract as before, no progress events.
 pub async fn summarize_session(
     state: &AppState,
     req: &SummarizeRequest,
+) -> AppResult<SummarizeResponse> {
+    run_summarize(state, req, &mut |_| {}).await
+}
+
+/// Streaming summarize: identical result + persistence to the blocking path, but
+/// emits `SummaryProgress` as the prose streams in. The authoritative summary +
+/// parsed metadata are still computed server-side from the accumulated text and
+/// returned in the response — the streamed tokens are display-only.
+pub async fn summarize_session_streamed<F: FnMut(SummaryProgress) + Send>(
+    state: &AppState,
+    req: &SummarizeRequest,
+    mut emit: F,
+) -> AppResult<SummarizeResponse> {
+    run_summarize(state, req, &mut emit).await
+}
+
+async fn run_summarize(
+    state: &AppState,
+    req: &SummarizeRequest,
+    emit: &mut (dyn FnMut(SummaryProgress) + Send),
 ) -> AppResult<SummarizeResponse> {
     let prep = state.with_db(|conn| -> AppResult<_> {
         let session = sessions::get_session_object(conn, &req.session_id)?;
@@ -91,15 +125,19 @@ pub async fn summarize_session(
         Some(&session_context),
     );
 
-    let summary_text = llm::chat(
+    // Prep is done and the prompt is built; on a big local prompt the model now
+    // spends a long stretch in prefill before the first token. Flip to "reading"
+    // so the user sees motion instead of a frozen pane.
+    emit(SummaryProgress::Reading);
+    let summary_text = llm::chat_stream(
         resolved.transport,
         &resolved.api_base,
         &resolved.api_key,
         &resolved.model,
         &summary_prompt,
         resolved.timeout,
-        false,
         resolved.num_ctx_max,
+        |tok| emit(SummaryProgress::Token(tok.to_string())),
     )
     .await
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Cloud LLM request failed: {}", e.0)))?;
@@ -112,6 +150,7 @@ pub async fn summarize_session(
     // Metadata is best-effort: a failure here must not sink the summary the user
     // already paid for. But don't swallow it silently — a quiet empty string
     // looks identical to "no metadata found" and hides a broken auto-fill.
+    emit(SummaryProgress::Metadata);
     let metadata_text = match llm::chat(
         resolved.transport,
         &resolved.api_base,

@@ -23,6 +23,30 @@ function PromptPreset({ active, name, desc, onClick }) {
 
 const Label = ({ children }) => html`<div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 8 }}>${children}</div>`;
 
+const STAGE_LABEL = { reading: 'Reading transcript…', writing: 'Writing…', metadata: 'Extracting tags…' };
+
+// Pulsing status pill shown while a summarize stream is in flight.
+function StageChip({ stage }) {
+  return html`<span style=${{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', color: 'var(--burgundy-700)', background: 'var(--burgundy-50)', border: '1px solid rgba(122,46,31,.22)', borderRadius: 999, padding: '3px 10px' }}>
+    <span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--burgundy)', animation: 'ck-pulse 1.1s ease-in-out infinite' }} />
+    ${STAGE_LABEL[stage] || 'Working…'}
+  </span>`;
+}
+
+// Live summarize output. Before the first token the model is still in prefill on
+// big local prompts, so show a calm placeholder rather than an empty pane; once
+// text streams in, render it as Markdown with a blinking caret.
+function StreamView({ s }) {
+  if (!s.text) {
+    return html`<div style=${{ fontFamily: 'var(--font-display)', fontStyle: 'italic', color: 'var(--ink-muted)', fontSize: 14 }}>${STAGE_LABEL[s.stage] || 'Working…'}</div>`;
+  }
+  return html`<div>
+    <${Markdown} text=${s.text} />
+    ${s.stage === 'writing' && html`<span style=${{ display: 'inline-block', width: 7, height: 15, marginLeft: 1, background: 'var(--burgundy)', verticalAlign: 'text-bottom', animation: 'ck-pulse 1s steps(1) infinite' }} />`}
+    ${s.stage === 'metadata' && html`<div style=${{ marginTop: 14, fontSize: 12, color: 'var(--ink-muted)', fontStyle: 'italic' }}>Extracting characters, locations & tags…</div>`}
+  </div>`;
+}
+
 export function SummarizeScreen({ store }) {
   const sess = store.session;
   const c = store.campaign;
@@ -70,7 +94,7 @@ export function SummarizeScreen({ store }) {
     ]} right=${html`
       <div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <${Btn} kind="ghost" onClick=${() => navigate('session', { id: sess.session_id })}>Cancel</${Btn}>
-        <${Btn} kind="primary" icon="sparkle" disabled=${!store.transcripts.length} onClick=${generate}>Generate summary</${Btn}>
+        <${Btn} kind="primary" icon="sparkle" disabled=${!store.transcripts.length || !!store.summaryStreaming} onClick=${generate}>${store.summaryStreaming ? 'Generating…' : 'Generate summary'}</${Btn}>
       </div>`} />`}
     bodyStyle=${{ padding: 0 }}
   >
@@ -137,14 +161,18 @@ export function SummarizeScreen({ store }) {
       <div style=${{ overflow: 'auto', padding: '24px 36px', background: 'var(--paper)' }}>
         <div style=${{ maxWidth: 720, margin: '0 auto' }}>
           <div style=${{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-            <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>Preview · last run</div>
+            <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${store.summaryStreaming ? 'Preview · live' : 'Preview · last run'}</div>
             <span style=${{ flex: 1 }} />
-            ${store.summaries[0] && html`<span style=${{ fontSize: 11, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>${store.summaries[0].provider} · ${fmtDateTime(store.summaries[0].created_at)}</span>`}
+            ${store.summaryStreaming
+              ? html`<${StageChip} stage=${store.summaryStreaming.stage} />`
+              : store.summaries[0] && html`<span style=${{ fontSize: 11, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>${store.summaries[0].provider} · ${fmtDateTime(store.summaries[0].created_at)}</span>`}
           </div>
           <div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, padding: '32px 44px', boxShadow: '0 1px 0 rgba(120,90,40,.06), 0 2px 8px rgba(60,40,10,.05)' }}>
-            ${store.summaryPreview
-              ? html`<${Markdown} text=${store.summaryPreview.text} />`
-              : html`<${Empty} icon="feather" title="No summary yet">Pick a model and prompt template, then generate. Your latest summary will preview here.</${Empty}>`}
+            ${store.summaryStreaming
+              ? html`<${StreamView} s=${store.summaryStreaming} />`
+              : store.summaryPreview
+                ? html`<${Markdown} text=${store.summaryPreview.text} />`
+                : html`<${Empty} icon="feather" title="No summary yet">Pick a model and prompt template, then generate. Your latest summary will preview here.</${Empty}>`}
           </div>
         </div>
       </div>

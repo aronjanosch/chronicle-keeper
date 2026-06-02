@@ -22,6 +22,7 @@ export const store = {
   transcripts: [],
   summaries: [],
   summaryPreview: null,   // { id, text } latest summary content for session screen
+  summaryStreaming: null, // { stage:'reading'|'writing'|'metadata', text } live summarize run (null = idle)
   providers: null,        // transcription engines
   llmProviders: null,     // LLM provider registry
   providerStatus: null,   // { ok, reason } for the active summary provider (null = unknown)
@@ -91,6 +92,41 @@ export function apiJson(path, method, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+}
+
+// POST + consume a Server-Sent Events stream. `onEvent` is called with each
+// parsed `data:` payload. EventSource can't carry a POST body or the auth
+// header, so we read the response body ourselves and split on SSE frame
+// boundaries (\n\n). Resolves when the stream ends.
+export async function apiStream(path, body, onEvent) {
+  const res = await fetch(apiUrl(path), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok || !res.body) {
+    let detail = res.statusText;
+    try { const d = await res.json(); detail = d.detail || JSON.stringify(d); } catch (_) {}
+    throw new Error(detail);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
+      if (!dataLine) continue;
+      const payload = dataLine.slice(5).trim();
+      if (!payload) continue;
+      try { onEvent(JSON.parse(payload)); } catch (_) {}
+    }
+  }
 }
 
 // raw text (transcript / summary content + export)

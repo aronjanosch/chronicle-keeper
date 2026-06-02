@@ -91,6 +91,7 @@ pub fn router(state: AppState) -> Router {
         )
         // summarization + export + llm providers
         .route("/summarize", post(llm::summarize))
+        .route("/summarize/stream", post(llm::summarize_stream))
         .route("/export", post(llm::export_notes))
         .route("/llm-providers", get(llm::list_providers))
         .route("/llm-providers/:id", axum::routing::put(llm::put_provider))

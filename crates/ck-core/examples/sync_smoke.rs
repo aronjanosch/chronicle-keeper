@@ -32,6 +32,7 @@ async fn main() -> anyhow::Result<()> {
         .post(&endpoint)
         .json(&SyncRequest {
             client_id: "deviceA".into(),
+            mode: "merge",
             since: None,
             push,
         })
@@ -55,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
         .post(&endpoint)
         .json(&SyncRequest {
             client_id: "deviceB".into(),
+            mode: "merge",
             since: None,
             push: SyncPayload::default(),
         })
@@ -97,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
     };
     let pushed = post(SyncRequest {
         client_id: "deviceA".into(),
+        mode: "merge",
         since: Some(b.synced_at.clone()),
         push: SyncPayload {
             artifacts: vec![art],
@@ -106,6 +109,7 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     let del = post(SyncRequest {
         client_id: "deviceA".into(),
+        mode: "merge",
         since: Some(pushed.synced_at.clone()),
         push: SyncPayload {
             deleted_artifact_ids: vec!["smoke-a1".into()],
@@ -117,6 +121,7 @@ async fn main() -> anyhow::Result<()> {
     // Device B, caught up through the artifact push, now pulls the deletion.
     let b2 = post(SyncRequest {
         client_id: "deviceB".into(),
+        mode: "merge",
         since: Some(pushed.synced_at.clone()),
         push: SyncPayload::default(),
     })

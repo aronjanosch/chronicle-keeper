@@ -1,7 +1,7 @@
 // Screen 08 — Settings. Calm single page, grouped into cards. Real config.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { store, setOp, openModal, fmtDateTime } from '../core.js';
-import { loadConfig, saveConfig, loadLlmProviders, loadPromptTemplates, deletePromptTemplate, restorePromptDefaults } from '../actions.js';
+import { loadConfig, saveConfig, forceMirrorSync, loadLlmProviders, loadPromptTemplates, deletePromptTemplate, restorePromptDefaults } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Btn } from '../ui.js';
 
@@ -97,6 +97,7 @@ export function SettingsScreen({ store }) {
   const [apiBase, setApiBase] = useState(store.apiBase);
   const [syncToken, setSyncToken] = useState('');
   const [saving, setSaving] = useState(false);
+  const [mirroring, setMirroring] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
 
   useEffect(() => {
@@ -137,7 +138,26 @@ export function SettingsScreen({ store }) {
     finally { setSaving(false); }
   }
 
+  function forceMirror() {
+    openModal('confirm', {
+      title: 'Force sync — overwrite the server',
+      message: `Make the sync server an exact copy of this device. Anything on the server that isn't here — and on every other device once it next syncs — is deleted. This cannot be undone. Use only if this device holds the version you want to keep.`,
+      confirmLabel: 'Overwrite server',
+      onConfirm: async () => {
+        setMirroring(true);
+        try {
+          const cfg = await forceMirrorSync();
+          set('last_sync_ts', cfg.last_sync_ts || '');
+          set('last_sync_error', cfg.last_sync_error || '');
+          setOp('Server overwritten — now mirrors this device', 'done');
+        } catch (e) { setOp(`Force sync failed: ${e.message}`, 'err'); }
+        finally { setMirroring(false); }
+      },
+    });
+  }
+
   const providers = store.llmProviders || [];
+  const syncReady = !!(f.sync_url && f.has_sync_token);
 
   return html`<${Shell}
     sidebar=${html`<${Sidebar} variant="library" active="settings" />`}
@@ -200,6 +220,9 @@ export function SettingsScreen({ store }) {
                     ? html`Synced — last at ${fmtDateTime(f.last_sync_ts)}`
                     : `Sync on — ${f.sync_url}`}
           </div>
+          <${Row} label="Force sync" hint="Overwrite the server with this device's data, deleting anything not held here. Propagates to every other device. Irreversible — for recovering from a bad sync.">
+            <${Btn} kind="danger" icon="upload" disabled=${!syncReady || mirroring} onClick=${forceMirror}>${mirroring ? 'Overwriting…' : 'Overwrite server'}</${Btn}>
+          </${Row}>
         </${SettingsCard}>
       </div>
     </div>

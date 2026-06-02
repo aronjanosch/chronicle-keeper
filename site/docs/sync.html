@@ -77,7 +77,7 @@
         </ol>
 
         <h2 id="protocol">For the technically curious</h2>
-        <p>The push/pull protocol — change tracking, conflict handling, and the row format — is documented in <a href="https://github.com/aronjanosch/chronicle-keeper/blob/main/docs/SYNC_PROTOCOL.md" target="_blank" rel="noopener"><code>docs/SYNC_PROTOCOL.md</code></a>. The client lives in <code>crates/ck-core/src/sync.rs</code>.</p>
+        <p>The push/pull protocol — change tracking, conflict handling, and the row format — is defined by the code on both ends: the client in <code>crates/ck-core/src/sync.rs</code> and the open-source reference server <a href="https://github.com/aronjanosch/chronicle-keeper-sync-server" target="_blank" rel="noopener">chronicle-keeper-sync-server</a> (<code>app/sync.py</code>).</p>
       </div>
 
       <div class="pager">

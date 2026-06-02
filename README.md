@@ -84,8 +84,10 @@ cargo tauri build                        # build installers for your OS
 cargo run -p ck-core --bin ck-serve      # core API only, no window (http://127.0.0.1:8000)
 RUST_LOG=debug cargo run -p ck-core --bin ck-serve   # verbose logs
 ```
-The sync protocol is documented in [`docs/SYNC_PROTOCOL.md`](docs/SYNC_PROTOCOL.md). Contributions welcome — see
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+The sync wire format is defined by the code on both ends: the client in
+[`crates/ck-core/src/sync.rs`](crates/ck-core/src/sync.rs) and the open-source reference server
+[`chronicle-keeper-sync-server`](https://github.com/aronjanosch/chronicle-keeper-sync-server).
+Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 

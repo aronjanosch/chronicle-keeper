@@ -389,6 +389,12 @@ export async function saveConfig(payload, apiBaseValue) {
   return updated;
 }
 
+// Make the server an exact copy of this device. Destructive; confirm first.
+export async function forceMirrorSync() {
+  await apiJson('/sync/force-mirror', 'POST', {});
+  return loadConfig();
+}
+
 export async function loadLlmProviders(force) {
   if (store.llmProviders && !force) return store.llmProviders;
   let list = [];

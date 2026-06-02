@@ -15,3 +15,4 @@ frontend/dist/
 # Internal docs — kept private, must never be committed here
 CLAUDE.md
 docs/internal/
+GIT_WORKFLOW.md

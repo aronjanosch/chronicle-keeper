@@ -1,28 +1,37 @@
 # Chronicle Keeper
 <img width="611" height="369" alt="SCR-20260601-paxt" src="https://github.com/user-attachments/assets/231952c8-b26a-455b-bb55-3325a88c372c" />
 
-Turn your D&D session recordings into clean, structured notes — on your own machine,
-offline, with whatever LLM you like.
+Chronicle Keeper is an AI-powered, local-first copilot for D&D session memory.
+It turns raw session audio into structured notes, campaign continuity, and reusable world knowledge.
 
 Drop in a [Craig Bot](https://craig.chat) recording, label who's who, and Chronicle Keeper
-transcribes every track on-device and writes up the session. The notes land as Markdown with
-Obsidian frontmatter, ready to paste into your vault.
+transcribes every track on-device, then uses your chosen LLM to produce clean, campaign-aware summaries.
+The results land as Markdown with Obsidian frontmatter, ready to paste into your vault.
 
-- **Local-first and private.** Transcription runs on your device.
-- **Bring your own LLM.** Local [Ollama](https://ollama.com), Anthropic, or any
-  OpenAI-compatible provider.
-- **The pipeline.** Record → transcribe → summarize → export.
+- **AI-first workflow.** Recordings become summaries, recap context, and codex memory.
+- **Local-first and private.** Core processing runs on your device.
+- **Bring your own LLM.** Local [Ollama](https://ollama.com), Anthropic, and OpenAI-compatible providers.
+- **Built for continuity.** Keep characters, places, factions, and items consistent across sessions.
 
 📖 **[Read the docs →](https://aronjanosch.github.io/chronicle-keeper/)** — install guides, LLM
 setup (Ollama + getting API keys), the full workflow, and FAQ.
+
+## Features
+
+- **On-device transcription (Parakeet native ASR).** Fast per-speaker transcript generation from Craig ZIP tracks.
+- **LLM-powered session summaries.** Generate readable notes with your selected prompt template and provider.
+- **Codex memory system.** Build and maintain a campaign glossary (NPCs, places, factions, items, PCs) that is injected into summary prompts to improve naming consistency.
+- **Codex import AI distillation.** Import an existing notes folder and let the app extract candidate glossary entries.
+- **Story-so-far recap generation.** Produce campaign continuity recaps from existing session history.
+- **Prompt template library.** Use built-in prompts or create your own summary styles.
+- **Markdown + Obsidian export.** Export notes in a format that drops directly into your vault.
+- **Artifact management.** Keep transcript and summary artifacts per session with in-app retrieval.
+- **Optional multi-device sync.** Sync text data across devices using a small self-hosted sync server.
+
 ## Screenshots
 <img width="305" height="218" alt="image" src="https://github.com/user-attachments/assets/437e6911-d5da-439c-b5bc-1e99ee6bba49" />
 <img width="305" height="218" alt="image" src="https://github.com/user-attachments/assets/0cfd2ced-eb97-4843-bed3-22fd6e2ce49f" />
 <img width="305" height="218" alt="image" src="https://github.com/user-attachments/assets/c3bcb845-bff1-4730-96da-b9c57b1b517d" />
-
-
-
-
 
 ## Download & install
 

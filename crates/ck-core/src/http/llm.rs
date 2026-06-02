@@ -1,7 +1,11 @@
+use std::convert::Infallible;
 use std::time::Instant;
 
 use axum::extract::{Path, State};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
+use futures_util::Stream;
+use serde_json::json;
 
 use crate::error::{AppError, AppResult};
 use crate::llm::{self, SavedKey};
@@ -10,6 +14,7 @@ use crate::models::{
     ProviderTestResult, SummarizeRequest, SummarizeResponse,
 };
 use crate::state::AppState;
+use crate::summarize::SummaryProgress;
 use crate::{export, summarize};
 
 fn provider_info(p: &llm::Provider, saved: Option<&SavedKey>) -> ProviderInfo {
@@ -146,6 +151,50 @@ pub async fn summarize(
     Json(req): Json<SummarizeRequest>,
 ) -> AppResult<Json<SummarizeResponse>> {
     Ok(Json(summarize::summarize_session(&state, &req).await?))
+}
+
+/// Streaming summarize over Server-Sent Events. Typed `data:` frames:
+///   {stage:"reading"}                          prefill / waiting on first token
+///   {stage:"writing", token:"…"}               one prose chunk
+///   {stage:"metadata"}                          summary done, tag extraction running
+///   {stage:"done", summary, metadata, …}        authoritative + already persisted
+///   {stage:"error", message}                    failure mid-run
+/// The done payload matches the blocking `/summarize` response; the frontend
+/// swaps its live-built text for it (and gains the parsed metadata/tags).
+pub async fn summarize_stream(
+    State(state): State<AppState>,
+    Json(req): Json<SummarizeRequest>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    tokio::spawn(async move {
+        let send = |val: serde_json::Value| {
+            let ev = Event::default()
+                .json_data(&val)
+                .unwrap_or_else(|_| Event::default());
+            let _ = tx.send(ev);
+        };
+        let result = summarize::summarize_session_streamed(&state, &req, |p| match p {
+            SummaryProgress::Reading => send(json!({ "stage": "reading" })),
+            SummaryProgress::Token(t) => send(json!({ "stage": "writing", "token": t })),
+            SummaryProgress::Metadata => send(json!({ "stage": "metadata" })),
+        })
+        .await;
+        match result {
+            Ok(r) => send(json!({
+                "stage": "done",
+                "summary": r.summary,
+                "metadata": r.metadata,
+                "provider": r.provider,
+                "model": r.model,
+            })),
+            Err(e) => send(json!({ "stage": "error", "message": e.to_string() })),
+        }
+    });
+
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|ev| (Ok(ev), rx))
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 pub async fn export_notes(

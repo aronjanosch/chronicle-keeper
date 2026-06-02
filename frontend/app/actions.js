@@ -1,6 +1,6 @@
 // All data operations. Thin wrappers over the HTTP client that update the store.
 // Ported 1:1 from the legacy app.js so the backend contract is unchanged.
-import { store, setState, setOp, navigate, apiFetch, apiJson, apiText, apiUrl, slugify, toneFor, initials } from './core.js';
+import { store, setState, setOp, navigate, apiFetch, apiJson, apiText, apiStream, apiUrl, slugify, toneFor, initials } from './core.js';
 
 // ── Campaigns ─────────────────────────────────────────────────────
 export async function loadCampaigns() {
@@ -346,18 +346,44 @@ export async function runSummarize({ transcriptId, provider, model, title, conte
   const sid = store.session?.session_id;
   if (!sid) return;
   setOp(`Summarizing with ${provider}…`);
+  setState({ summaryStreaming: { stage: 'reading', text: '' } });
   try {
-    await apiJson('/summarize', 'POST', {
+    let acc = '';
+    let failure = null;
+    await apiStream('/summarize/stream', {
       session_id: sid, transcript_id: transcriptId || null, provider, model: model || null,
       base_url: null, title: title || null, context: context || null, system_prompt: systemPrompt || null,
+    }, (ev) => {
+      switch (ev.stage) {
+        case 'reading':
+          setState({ summaryStreaming: { stage: 'reading', text: acc } });
+          break;
+        case 'writing':
+          acc += ev.token || '';
+          setState({ summaryStreaming: { stage: 'writing', text: acc } });
+          break;
+        case 'metadata':
+          setState({ summaryStreaming: { stage: 'metadata', text: acc } });
+          break;
+        case 'done':
+          setState({ summaryStreaming: null });
+          break;
+        case 'error':
+          failure = ev.message || 'Summarization failed.';
+          break;
+      }
     });
+    if (failure) throw new Error(failure);
     await loadSession(sid);
     await refreshCampaignSessions();
     // Auto-extract may have grown the codex; refresh so a later codex visit
     // shows the new entries without a manual reload.
     await loadCodexEntries(store.campaign?.campaign_id);
     setOp('Summary complete', 'done');
-  } catch (e) { setOp(e.message, 'err'); }
+  } catch (e) {
+    setState({ summaryStreaming: null });
+    setOp(e.message, 'err');
+  }
 }
 
 // ── Export ────────────────────────────────────────────────────────

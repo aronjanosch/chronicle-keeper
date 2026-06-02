@@ -1,6 +1,6 @@
 // Screen 08 — Settings. Calm single page, grouped into cards. Real config.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
-import { store, setOp, openModal } from '../core.js';
+import { store, setOp, openModal, fmtDateTime } from '../core.js';
 import { loadConfig, saveConfig, loadLlmProviders, loadPromptTemplates, deletePromptTemplate, restorePromptDefaults } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Btn } from '../ui.js';
@@ -109,6 +109,8 @@ export function SettingsScreen({ store }) {
         summary_provider: (cfg.summary_provider || 'ollama').toLowerCase(),
         sync_url: cfg.sync_url || '',
         has_sync_token: !!cfg.has_sync_token,
+        last_sync_ts: cfg.last_sync_ts || '',
+        last_sync_error: cfg.last_sync_error || '',
       });
       setApiBase(store.apiBase);
     })();
@@ -128,6 +130,8 @@ export function SettingsScreen({ store }) {
       const updated = await saveConfig(payload, apiBase.trim());
       setSyncToken('');
       set('has_sync_token', !!updated.has_sync_token);
+      set('last_sync_ts', updated.last_sync_ts || '');
+      set('last_sync_error', updated.last_sync_error || '');
       setOp('Settings saved', 'done');
     } catch (e) { setOp(e.message, 'err'); }
     finally { setSaving(false); }
@@ -185,8 +189,16 @@ export function SettingsScreen({ store }) {
           <${Row} label="Sync token" hint="Bearer token shared with your sync server. Stored locally.">
             <input type="password" value=${syncToken} onInput=${(e) => setSyncToken(e.target.value)} placeholder=${f.has_sync_token ? '•••••••• (saved)' : '(none set)'} autocomplete="off" style=${inp({ width: 340, fontFamily: 'var(--font-mono)' })} />
           </${Row}>
-          <div style=${{ marginTop: 10, fontSize: 12, color: f.sync_url ? (f.has_sync_token ? 'var(--moss)' : 'var(--ochre)') : 'var(--ink-muted)' }}>
-            ${f.sync_url ? (f.has_sync_token ? `Sync on — ${f.sync_url}` : 'Sync URL set but no token saved.') : 'Sync off — everything stays on this device.'}
+          <div style=${{ marginTop: 10, fontSize: 12, color: f.last_sync_error ? 'var(--ochre)' : f.sync_url ? (f.has_sync_token ? 'var(--moss)' : 'var(--ochre)') : 'var(--ink-muted)' }}>
+            ${!f.sync_url
+              ? 'Sync off — everything stays on this device.'
+              : !f.has_sync_token
+                ? 'Sync URL set but no token saved.'
+                : f.last_sync_error
+                  ? html`Sync error: ${f.last_sync_error}`
+                  : f.last_sync_ts
+                    ? html`Synced — last at ${fmtDateTime(f.last_sync_ts)}`
+                    : `Sync on — ${f.sync_url}`}
           </div>
         </${SettingsCard}>
       </div>

@@ -100,6 +100,10 @@ pub struct ConfigResponse {
     pub sync_url: String,
     /// Whether a sync bearer token is saved (the token itself is never echoed).
     pub has_sync_token: bool,
+    /// ISO timestamp of the last successful sync (local time), empty if never synced.
+    pub last_sync_ts: String,
+    /// Error message from the most recent failed sync attempt, empty if last sync succeeded.
+    pub last_sync_error: String,
 }
 
 /// Partial update payload — mirrors the Python `UpdateConfigRequest`.
@@ -207,6 +211,8 @@ pub fn to_response(map: &HashMap<String, String>) -> ConfigResponse {
         has_litellm_key: !get_str(map, "litellm_api_key").is_empty(),
         sync_url: get_str(map, "sync_url"),
         has_sync_token: !get_str(map, "sync_token").is_empty(),
+        last_sync_ts: get_str(map, "last_sync_ts"),
+        last_sync_error: get_str(map, "last_sync_error"),
     }
 }
 

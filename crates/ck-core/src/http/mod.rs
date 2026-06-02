@@ -175,6 +175,11 @@ async fn write_config(
         apply_update(conn, &req)?;
         get_config_map(conn)
     })?;
+    // Trigger an immediate sync so credentials take effect without a restart.
+    let sync_state = state.clone();
+    tokio::spawn(async move {
+        crate::sync::sync_once_recording_error(&sync_state).await;
+    });
     Ok(Json(to_response(&map)))
 }
 

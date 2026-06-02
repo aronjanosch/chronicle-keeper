@@ -89,14 +89,16 @@ pub async fn test_provider(
 
     let start = Instant::now();
     let result = llm::chat(
-        p.transport,
-        &api_base,
-        &saved.api_key,
-        &model,
-        "Hi",
-        15,
+        &llm::ChatRequest {
+            transport: p.transport,
+            api_base: &api_base,
+            api_key: &saved.api_key,
+            model: &model,
+            prompt: "Hi",
+            timeout_secs: 15,
+            num_ctx_max: None,
+        },
         false,
-        None,
     )
     .await;
     let latency_ms = start.elapsed().as_millis() as i64;

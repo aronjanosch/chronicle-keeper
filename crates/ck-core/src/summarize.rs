@@ -145,7 +145,7 @@ pub async fn summarize_session(
             &summary_for_db,
         )?;
         if let Some(md) = &metadata_for_merge {
-            merge_metadata(conn, &session_id, md)?;
+            replace_metadata(conn, &session_id, md)?;
         }
         Ok(())
     })?;
@@ -291,10 +291,16 @@ fn parse_metadata(text: &str) -> Option<Value> {
     serde_json::from_str(t).ok()
 }
 
-/// Merge LLM-extracted lists into the session's metadata without overwriting
-/// existing (user-edited) values, then materialize the names/locations/items as
-/// auto-extracted codex entries on the parent campaign.
-fn merge_metadata(
+/// Replace the session's metadata with the LLM-extracted lists, then
+/// materialize the names/locations/items as auto-extracted codex entries on the
+/// parent campaign.
+///
+/// Each re-summary is a fresh take on the same session, so its lists *replace*
+/// the previous ones per category — they don't accumulate. Without this, trying
+/// a second model just appends a reworded copy of every event, character, etc.,
+/// and the lists grow without bound. Re-summary wins over manual edits; the
+/// inline editor in the session view is the place to curate afterwards.
+fn replace_metadata(
     conn: &rusqlite::Connection,
     session_id: &str,
     metadata: &Value,
@@ -326,19 +332,15 @@ fn merge_metadata(
             let Some(new_list) = values.as_array() else {
                 continue;
             };
-            let entry = existing.entry(key.clone()).or_insert_with(|| json!([]));
             if key == "tags" {
-                let existing_tags = entry.as_array().cloned().unwrap_or_default();
-                *entry = json!(tags::merge_into(&existing_tags, new_list, &tag_vocab));
+                // Fold the fresh tags through the campaign vocabulary so
+                // case/language variants land on the established spelling, then
+                // replace — no carry-over of the previous run's tags.
+                existing.insert(key.clone(), json!(tags::merge_into(&[], new_list, &tag_vocab)));
                 continue;
             }
-            let mut merged: Vec<Value> = entry.as_array().cloned().unwrap_or_default();
-            for v in new_list {
-                if !v.is_null() && !merged.contains(v) {
-                    merged.push(v.clone());
-                }
-            }
-            *entry = Value::Array(merged);
+            let cleaned: Vec<Value> = new_list.iter().filter(|v| !v.is_null()).cloned().collect();
+            existing.insert(key.clone(), Value::Array(cleaned));
         }
     }
     conn.execute(
@@ -395,7 +397,7 @@ mod tests {
     use crate::store::campaigns;
 
     #[test]
-    fn merge_metadata_extracts_codex_entries() {
+    fn replace_metadata_extracts_codex_entries() {
         let conn = crate::db::open_in_memory().unwrap();
         campaigns::create_campaign(&conn, "c1", "Camp", 1).unwrap();
         conn.execute(
@@ -410,7 +412,7 @@ mod tests {
             "events": ["Battle"],   // ignored: not a codex kind
             "tags": ["combat"],     // ignored
         });
-        merge_metadata(&conn, "s1", &metadata).unwrap();
+        replace_metadata(&conn, "s1", &metadata).unwrap();
         let entries = codex::list_entries(&conn, "c1").unwrap();
         let names: std::collections::BTreeSet<String> =
             entries.iter().map(|e| e.name.clone()).collect();
@@ -425,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_metadata_skips_user_edited_entry() {
+    fn replace_metadata_skips_user_edited_entry() {
         let conn = crate::db::open_in_memory().unwrap();
         campaigns::create_campaign(&conn, "c1", "Camp", 1).unwrap();
         conn.execute(
@@ -446,11 +448,51 @@ mod tests {
         )
         .unwrap();
         // LLM emits a different casing — must be treated as the same row, not overwritten.
-        merge_metadata(&conn, "s1", &json!({ "characters": ["aragorn"] })).unwrap();
+        replace_metadata(&conn, "s1", &json!({ "characters": ["aragorn"] })).unwrap();
         let entries = codex::list_entries(&conn, "c1").unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "Aragorn");
         assert_eq!(entries[0].body, "Heir of Isildur");
         assert_eq!(entries[0].source, "manual");
+    }
+
+    #[test]
+    fn replace_metadata_does_not_accumulate_across_resummaries() {
+        let conn = crate::db::open_in_memory().unwrap();
+        campaigns::create_campaign(&conn, "c1", "Camp", 1).unwrap();
+        conn.execute(
+            "INSERT INTO sessions (session_id, campaign_id) VALUES ('s1', 'c1')",
+            [],
+        )
+        .unwrap();
+
+        // First model's take.
+        replace_metadata(
+            &conn,
+            "s1",
+            &json!({ "events": ["The party crossed the bridge"], "tags": ["combat"] }),
+        )
+        .unwrap();
+        // A second model rewords the same beat — must replace, not append.
+        replace_metadata(
+            &conn,
+            "s1",
+            &json!({ "events": ["Party fought their way over the bridge"], "tags": ["combat"] }),
+        )
+        .unwrap();
+
+        let md: String = conn
+            .query_row(
+                "SELECT metadata_json FROM sessions WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let md: Value = serde_json::from_str(&md).unwrap();
+        assert_eq!(
+            md["events"].as_array().unwrap(),
+            &vec![json!("Party fought their way over the bridge")],
+        );
+        assert_eq!(md["tags"].as_array().unwrap().len(), 1);
     }
 }

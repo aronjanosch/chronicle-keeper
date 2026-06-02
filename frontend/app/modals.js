@@ -34,7 +34,7 @@ function chunkNotes(text, max = 12000) {
 
 function ModalShell({ title, children, footer, wide }) {
   return html`<div class="ck-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) closeModal(); }}>
-    <div class="ck" style=${{ width: wide ? 720 : 480, maxWidth: '100%', maxHeight: '88vh', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 12, boxShadow: 'var(--shadow-raised)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div class="ck" style=${{ width: wide ? 720 : 480, maxWidth: '100%', height: 'auto', maxHeight: '88vh', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 12, boxShadow: 'var(--shadow-raised)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style=${{ padding: '16px 20px', borderBottom: '1px solid var(--rule-soft)', display: 'flex', alignItems: 'center', gap: 10 }}>
         <h3 style=${{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 500, color: 'var(--ink)', flex: 1 }}>${title}</h3>
         <${Btn} kind="ghost" size="sm" icon="x" onClick=${closeModal} />
@@ -111,16 +111,17 @@ function CampaignModal({ edit }) {
 // ── Session metadata edit ─────────────────────────────────────────
 function SessionModal({ session }) {
   const cam = session.campaign || {};
+  // Metadata (NPCs, places, items, events, tags) is edited inline in the
+  // "What happened" card on the session screen — not here. This modal only
+  // touches the session's own fields, so it must preserve the existing
+  // metadata untouched (the backend replaces metadata wholesale on save).
   const md = session.metadata || {};
   const [f, setF] = useState({
     title: cam.title || '', date: cam.date || '', number: cam.session_number || '', notes: cam.notes || '',
-    characters: (md.characters || []).join(', '), locations: (md.locations || []).join(', '),
-    items: (md.items || []).join(', '), tags: (md.tags || []).join(', '),
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
-  const split = (s) => s.split(',').map((x) => x.trim()).filter(Boolean);
 
   async function save() {
     setBusy(true); setErr(null);
@@ -128,7 +129,7 @@ function SessionModal({ session }) {
       await saveSessionMetadata({
         session_id: session.session_id, campaign_id: cam.campaign_id || null,
         session_number: Number(f.number) || null, title: f.title.trim() || null, date: f.date || null,
-        metadata: { characters: split(f.characters), locations: split(f.locations), events: md.events || [], items: split(f.items), tags: split(f.tags) },
+        metadata: md,
         notes: f.notes.trim() || null,
       });
       await loadSession(session.session_id);
@@ -146,10 +147,7 @@ function SessionModal({ session }) {
       <${Field} label="Session #"><${Input} type="number" value=${f.number} onInput=${(v) => set('number', v)} mono /></${Field}>
     </div>
     <${Field} label="Notes"><${Textarea} value=${f.notes} onInput=${(v) => set('notes', v)} rows=${3} /></${Field}>
-    <${Field} label="Characters" hint="Comma-separated."><${Input} value=${f.characters} onInput=${(v) => set('characters', v)} /></${Field}>
-    <${Field} label="Locations" hint="Comma-separated."><${Input} value=${f.locations} onInput=${(v) => set('locations', v)} /></${Field}>
-    <${Field} label="Items" hint="Comma-separated."><${Input} value=${f.items} onInput=${(v) => set('items', v)} /></${Field}>
-    <${Field} label="Tags" hint="Comma-separated."><${Input} value=${f.tags} onInput=${(v) => set('tags', v)} /></${Field}>
+    <div style=${{ fontSize: 12, color: 'var(--ink-faint)', lineHeight: 1.5 }}>NPCs, places, items, events and tags are edited in the “What happened” panel on the session.</div>
   </${ModalShell}>`;
 }
 

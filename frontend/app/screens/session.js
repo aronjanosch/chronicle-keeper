@@ -1,7 +1,7 @@
 // Screen 04 — Session Detail. Pipeline strip, summary prose, speakers, metadata.
-import { html } from '../../vendor/htm-preact-standalone.mjs';
+import { html, useState } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal, fmtDate, fmtDateTime, toneFor } from '../core.js';
-import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe } from '../actions.js';
+import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, loadSession } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Sigil, Btn, Pipeline, Markdown, Empty } from '../ui.js';
 
@@ -29,6 +29,111 @@ function ChipRow({ ic, tone, label, items }) {
     <div style=${{ width: 90, fontSize: 11.5, fontWeight: 600, color: 'var(--ink-muted)', letterSpacing: '0.06em', textTransform: 'uppercase', paddingTop: 4 }}>${label}</div>
     <div style=${{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
       ${items.map((it, i) => html`<span key=${i} style=${{ padding: '3px 8px', background: 'var(--paper-deep)', color: 'var(--ink-soft)', border: '1px solid var(--rule-soft)', borderRadius: 4, fontSize: 11.5 }}>${it}</span>`)}
+    </div>
+  </div>`;
+}
+
+// The five metadata lists shown (and now edited) in the "What happened" card.
+const META_CATS = [
+  { key: 'characters', ic: 'users', tone: 'burgundy', label: 'NPCs' },
+  { key: 'locations', ic: 'map', tone: 'moss', label: 'Places' },
+  { key: 'items', ic: 'gem', tone: 'ochre', label: 'Items' },
+  { key: 'events', ic: 'flame', tone: 'ochre', label: 'Events' },
+  { key: 'tags', ic: 'tag', tone: 'ink-blue', label: 'Tags', mono: true },
+];
+
+// One editable row: existing items as removable chips + an input that commits
+// on Enter, comma, or blur. Comma-pasting several at once splits them.
+function TagEditor({ ic, tone, label, items, mono, onChange }) {
+  const [draft, setDraft] = useState('');
+  const commit = (raw) => {
+    const adds = raw.split(',').map((x) => x.trim()).filter((x) => x && !items.includes(x));
+    if (adds.length) onChange([...items, ...adds]);
+    setDraft('');
+  };
+  const onKey = (e) => {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(draft); }
+    else if (e.key === 'Backspace' && !draft && items.length) { onChange(items.slice(0, -1)); }
+  };
+  const chip = (it, i) => html`<span key=${i} style=${{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: mono ? '2px 4px 2px 7px' : '3px 4px 3px 8px', background: 'var(--paper-deep)', color: 'var(--ink-soft)', border: '1px solid var(--rule-soft)', borderRadius: mono ? 3 : 4, fontSize: 11.5, fontFamily: mono ? 'var(--font-mono)' : 'inherit' }}>
+    ${mono ? '#' : ''}${it}
+    <button type="button" onClick=${() => onChange(items.filter((_, j) => j !== i))} title="Remove"
+      style=${{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, padding: 0, border: 'none', background: 'transparent', color: 'var(--ink-faint)', cursor: 'pointer', borderRadius: 3 }}>
+      <${Icon} name="x" size=${9} />
+    </button>
+  </span>`;
+  return html`<div style=${{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--rule-soft)' }}>
+    <div style=${{ width: 24, height: 24, borderRadius: 4, flex: '0 0 auto', background: `var(--${tone}-50)`, color: tone === 'ink-blue' ? 'var(--ink-blue)' : `var(--${tone})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <${Icon} name=${ic} size=${12} />
+    </div>
+    <div style=${{ width: 90, fontSize: 11.5, fontWeight: 600, color: 'var(--ink-muted)', letterSpacing: '0.06em', textTransform: 'uppercase', paddingTop: 6 }}>${label}</div>
+    <div style=${{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+      ${items.map(chip)}
+      <input value=${draft} onInput=${(e) => setDraft(e.target.value)} onKeyDown=${onKey} onBlur=${() => commit(draft)}
+        placeholder=${items.length ? 'Add…' : `Add ${label.toLowerCase()}…`}
+        style=${{ flex: '1 0 80px', minWidth: 80, padding: '3px 4px', border: 'none', background: 'transparent', fontSize: 11.5, fontFamily: mono ? 'var(--font-mono)' : 'inherit', color: 'var(--ink)', outline: 'none' }} />
+    </div>
+  </div>`;
+}
+
+// "What happened" — read-only chip view with an inline editor toggled in place.
+// Edits write the whole metadata object; the backend replaces it wholesale, so
+// this is the single source of truth (the session modal no longer touches it).
+function WhatHappened({ sess }) {
+  const cam = sess.campaign || {};
+  const md = sess.metadata || {};
+  const [draft, setDraft] = useState(null); // null = view mode
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const start = () => { setErr(null); setDraft(Object.fromEntries(META_CATS.map((c) => [c.key, [...(md[c.key] || [])]]))); };
+  const cancel = () => { setDraft(null); setErr(null); };
+  const setCat = (key, list) => setDraft((d) => ({ ...d, [key]: list }));
+  async function save() {
+    setBusy(true); setErr(null);
+    try {
+      await saveSessionMetadata({
+        session_id: sess.session_id, campaign_id: cam.campaign_id || null,
+        session_number: cam.session_number || null, title: cam.title || null, date: cam.date || null,
+        metadata: draft, notes: cam.notes || null,
+      });
+      await loadSession(sess.session_id);
+      setDraft(null);
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+
+  const editing = draft !== null;
+  const hasAny = META_CATS.some((c) => (md[c.key] || []).length);
+
+  return html`<div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden' }}>
+    <div style=${{ padding: '12px 16px', borderBottom: '1px solid var(--rule-soft)', display: 'flex', alignItems: 'center', gap: 8 }}>
+      <${Icon} name="tag" size=${13} className="ck-ink-muted" />
+      <h3 style=${{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 500 }}>What happened</h3>
+      <span style=${{ flex: 1 }} />
+      ${editing
+        ? html`<${Btn} kind="ghost" size="sm" disabled=${busy} onClick=${cancel}>Cancel</${Btn}>
+            <${Btn} kind="primary" size="sm" disabled=${busy} onClick=${save}>${busy ? 'Saving…' : 'Save'}</${Btn}>`
+        : html`<${Btn} kind="ghost" size="sm" icon="edit" onClick=${start}>Edit</${Btn}>`}
+    </div>
+    <div style=${{ padding: '4px 16px 12px' }}>
+      ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 12.5, padding: '8px 0' }}>${err}</div>`}
+      ${editing
+        ? META_CATS.map((c) => html`<${TagEditor} key=${c.key} ic=${c.ic} tone=${c.tone} label=${c.label} mono=${c.mono} items=${draft[c.key]} onChange=${(list) => setCat(c.key, list)} />`)
+        : hasAny
+          ? html`
+            <${ChipRow} ic="users" tone="burgundy" label="NPCs" items=${md.characters || []} />
+            <${ChipRow} ic="map" tone="moss" label="Places" items=${md.locations || []} />
+            <${ChipRow} ic="gem" tone="ochre" label="Items" items=${md.items || []} />
+            <${ChipRow} ic="flame" tone="ochre" label="Events" items=${md.events || []} />
+            ${(md.tags?.length) ? html`<div style=${{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0' }}>
+              <div style=${{ width: 24, flex: '0 0 auto' }} />
+              <div style=${{ width: 90, fontSize: 11.5, fontWeight: 600, color: 'var(--ink-muted)', letterSpacing: '0.06em', textTransform: 'uppercase', paddingTop: 4 }}>Tags</div>
+              <div style=${{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                ${md.tags.map((t, i) => html`<span key=${i} style=${{ padding: '3px 7px', borderRadius: 3, background: 'var(--paper-deep)', fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-muted)' }}>#${t}</span>`)}
+              </div>
+            </div>` : ''}`
+          : html`<div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic', padding: '8px 4px' }}>Nothing recorded yet — summarize, or add NPCs, places, items, events and tags by hand.</div>`}
     </div>
   </div>`;
 }
@@ -63,7 +168,6 @@ export function SessionScreen({ store }) {
   if (!sess) return html`<div />`;
   const c = store.campaign;
   const cam = sess.campaign || {};
-  const md = sess.metadata || {};
   const tracks = sess.tracks || [];
   const speakers = sess.speakers || [];
   const hasT = store.transcripts.length > 0;
@@ -159,28 +263,7 @@ export function SessionScreen({ store }) {
           </div>
         </div>
 
-        ${(md.characters?.length || md.locations?.length || md.items?.length || md.events?.length || md.tags?.length) ? html`
-        <div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden' }}>
-          <div style=${{ padding: '12px 16px', borderBottom: '1px solid var(--rule-soft)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <${Icon} name="tag" size=${13} className="ck-ink-muted" />
-            <h3 style=${{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 500 }}>What happened</h3>
-            <span style=${{ flex: 1 }} />
-            <${Btn} kind="ghost" size="sm" onClick=${() => openModal('session', { session: sess })}>Edit</${Btn}>
-          </div>
-          <div style=${{ padding: '4px 16px 12px' }}>
-            <${ChipRow} ic="users" tone="burgundy" label="NPCs" items=${md.characters || []} />
-            <${ChipRow} ic="map" tone="moss" label="Places" items=${md.locations || []} />
-            <${ChipRow} ic="gem" tone="ochre" label="Items" items=${md.items || []} />
-            <${ChipRow} ic="flame" tone="ochre" label="Events" items=${md.events || []} />
-            ${(md.tags?.length) ? html`<div style=${{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0' }}>
-              <div style=${{ width: 24, flex: '0 0 auto' }} />
-              <div style=${{ width: 90, fontSize: 11.5, fontWeight: 600, color: 'var(--ink-muted)', letterSpacing: '0.06em', textTransform: 'uppercase', paddingTop: 4 }}>Tags</div>
-              <div style=${{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                ${md.tags.map((t, i) => html`<span key=${i} style=${{ padding: '3px 7px', borderRadius: 3, background: 'var(--paper-deep)', fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-muted)' }}>#${t}</span>`)}
-              </div>
-            </div>` : ''}
-          </div>
-        </div>` : ''}
+        <${WhatHappened} sess=${sess} />
 
         <div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, padding: '12px 16px' }}>
           <${ArtifactList} kind="transcripts" items=${store.transcripts} />

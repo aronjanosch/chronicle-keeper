@@ -64,6 +64,7 @@ pub async fn import(
         &prompt,
         target.timeout,
         /* json_mode */ true,
+        target.num_ctx_max,
     )
     .await
     .map_err(|e| AppError::Internal(anyhow::anyhow!("LLM import request failed: {}", e.0)))?;

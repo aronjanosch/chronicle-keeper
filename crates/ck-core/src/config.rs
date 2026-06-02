@@ -20,7 +20,10 @@ fn default_config() -> Vec<(&'static str, String)> {
         ("summary_provider", "ollama".into()),
         ("ollama_base_url", "http://localhost:11434".into()),
         ("ollama_model", "llama3.2".into()),
-        ("ollama_timeout_seconds", "120".into()),
+        ("ollama_timeout_seconds", "600".into()),
+        // Ollama defaults num_ctx to 2048 and silently truncates longer prompts;
+        // we auto-size the window per request and clamp it to this VRAM ceiling.
+        ("ollama_num_ctx_max", "65536".into()),
         ("litellm_model", "gemini/gemini-2.5-flash".into()),
         ("litellm_api_key", "".into()),
         ("litellm_api_base", "".into()),

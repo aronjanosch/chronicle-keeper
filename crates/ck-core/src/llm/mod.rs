@@ -272,6 +272,7 @@ pub struct Resolved {
     pub model: String,
     pub timeout: u64,
     pub needs_key: bool,
+    pub num_ctx_max: Option<u32>,
 }
 
 /// Resolve provider/model/base/timeout for a call, layering per-request overrides
@@ -332,6 +333,10 @@ pub fn resolve(
         .and_then(|s| s.parse().ok())
         .unwrap_or(120);
 
+    let num_ctx_max = (p.transport == Transport::Ollama)
+        .then(|| cfg.get("ollama_num_ctx_max").and_then(|s| s.parse().ok()))
+        .flatten();
+
     Ok(Resolved {
         provider,
         transport: p.transport,
@@ -340,7 +345,27 @@ pub fn resolve(
         model,
         timeout,
         needs_key: p.needs_key,
+        num_ctx_max,
     })
+}
+
+/// Rough token estimate. ~3 chars/token is conservative for German + lots of
+/// proper names (English averages ~4); undershooting here silently truncates.
+fn approx_tokens(chars: usize) -> usize {
+    chars / 3
+}
+
+/// Size the Ollama context window to the prompt: enough to hold the whole
+/// prompt plus room to generate, rounded up to a common bucket, clamped to the
+/// caller's memory ceiling. Below 2048 Ollama silently truncates long prompts.
+fn fit_num_ctx(prompt_chars: usize, max: u32) -> u32 {
+    let needed = approx_tokens(prompt_chars) as u32 + 2048;
+    for bucket in [4096u32, 8192, 16384, 32768, 65536, 131072] {
+        if bucket >= needed {
+            return bucket.min(max);
+        }
+    }
+    max
 }
 
 // ---- chat client ----
@@ -358,6 +383,7 @@ pub async fn chat(
     prompt: &str,
     timeout_secs: u64,
     json_mode: bool,
+    num_ctx_max: Option<u32>,
 ) -> Result<String, LlmError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(timeout_secs))
@@ -374,6 +400,19 @@ pub async fn chat(
             if json_mode {
                 body["format"] = json!("json");
             }
+            let num_ctx = num_ctx_max.map(|max| fit_num_ctx(prompt.len(), max));
+            if let Some(n) = num_ctx {
+                body["options"] = json!({ "num_ctx": n });
+            }
+            tracing::info!(
+                model,
+                prompt_chars = prompt.len(),
+                approx_prompt_tokens = approx_tokens(prompt.len()),
+                num_ctx,
+                num_ctx_max,
+                json_mode,
+                "ollama chat request"
+            );
             let url = format!("{}/api/chat", api_base.trim_end_matches('/'));
             // Local Ollama needs no auth (empty key → no header); Ollama Cloud
             // (ollama.com) authenticates with a Bearer key.
@@ -384,6 +423,24 @@ pub async fn chat(
             let resp = req.send().await.map_err(|e| LlmError(e.to_string()))?;
             let resp = error_for_status(resp).await?;
             let v: Value = resp.json().await.map_err(|e| LlmError(e.to_string()))?;
+            let prompt_eval_count = v.get("prompt_eval_count").and_then(Value::as_u64);
+            let eval_count = v.get("eval_count").and_then(Value::as_u64);
+            let done_reason = v.get("done_reason").and_then(Value::as_str);
+            tracing::info!(
+                prompt_eval_count,
+                eval_count,
+                done_reason,
+                "ollama chat response"
+            );
+            if let (Some(sent), Some(n)) = (prompt_eval_count, num_ctx) {
+                if sent >= u64::from(n) {
+                    tracing::warn!(
+                        prompt_eval_count = sent,
+                        num_ctx = n,
+                        "prompt hit the context ceiling — transcript truncated; raise ollama_num_ctx_max if VRAM allows"
+                    );
+                }
+            }
             Ok(v.get("message")
                 .and_then(|m| m.get("content"))
                 .and_then(Value::as_str)

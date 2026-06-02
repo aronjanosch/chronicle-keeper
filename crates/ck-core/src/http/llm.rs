@@ -91,6 +91,7 @@ pub async fn test_provider(
         "Hi",
         15,
         false,
+        None,
     )
     .await;
     let latency_ms = start.elapsed().as_millis() as i64;

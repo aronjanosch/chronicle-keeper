@@ -99,6 +99,7 @@ pub async fn summarize_session(
         &summary_prompt,
         resolved.timeout,
         false,
+        resolved.num_ctx_max,
     )
     .await
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Cloud LLM request failed: {}", e.0)))?;
@@ -119,6 +120,7 @@ pub async fn summarize_session(
         &build_metadata_prompt(&summary_text, &language, &known_tags),
         resolved.timeout,
         true,
+        resolved.num_ctx_max,
     )
     .await
     {
@@ -228,6 +230,7 @@ pub async fn generate_recap(
         &prompt,
         resolved.timeout,
         false,
+        resolved.num_ctx_max,
     )
     .await
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Recap LLM request failed: {}", e.0)))?;

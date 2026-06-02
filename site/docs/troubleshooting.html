@@ -90,6 +90,17 @@
           <li>See the <a href="llm-setup.html">LLM setup guide</a> for the exact steps per provider.</li>
         </ul>
 
+        <h2 id="llm-timeout">Summary errors with "request failed" or times out (local)</h2>
+        <p>A local model summarizing a long session can take several minutes. If it gives up partway:</p>
+        <ul>
+          <li>This is usually a <strong>timeout</strong>, not a real failure — the model was still working. Raise <code>ollama_timeout_seconds</code> in Settings and try again.</li>
+          <li>Check <code>ollama ps</code> in a terminal while it runs. <code>100% GPU</code> is good; if it shows <code>% CPU</code>, the model spilled out of memory and will be very slow — use a smaller model or lower the context cap.</li>
+          <li>Cloud providers avoid this entirely if you need a fast result.</li>
+        </ul>
+
+        <h2 id="llm-vague">Summary is vague or generic (local)</h2>
+        <p>If a local summary reads like it only skimmed the session — generic statements, missing the second half, wrong or missing names — the model likely wasn't seeing the whole transcript. <strong>Update to the latest version:</strong> Chronicle Keeper now sizes the context window to your full session automatically. Older builds silently truncated long transcripts. A larger model (e.g. <code>gemma4:e4b</code>) also captures more detail than a tiny one.</p>
+
         <h2 id="logs">Getting detailed logs</h2>
         <p>Building or running from source? Launch the core with verbose logging to see what's happening:</p>
         <pre><code>RUST_LOG=debug cargo run -p ck-core --bin ck-serve</code></pre>

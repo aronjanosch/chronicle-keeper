@@ -85,8 +85,19 @@
           <li>
             <h4>Pull a model</h4>
             <p>Open a terminal and download a model. A small, capable starting point:</p>
-            <pre><code>ollama pull gemma3:4b</code></pre>
-            <p>Larger models write better but need more RAM. See <a href="https://ollama.com/library" target="_blank" rel="noopener">the model library</a> — <code>llama3.1:8b</code> and <code>qwen2.5:7b</code> are solid all-rounders.</p>
+            <pre><code>ollama pull gemma4:e2b</code></pre>
+            <p>Models we'd recommend for session summaries, roughly smallest to best:</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Model</th><th>RAM</th><th>Good for</th></tr></thead>
+                <tbody>
+                  <tr><td><code>gemma4:e2b</code></td><td>~8&nbsp;GB</td><td>Lightweight machines; quick, decent summaries</td></tr>
+                  <tr><td><code>gemma4:e4b</code></td><td>~16&nbsp;GB</td><td>The sweet spot — strong multilingual summaries (incl. German), still local</td></tr>
+                  <tr><td><code>qwen3:30b</code> (A3B&nbsp;Instruct)</td><td>~16&nbsp;GB+</td><td>Faster <em>and</em> more detailed than gemma4 thanks to its mixture-of-experts design</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="muted">Browse more in <a href="https://ollama.com/library" target="_blank" rel="noopener">the model library</a>. For summarizing, prefer an <strong>Instruct</strong> model over a <strong>Thinking</strong> / reasoning one — thinking models are slower and can leak their reasoning into the summary.</p>
           </li>
           <li>
             <h4>Make sure it's running</h4>
@@ -101,8 +112,22 @@
 
         <div class="callout callout-note">
           <svg class="ic" viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/><rect x="6" y="6" width="4" height="4"/><path d="M6 1.5v2M10 1.5v2M6 12.5v2M10 12.5v2M1.5 6h2M1.5 10h2M12.5 6h2M12.5 10h2"/></svg>
-          <div class="c-body"><strong>How big a model can I run?</strong><p>Rough rule: a model needs about as many GB of RAM as it has billions of parameters. A 7–8B model wants ~8&nbsp;GB free; pick a 3–4B model on lighter machines. Ollama's official docs cover hardware in detail: <a href="https://github.com/ollama/ollama/blob/main/docs/faq.md" target="_blank" rel="noopener">Ollama FAQ →</a></p></div>
+          <div class="c-body"><strong>How big a model can I run?</strong><p>Rough rule: a model needs about as many GB of RAM as it has billions of parameters. A 7–8B model wants ~8&nbsp;GB free; pick a 3–4B model on lighter machines. Mixture-of-experts models (like <code>gemma4:e4b</code> or <code>qwen3:30b</code>) are an exception — they're large on disk but only activate a fraction at a time, so they run fast even on a 16&nbsp;GB laptop. Ollama's official docs cover hardware in detail: <a href="https://github.com/ollama/ollama/blob/main/docs/faq.md" target="_blank" rel="noopener">Ollama FAQ →</a></p></div>
         </div>
+
+        <h3 id="long-sessions">Long sessions &amp; speed</h3>
+        <p>A full 3–4 hour session is a <em>lot</em> of text. Chronicle Keeper automatically sizes the model's context window to fit your whole transcript, so the summary always reflects the entire session — not just the first part. You don't need to configure anything.</p>
+
+        <div class="callout callout-note">
+          <svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>
+          <div class="c-body"><strong>Local summaries take a few minutes — that's normal.</strong><p>On a typical laptop, reading a long transcript and writing a summary can take <strong>3–5 minutes</strong> with a local model. The app isn't frozen; it's working. Cloud providers are much faster (seconds) if you're in a hurry.</p></div>
+        </div>
+
+        <p>Two advanced settings let you tune the local behaviour if needed (most people never touch them):</p>
+        <ul>
+          <li><strong>Context window cap</strong> (<code>ollama_num_ctx_max</code>) — the largest window the app will request. The default fits a long session; lower it only if a big model spills onto your CPU and crawls.</li>
+          <li><strong>Timeout</strong> (<code>ollama_timeout_seconds</code>) — how long to wait before giving up. The default (several minutes) covers long local runs; raise it on slower machines or for very long sessions.</li>
+        </ul>
 
         <hr />
 

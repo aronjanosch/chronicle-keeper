@@ -62,7 +62,11 @@ On first transcription the speech model (Parakeet TDT v3) downloads once.
 Open **Settings** and pick one:
 
 - **Local (free):** run [Ollama](https://ollama.com) — `ollama serve && ollama pull gemma4:e2b`.
-- **Cloud:** paste an Anthropic or any OpenAI-compatible API key. Keys stay on your machine.
+  On a 16&nbsp;GB+ machine, `gemma4:e4b` gives noticeably better summaries. The app auto-sizes the
+  context to your full session, so local summaries are complete but take a few minutes.
+- **Cloud:** paste an Anthropic or any OpenAI-compatible API key. Keys stay on your machine. Faster, pay per use.
+
+See the [LLM setup guide](https://aronjanosch.github.io/chronicle-keeper/docs/llm-setup.html) for model recommendations and tuning.
 
 ## How it works
 

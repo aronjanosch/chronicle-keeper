@@ -33,6 +33,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/config", get(read_config).put(write_config))
+        .route("/sync/force-mirror", post(force_mirror))
         // campaigns
         .route("/campaigns", get(campaigns::list).post(campaigns::create))
         .route(
@@ -181,6 +182,12 @@ async fn write_config(
         crate::sync::sync_once_recording_error(&sync_state).await;
     });
     Ok(Json(to_response(&map)))
+}
+
+/// Make the server an exact copy of this device. Destructive; UI-confirmed.
+async fn force_mirror(State(state): State<AppState>) -> AppResult<Json<Value>> {
+    crate::sync::force_mirror_sync(&state).await?;
+    Ok(Json(json!({ "status": "ok" })))
 }
 
 fn validate_output_root(path: &str) -> AppResult<()> {

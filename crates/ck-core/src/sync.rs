@@ -4,7 +4,8 @@
 //! cycle pushes all dirty records to the server in one `POST /sync`, receives
 //! the server's changes since the last cursor, applies them locally, then
 //! clears the `dirty` flags it pushed. The server is authoritative — pulled
-//! records overwrite local copies and are marked clean. See `docs/SYNC_PROTOCOL.md`.
+//! records overwrite local copies and are marked clean. The other end of the
+//! wire is the open-source reference server `chronicle-keeper-sync-server`.
 //!
 //! Covers campaigns, sessions, artifacts (transcripts + summaries), and codex
 //! entries. Deletions propagate too: campaigns/sessions/codex soft-delete via a
@@ -23,7 +24,7 @@ use crate::state::AppState;
 
 const SYNC_PATH: &str = "/sync";
 
-// Wire DTOs — mirror docs/SYNC_PROTOCOL.md.
+// Wire DTOs — mirror the sync server's Pydantic models (`app/models.py`).
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Campaign {
@@ -115,6 +116,8 @@ pub struct SyncPayload {
 pub struct SyncRequest {
     pub client_id: String,
     pub since: Option<String>,
+    /// `"merge"` (normal) or `"mirror"` (see [`force_mirror_sync`]).
+    pub mode: &'static str,
     pub push: SyncPayload,
 }
 
@@ -124,16 +127,32 @@ pub struct SyncResponse {
     pub pull: SyncPayload,
 }
 
-/// Gather every locally-dirty record into a push payload.
+/// Gather every locally-dirty record into a push payload (normal sync).
 pub fn collect_dirty(conn: &Connection) -> AppResult<SyncPayload> {
+    collect(conn, true)
+}
+
+/// Gather the device's full live state for a mirror push. See [`force_mirror_sync`].
+pub fn collect_all(conn: &Connection) -> AppResult<SyncPayload> {
+    collect(conn, false)
+}
+
+/// Body of [`collect_dirty`]/[`collect_all`]: dirty rows only, or all live rows.
+fn collect(conn: &Connection, dirty_only: bool) -> AppResult<SyncPayload> {
     let mut payload = SyncPayload::default();
 
-    let mut stmt = conn.prepare(
+    let row_filter = if dirty_only {
+        "WHERE dirty = 1"
+    } else {
+        "WHERE deleted = 0"
+    };
+
+    let mut stmt = conn.prepare(&format!(
         "SELECT campaign_id, name, next_session_number, system, gm, gm_pronouns, setting, \
          default_language, players_json, extra_info, codex, codex_notes, recap, recap_updated_at, \
          updated_at, deleted \
-         FROM campaigns WHERE dirty = 1",
-    )?;
+         FROM campaigns {row_filter}",
+    ))?;
     let rows = stmt.query_map([], |r| {
         let players_json: String = r.get("players_json")?;
         Ok(Campaign {
@@ -170,10 +189,10 @@ pub fn collect_dirty(conn: &Connection) -> AppResult<SyncPayload> {
     }
     drop(stmt);
 
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT session_id, campaign_id, session_number, title, date, metadata_json, \
-         notes, speakers_json, updated_at, deleted FROM sessions WHERE dirty = 1",
-    )?;
+         notes, speakers_json, updated_at, deleted FROM sessions {row_filter}",
+    ))?;
     let rows = stmt.query_map([], |r| {
         let metadata_json: String = r.get("metadata_json")?;
         let speakers_json: String = r.get("speakers_json")?;
@@ -195,10 +214,12 @@ pub fn collect_dirty(conn: &Connection) -> AppResult<SyncPayload> {
     }
     drop(stmt);
 
-    let mut stmt = conn.prepare(
+    // Artifacts have no `deleted` column (hard-deleted): mirror sends them all.
+    let artifact_filter = if dirty_only { "WHERE dirty = 1" } else { "" };
+    let mut stmt = conn.prepare(&format!(
         "SELECT artifact_id, session_id, kind, provider, model, content, created_at \
-         FROM artifacts WHERE dirty = 1",
-    )?;
+         FROM artifacts {artifact_filter}",
+    ))?;
     let rows = stmt.query_map([], |r| {
         Ok(Artifact {
             artifact_id: r.get("artifact_id")?,
@@ -215,12 +236,15 @@ pub fn collect_dirty(conn: &Connection) -> AppResult<SyncPayload> {
     }
     drop(stmt);
 
-    payload.deleted_artifact_ids = crate::store::artifacts::collect_deleted_dirty(conn)?;
+    // A mirror push prunes by absence, so it sends no deletion tombstones.
+    if dirty_only {
+        payload.deleted_artifact_ids = crate::store::artifacts::collect_deleted_dirty(conn)?;
+    }
 
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT entry_id, campaign_id, name, kind, body, detail, source, updated_at, deleted \
-         FROM codex_entries WHERE dirty = 1",
-    )?;
+         FROM codex_entries {row_filter}",
+    ))?;
     let rows = stmt.query_map([], |r| {
         Ok(CodexEntry {
             entry_id: r.get("entry_id")?,
@@ -364,6 +388,17 @@ pub fn apply_pull(conn: &Connection, pull: &SyncPayload) -> AppResult<()> {
     }
 
     for e in &pull.codex_entries {
+        // Local-only UNIQUE(campaign, lower(name), kind) over live rows: a live
+        // pulled entry can collide with a different local id (same NPC on two
+        // devices). Server wins — drop the local duplicate before upserting.
+        if !e.deleted {
+            conn.execute(
+                "DELETE FROM codex_entries \
+                 WHERE campaign_id = ?1 AND lower(name) = lower(?2) AND kind = ?3 \
+                   AND deleted = 0 AND entry_id != ?4",
+                params![e.campaign_id, e.name, e.kind, e.entry_id],
+            )?;
+        }
         conn.execute(
             "INSERT INTO codex_entries \
              (entry_id, campaign_id, name, kind, body, detail, source, updated_at, deleted, dirty) \
@@ -421,6 +456,7 @@ pub async fn sync_once(state: &AppState) -> AppResult<()> {
             SyncRequest {
                 client_id,
                 since,
+                mode: "merge",
                 push,
             },
         )))
@@ -443,6 +479,63 @@ pub async fn sync_once(state: &AppState) -> AppResult<()> {
         .json()
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("sync response decode failed: {e}")))?;
+
+    state.with_db(|conn| -> AppResult<()> {
+        apply_pull(conn, &resp.pull)?;
+        clear_dirty(conn, &req.push)?;
+        config::set_value(conn, "last_sync_at", &resp.synced_at)?;
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
+/// Push every live local record with `mode = "mirror"` so the server deletes
+/// anything the push omits. Destructive and irreversible — the wipe propagates
+/// to every other device. User-triggered only, never the background loop.
+/// `BadRequest` if sync is not configured.
+pub async fn force_mirror_sync(state: &AppState) -> AppResult<()> {
+    let prep = state.with_db(|conn| -> AppResult<Option<(String, String, SyncRequest)>> {
+        let (Some(url), Some(token)) = (
+            config::get_value(conn, "sync_url")?,
+            config::get_value(conn, "sync_token")?,
+        ) else {
+            return Ok(None); // sync not configured
+        };
+        let client_id = ensure_client_id(conn)?;
+        let since = config::get_value(conn, "last_sync_at")?;
+        let push = collect_all(conn)?;
+        Ok(Some((
+            url,
+            token,
+            SyncRequest {
+                client_id,
+                since,
+                mode: "mirror",
+                push,
+            },
+        )))
+    })?;
+
+    let Some((url, token, req)) = prep else {
+        return Err(AppError::BadRequest(
+            "Sync is not configured — set a sync URL and token first.".into(),
+        ));
+    };
+
+    let endpoint = format!("{}{SYNC_PATH}", url.trim_end_matches('/'));
+    let resp: SyncResponse = reqwest::Client::new()
+        .post(&endpoint)
+        .bearer_auth(&token)
+        .json(&req)
+        .send()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("mirror sync request failed: {e}")))?
+        .error_for_status()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("mirror sync server error: {e}")))?
+        .json()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("mirror sync response decode failed: {e}")))?;
 
     state.with_db(|conn| -> AppResult<()> {
         apply_pull(conn, &resp.pull)?;
@@ -509,6 +602,47 @@ mod tests {
         clear_dirty(&conn, &push).unwrap();
         let empty = collect_dirty(&conn).unwrap();
         assert!(empty.campaigns.is_empty() && empty.artifacts.is_empty());
+    }
+
+    #[test]
+    fn collect_all_returns_live_rows_not_just_dirty() {
+        use crate::store::sessions;
+        let conn = crate::db::open_in_memory().unwrap();
+        campaigns::create_campaign(&conn, "c1", "Camp", 1).unwrap();
+        // A clean (already-synced) row: nothing dirty, but mirror still sends it.
+        conn.execute("UPDATE campaigns SET dirty = 0", []).unwrap();
+        assert!(
+            collect_dirty(&conn).unwrap().campaigns.is_empty(),
+            "clean row is not dirty"
+        );
+        let all = collect_all(&conn).unwrap();
+        assert_eq!(all.campaigns.len(), 1);
+        assert_eq!(all.campaigns[0].campaign_id, "c1");
+        assert!(
+            all.deleted_artifact_ids.is_empty(),
+            "mirror push sends no tombstones"
+        );
+
+        // A soft-deleted campaign is omitted from a mirror push (server prunes it).
+        campaigns::create_campaign(&conn, "c2", "Doomed", 1).unwrap();
+        conn.execute(
+            "INSERT INTO sessions (session_id, campaign_id, session_number) VALUES ('s1','c2',1)",
+            [],
+        )
+        .unwrap();
+        sessions::delete_session(&conn, "s1").unwrap();
+        conn.execute(
+            "UPDATE campaigns SET deleted = 1 WHERE campaign_id = 'c2'",
+            [],
+        )
+        .unwrap();
+        let all = collect_all(&conn).unwrap();
+        assert_eq!(all.campaigns.len(), 1, "soft-deleted campaign omitted");
+        assert_eq!(all.campaigns[0].campaign_id, "c1");
+        assert!(
+            all.sessions.iter().all(|s| s.session_id != "s1"),
+            "soft-deleted session omitted"
+        );
     }
 
     #[test]
@@ -689,6 +823,50 @@ mod tests {
         };
         apply_pull(&conn, &pull_del).unwrap();
         assert!(codex_store::list_entries(&conn, "c1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_pull_resolves_codex_dedup_collision() {
+        use crate::models::CodexEntryCreate;
+        use crate::store::codex as codex_store;
+
+        let conn = crate::db::open_in_memory().unwrap();
+        campaigns::create_campaign(&conn, "c1", "Camp", 1).unwrap();
+        // Local "Aragorn (npc)" with its own entry_id.
+        let local = codex_store::create_entry(
+            &conn,
+            "c1",
+            &CodexEntryCreate {
+                name: "Aragorn".into(),
+                kind: "npc".into(),
+                body: "local".into(),
+                detail: String::new(),
+            },
+        )
+        .unwrap();
+
+        // Same NPC from another device, different entry_id — collides on the
+        // natural key. Server copy must win without tripping the dedup index.
+        let pull = SyncPayload {
+            codex_entries: vec![CodexEntry {
+                entry_id: "remote-id".into(),
+                campaign_id: "c1".into(),
+                name: "Aragorn".into(),
+                kind: "npc".into(),
+                body: "remote".into(),
+                source: "manual".into(),
+                updated_at: "2026-06-02T00:00:00Z".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        apply_pull(&conn, &pull).unwrap();
+
+        let entries = codex_store::list_entries(&conn, "c1").unwrap();
+        assert_eq!(entries.len(), 1, "the duplicate was resolved, not doubled");
+        assert_eq!(entries[0].entry_id, "remote-id", "server copy wins");
+        assert_eq!(entries[0].body, "remote");
+        assert_ne!(entries[0].entry_id, local.entry_id, "local duplicate dropped");
     }
 
     #[test]

@@ -77,16 +77,12 @@ pub fn run() {
 /// writes carry a persisted `dirty` flag, so anything missed on shutdown is
 /// pushed on the next launch — no explicit shutdown flush needed.
 async fn sync_loop(state: ck_core::state::AppState) {
-    if let Err(e) = ck_core::sync::sync_once(&state).await {
-        tracing::warn!("startup sync failed: {e}");
-    }
+    ck_core::sync::sync_once_recording_error(&state).await;
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));
     tick.tick().await; // first tick is immediate — consume it
     loop {
         tick.tick().await;
-        if let Err(e) = ck_core::sync::sync_once(&state).await {
-            tracing::warn!("periodic sync failed: {e}");
-        }
+        ck_core::sync::sync_once_recording_error(&state).await;
     }
 }
 

@@ -12,6 +12,7 @@
 //! `store::artifacts`). Audio is never synced — `tracks_json`/`session_path` are
 //! device-local. The Tauri shell drives [`sync_once`] on a background interval.
 
+use chrono::Local;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -451,6 +452,33 @@ pub async fn sync_once(state: &AppState) -> AppResult<()> {
     })?;
 
     Ok(())
+}
+
+/// Run one sync cycle and persist the outcome to config so the UI can display
+/// last-synced time and any error. Swallows the error after recording it.
+pub async fn sync_once_recording_error(state: &AppState) {
+    match sync_once(state).await {
+        Ok(()) => {
+            let ts = Local::now()
+                .naive_local()
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string();
+            state
+                .with_db(|conn| -> AppResult<()> {
+                    config::set_value(conn, "last_sync_ts", &ts)?;
+                    config::set_value(conn, "last_sync_error", "")?;
+                    Ok(())
+                })
+                .ok();
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            tracing::warn!("sync failed: {msg}");
+            state
+                .with_db(|conn| config::set_value(conn, "last_sync_error", &msg))
+                .ok();
+        }
+    }
 }
 
 #[cfg(test)]

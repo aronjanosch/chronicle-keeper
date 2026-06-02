@@ -130,13 +130,15 @@ async fn run_summarize(
     // so the user sees motion instead of a frozen pane.
     emit(SummaryProgress::Reading);
     let summary_text = llm::chat_stream(
-        resolved.transport,
-        &resolved.api_base,
-        &resolved.api_key,
-        &resolved.model,
-        &summary_prompt,
-        resolved.timeout,
-        resolved.num_ctx_max,
+        &llm::ChatRequest {
+            transport: resolved.transport,
+            api_base: &resolved.api_base,
+            api_key: &resolved.api_key,
+            model: &resolved.model,
+            prompt: &summary_prompt,
+            timeout_secs: resolved.timeout,
+            num_ctx_max: resolved.num_ctx_max,
+        },
         |tok| emit(SummaryProgress::Token(tok.to_string())),
     )
     .await
@@ -152,14 +154,16 @@ async fn run_summarize(
     // looks identical to "no metadata found" and hides a broken auto-fill.
     emit(SummaryProgress::Metadata);
     let metadata_text = match llm::chat(
-        resolved.transport,
-        &resolved.api_base,
-        &resolved.api_key,
-        &resolved.model,
-        &build_metadata_prompt(&summary_text, &language, &known_tags),
-        resolved.timeout,
+        &llm::ChatRequest {
+            transport: resolved.transport,
+            api_base: &resolved.api_base,
+            api_key: &resolved.api_key,
+            model: &resolved.model,
+            prompt: &build_metadata_prompt(&summary_text, &language, &known_tags),
+            timeout_secs: resolved.timeout,
+            num_ctx_max: resolved.num_ctx_max,
+        },
         true,
-        resolved.num_ctx_max,
     )
     .await
     {
@@ -262,14 +266,16 @@ pub async fn generate_recap(
     let prompt = build_recap_prompt(&campaign.name, &sessions_block, &campaign.default_language);
 
     let recap_text = llm::chat(
-        resolved.transport,
-        &resolved.api_base,
-        &resolved.api_key,
-        &resolved.model,
-        &prompt,
-        resolved.timeout,
+        &llm::ChatRequest {
+            transport: resolved.transport,
+            api_base: &resolved.api_base,
+            api_key: &resolved.api_key,
+            model: &resolved.model,
+            prompt: &prompt,
+            timeout_secs: resolved.timeout,
+            num_ctx_max: resolved.num_ctx_max,
+        },
         false,
-        resolved.num_ctx_max,
     )
     .await
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Recap LLM request failed: {}", e.0)))?;

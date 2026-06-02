@@ -375,19 +375,29 @@ fn fit_num_ctx(prompt_chars: usize, max: u32) -> u32 {
 #[error("{0}")]
 pub struct LlmError(pub String);
 
+pub struct ChatRequest<'a> {
+    pub transport: Transport,
+    pub api_base: &'a str,
+    pub api_key: &'a str,
+    pub model: &'a str,
+    pub prompt: &'a str,
+    pub timeout_secs: u64,
+    pub num_ctx_max: Option<u32>,
+}
+
 /// One chat completion. Returns the assistant message text.
-pub async fn chat(
-    transport: Transport,
-    api_base: &str,
-    api_key: &str,
-    model: &str,
-    prompt: &str,
-    timeout_secs: u64,
-    json_mode: bool,
-    num_ctx_max: Option<u32>,
-) -> Result<String, LlmError> {
+pub async fn chat(req: &ChatRequest<'_>, json_mode: bool) -> Result<String, LlmError> {
+    let ChatRequest {
+        transport,
+        api_base,
+        api_key,
+        model,
+        prompt,
+        timeout_secs,
+        num_ctx_max,
+    } = req;
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(timeout_secs))
+        .timeout(Duration::from_secs(*timeout_secs))
         .build()
         .map_err(|e| LlmError(e.to_string()))?;
 
@@ -487,7 +497,7 @@ pub async fn chat(
             let url = format!("{}/v1/messages", base.trim_end_matches('/'));
             let resp = client
                 .post(url)
-                .header("x-api-key", api_key)
+                .header("x-api-key", *api_key)
                 .header("anthropic-version", "2023-06-01")
                 .json(&body)
                 .send()
@@ -603,28 +613,31 @@ fn parse_stream_line(transport: Transport, line: &str) -> Result<LineOutcome, Ll
 /// via their native SSE deltas. Never used for JSON-mode calls — partial JSON is
 /// unparseable, so the metadata pass stays on the blocking `chat`.
 pub async fn chat_stream<F: FnMut(&str)>(
-    transport: Transport,
-    api_base: &str,
-    api_key: &str,
-    model: &str,
-    prompt: &str,
-    timeout_secs: u64,
-    num_ctx_max: Option<u32>,
+    req: &ChatRequest<'_>,
     mut on_token: F,
 ) -> Result<String, LlmError> {
-    if transport == Transport::Unsupported {
+    let ChatRequest {
+        transport,
+        api_base,
+        api_key,
+        model,
+        prompt,
+        timeout_secs,
+        num_ctx_max,
+    } = req;
+    if *transport == Transport::Unsupported {
         return Err(LlmError(
             "This provider's native client is not yet available in this build.".into(),
         ));
     }
 
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(timeout_secs))
+        .timeout(Duration::from_secs(*timeout_secs))
         .build()
         .map_err(|e| LlmError(e.to_string()))?;
 
     // Build the per-transport streaming request.
-    let num_ctx = (transport == Transport::Ollama)
+    let num_ctx = (*transport == Transport::Ollama)
         .then(|| num_ctx_max.map(|max| fit_num_ctx(prompt.len(), max)))
         .flatten();
     let req = match transport {
@@ -680,7 +693,7 @@ pub async fn chat_stream<F: FnMut(&str)>(
             let url = format!("{}/v1/messages", base.trim_end_matches('/'));
             client
                 .post(url)
-                .header("x-api-key", api_key)
+                .header("x-api-key", *api_key)
                 .header("anthropic-version", "2023-06-01")
                 .json(&body)
         }
@@ -706,7 +719,7 @@ pub async fn chat_stream<F: FnMut(&str)>(
             if line.is_empty() {
                 continue;
             }
-            let outcome = parse_stream_line(transport, line)?;
+            let outcome = parse_stream_line(*transport, line)?;
             if let Some(tok) = outcome.token {
                 full.push_str(&tok);
                 on_token(&tok);

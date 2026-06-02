@@ -57,14 +57,16 @@ pub async fn import(
 
     let prompt = build_prompt(text, &language);
     let raw = llm::chat(
-        target.transport,
-        &target.api_base,
-        &target.api_key,
-        &target.model,
-        &prompt,
-        target.timeout,
+        &llm::ChatRequest {
+            transport: target.transport,
+            api_base: &target.api_base,
+            api_key: &target.api_key,
+            model: &target.model,
+            prompt: &prompt,
+            timeout_secs: target.timeout,
+            num_ctx_max: target.num_ctx_max,
+        },
         /* json_mode */ true,
-        target.num_ctx_max,
     )
     .await
     .map_err(|e| AppError::Internal(anyhow::anyhow!("LLM import request failed: {}", e.0)))?;

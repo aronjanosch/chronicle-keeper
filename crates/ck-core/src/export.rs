@@ -73,6 +73,74 @@ pub fn export_session(state: &AppState, req: &ExportRequest) -> AppResult<Export
     })
 }
 
+/// Zip the whole world folder — files are truth, so export is honesty, not
+/// transformation. `.ck/index.db*` (rebuildable cache) is excluded;
+/// `.ck/config.toml` and everything else ships. `include_audio: false` drops
+/// `Sessions/*/audio/` (often GBs).
+pub fn export_world(world_root: &std::path::Path, include_audio: bool) -> AppResult<String> {
+    use std::io::Write;
+
+    let name = world_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("world");
+    let out_path = world_root
+        .parent()
+        .unwrap_or(world_root)
+        .join(format!("{}.zip", sanitize_filename(name)));
+
+    let mut files = Vec::new();
+    collect_files(world_root, &mut files);
+
+    let file = std::fs::File::create(&out_path)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("create zip: {e}")))?;
+    let mut w = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .large_file(true);
+
+    for abs in files {
+        let rel = abs
+            .strip_prefix(world_root)
+            .unwrap_or(&abs)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if rel.starts_with(".ck/index.db") {
+            continue;
+        }
+        if !include_audio && is_session_audio(&rel) {
+            continue;
+        }
+        let bytes = std::fs::read(&abs)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("read {rel}: {e}")))?;
+        w.start_file(format!("{name}/{rel}"), opts)
+            .and_then(|()| w.write_all(&bytes).map_err(Into::into))
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("zip {rel}: {e}")))?;
+    }
+    w.finish()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("finish zip: {e}")))?;
+    Ok(out_path.to_string_lossy().into_owned())
+}
+
+fn is_session_audio(rel: &str) -> bool {
+    let mut parts = rel.split('/');
+    parts.next() == Some("Sessions") && parts.next().is_some() && parts.next() == Some("audio")
+}
+
+fn collect_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(&path, out);
+        } else {
+            out.push(path);
+        }
+    }
+}
+
 fn resolve_summary_text(
     conn: &rusqlite::Connection,
     session_id: &str,
@@ -126,4 +194,42 @@ fn plain(v: &Value) -> String {
 
 fn sanitize_filename(name: &str) -> String {
     name.replace(['/', '\\', ':'], "_")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_world_excludes_cache_and_optionally_audio() {
+        let dir = std::env::temp_dir().join(format!("ck-export-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let world = dir.join("My World");
+        std::fs::create_dir_all(world.join(".ck")).unwrap();
+        std::fs::create_dir_all(world.join("Codex")).unwrap();
+        std::fs::create_dir_all(world.join("Sessions/001/audio")).unwrap();
+        std::fs::write(world.join(".ck/config.toml"), "id = \"w\"").unwrap();
+        std::fs::write(world.join(".ck/index.db"), "cache").unwrap();
+        std::fs::write(world.join("Codex/Page.md"), "hello").unwrap();
+        std::fs::write(world.join("Sessions/001/session.toml"), "n = 1").unwrap();
+        std::fs::write(world.join("Sessions/001/audio/track.flac"), "audio").unwrap();
+
+        let path = export_world(&world, false).unwrap();
+        let names = zip_names(&path);
+        assert!(names.contains(&"My World/.ck/config.toml".to_string()));
+        assert!(names.contains(&"My World/Codex/Page.md".to_string()));
+        assert!(names.contains(&"My World/Sessions/001/session.toml".to_string()));
+        assert!(!names.iter().any(|n| n.contains("index.db")));
+        assert!(!names.iter().any(|n| n.contains("/audio/")));
+
+        let path = export_world(&world, true).unwrap();
+        assert!(zip_names(&path).contains(&"My World/Sessions/001/audio/track.flac".to_string()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn zip_names(path: &str) -> Vec<String> {
+        let f = std::fs::File::open(path).unwrap();
+        let mut z = zip::ZipArchive::new(f).unwrap();
+        (0..z.len()).map(|i| z.by_index(i).unwrap().name().to_string()).collect()
+    }
 }

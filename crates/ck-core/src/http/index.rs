@@ -36,6 +36,17 @@ pub async fn links(
     })?
 }
 
+/// Grouped vault diagnostics for the Explorer panel (Phase 3).
+pub async fn diagnostics(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let root = vault_root(&state, &campaign_id)?;
+    state.with_index(&root, |conn| {
+        Ok(Json(serde_json::to_value(index::diagnostics(conn, &root)?).unwrap()))
+    })?
+}
+
 #[derive(Deserialize)]
 pub struct SearchQuery {
     #[serde(default)]

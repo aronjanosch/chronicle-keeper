@@ -10,7 +10,7 @@ use rusqlite::{params, Connection};
 use crate::error::{AppError, AppResult};
 use crate::vault;
 
-pub const SCHEMA_VERSION: &str = "3";
+pub const SCHEMA_VERSION: &str = "4";
 
 const SCHEMA: &str = "
 CREATE TABLE pages (
@@ -48,6 +48,15 @@ CREATE TABLE page_headings (
     text      TEXT NOT NULL,
     anchor    TEXT NOT NULL,
     PRIMARY KEY (page_path, anchor)
+);
+CREATE TABLE page_media (
+    source_path TEXT NOT NULL REFERENCES pages(path) ON DELETE CASCADE,
+    target      TEXT NOT NULL,
+    PRIMARY KEY (source_path, target)
+);
+CREATE TABLE scan_errors (
+    path  TEXT PRIMARY KEY,
+    error TEXT NOT NULL
 );
 CREATE VIRTUAL TABLE pages_fts USING fts5(path UNINDEXED, title, summary, body);
 CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -137,8 +146,19 @@ pub struct ParsedPage {
     pub tags: Vec<String>,
     pub headings: Vec<(i64, String, String)>, // (level, text, anchor)
     pub links: Vec<RawLink>,
+    pub media: Vec<String>, // ![[file.ext]] embed targets (name only, no |size)
     pub content_hash: String,
     pub modified_at: i64,
+}
+
+// File embeds (`![[img.png]]`) are media; extensionless `![[Note]]`
+// transclusions stay deferred.
+fn is_media_target(name: &str) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| !e.eq_ignore_ascii_case("md"))
+        .unwrap_or(false)
 }
 
 pub(crate) fn normalize_name(s: &str) -> String {
@@ -163,8 +183,14 @@ fn fnv1a(bytes: &[u8]) -> String {
 }
 
 // Body scan for headings + wikilinks, skipping fenced code blocks.
-// `![[embeds]]` are skipped (media/transclusion deferred).
-fn scan_body(body: &str, headings: &mut Vec<(i64, String, String)>, links: &mut Vec<RawLink>) {
+// `![[file.ext]]` embeds are collected as media refs; `![[Note]]`
+// transclusions are skipped (deferred).
+fn scan_body(
+    body: &str,
+    headings: &mut Vec<(i64, String, String)>,
+    links: &mut Vec<RawLink>,
+    media: &mut Vec<String>,
+) {
     let mut in_fence = false;
     for line in body.lines() {
         let trimmed = line.trim_start();
@@ -194,10 +220,16 @@ fn scan_body(body: &str, headings: &mut Vec<(i64, String, String)>, links: &mut 
             };
             let raw = &line[start + 2..end];
             i = end + 2;
-            if embed || raw.trim().is_empty() {
+            if raw.trim().is_empty() {
                 continue;
             }
-            let target = raw.split('|').next().unwrap_or(raw);
+            let target = raw.split('|').next().unwrap_or(raw).trim();
+            if embed {
+                if is_media_target(target) && !media.iter().any(|m| m == target) {
+                    media.push(target.to_string());
+                }
+                continue;
+            }
             let (name, heading) = match target.split_once('#') {
                 // Block refs ([[Page#^id]]) are a locked Drop — not indexed.
                 Some((_, h)) if h.starts_with('^') => continue,
@@ -217,6 +249,18 @@ fn scan_body(body: &str, headings: &mut Vec<(i64, String, String)>, links: &mut 
             }
         }
     }
+}
+
+fn rel_of(vault_root: &Path, abs: &Path) -> String {
+    abs.strip_prefix(vault_root)
+        .unwrap_or(abs)
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => s.to_str(),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub fn parse_page(vault_root: &Path, abs: &Path, content: &str) -> ParsedPage {
@@ -261,18 +305,10 @@ pub fn parse_page(vault_root: &Path, abs: &Path, content: &str) -> ParsedPage {
 
     let mut headings = Vec::new();
     let mut links = Vec::new();
-    scan_body(body, &mut headings, &mut links);
+    let mut media = Vec::new();
+    scan_body(body, &mut headings, &mut links, &mut media);
 
-    let rel = abs
-        .strip_prefix(vault_root)
-        .unwrap_or(abs)
-        .components()
-        .filter_map(|c| match c {
-            std::path::Component::Normal(s) => s.to_str(),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/");
+    let rel = rel_of(vault_root, abs);
     let modified_at = abs
         .metadata()
         .and_then(|m| m.modified())
@@ -291,6 +327,7 @@ pub fn parse_page(vault_root: &Path, abs: &Path, content: &str) -> ParsedPage {
         tags,
         headings,
         links,
+        media,
         content_hash: fnv1a(content.as_bytes()),
         modified_at,
     }
@@ -329,6 +366,13 @@ fn insert_page(conn: &Connection, p: &ParsedPage, body: &str) -> AppResult<()> {
             params![p.path, link.link_text, link.heading],
         )?;
     }
+    for target in &p.media {
+        conn.execute(
+            "INSERT OR IGNORE INTO page_media (source_path, target) VALUES (?1, ?2)",
+            params![p.path, target],
+        )?;
+    }
+    conn.execute("DELETE FROM scan_errors WHERE path = ?1", params![p.path])?;
     conn.execute("DELETE FROM pages_fts WHERE path = ?1", params![p.path])?;
     conn.execute(
         "INSERT INTO pages_fts (path, title, summary, body) VALUES (?1, ?2, ?3, ?4)",
@@ -340,8 +384,19 @@ fn insert_page(conn: &Connection, p: &ParsedPage, body: &str) -> AppResult<()> {
 /// Re-index one page from disk (or drop it if the file is gone).
 pub fn upsert_path(conn: &Connection, vault_root: &Path, rel: &str) -> AppResult<()> {
     let abs = vault_root.join(rel);
-    let Ok(content) = std::fs::read_to_string(&abs) else {
-        return remove_path(conn, rel);
+    let content = match std::fs::read_to_string(&abs) {
+        Ok(c) => c,
+        Err(e) => {
+            remove_path(conn, rel)?;
+            if abs.exists() {
+                // Unreadable (e.g. not UTF-8) — surface in diagnostics.
+                conn.execute(
+                    "INSERT OR REPLACE INTO scan_errors (path, error) VALUES (?1, ?2)",
+                    params![rel, e.to_string()],
+                )?;
+            }
+            return Ok(());
+        }
     };
     let parsed = parse_page(vault_root, &abs, &content);
     let (_, body) = vault::split_frontmatter(&content);
@@ -352,6 +407,7 @@ pub fn upsert_path(conn: &Connection, vault_root: &Path, rel: &str) -> AppResult
 pub fn remove_path(conn: &Connection, rel: &str) -> AppResult<()> {
     conn.execute("DELETE FROM pages WHERE path = ?1", params![rel])?;
     conn.execute("DELETE FROM pages_fts WHERE path = ?1", params![rel])?;
+    conn.execute("DELETE FROM scan_errors WHERE path = ?1", params![rel])?;
     resolve_links(conn)
 }
 
@@ -360,10 +416,19 @@ pub fn rebuild(conn: &Connection, vault_root: &Path) -> AppResult<()> {
     let mut files = Vec::new();
     collect_md(vault_root, &mut files);
     let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM scan_errors", [])?;
     let mut seen: Vec<String> = Vec::with_capacity(files.len());
     for abs in &files {
-        let Ok(content) = std::fs::read_to_string(abs) else {
-            continue;
+        let content = match std::fs::read_to_string(abs) {
+            Ok(c) => c,
+            Err(e) => {
+                let rel = rel_of(vault_root, abs);
+                tx.execute(
+                    "INSERT OR REPLACE INTO scan_errors (path, error) VALUES (?1, ?2)",
+                    params![rel, e.to_string()],
+                )?;
+                continue;
+            }
         };
         let parsed = parse_page(vault_root, abs, &content);
         seen.push(parsed.path.clone());
@@ -563,6 +628,128 @@ pub fn page_meta(conn: &Connection) -> AppResult<HashMap<String, (Vec<String>, V
     Ok(out)
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct Diagnostics {
+    pub broken_links: Vec<BrokenLink>,
+    pub orphans: Vec<OrphanPage>,
+    pub broken_media: Vec<BrokenMedia>,
+    pub scan_errors: Vec<ScanError>,
+    pub conflicts: Vec<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct BrokenLink {
+    pub source_path: String,
+    pub link_text: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct OrphanPage {
+    pub path: String,
+    pub title: String,
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct BrokenMedia {
+    pub source_path: String,
+    pub target: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ScanError {
+    pub path: String,
+    pub error: String,
+}
+
+// Non-md vault files (for media resolution) + sync-conflict filenames,
+// in one walk. Same scope rules as collect_md.
+fn collect_diag_files(dir: &Path, root: &Path, media: &mut Vec<String>, conflicts: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            if !vault::is_reserved_dir(&name) {
+                collect_diag_files(&path, root, media, conflicts);
+            }
+            continue;
+        }
+        let lower = name.to_lowercase();
+        if lower.contains(".sync-conflict-") || lower.contains("conflicted copy") {
+            conflicts.push(rel_of(root, &path));
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            media.push(rel_of(root, &path));
+        }
+    }
+}
+
+/// Everything the diagnostics panel shows. Index reads + one fs walk
+/// (media existence, conflict filenames).
+pub fn diagnostics(conn: &Connection, vault_root: &Path) -> AppResult<Diagnostics> {
+    let broken_links = {
+        let mut stmt = conn.prepare(
+            "SELECT source_path, link_text FROM page_links WHERE target_path IS NULL \
+             ORDER BY source_path, link_text",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(BrokenLink { source_path: r.get(0)?, link_text: r.get(1)? })
+        })?;
+        rows.filter_map(Result::ok).collect()
+    };
+    let orphans = {
+        let mut stmt = conn.prepare(
+            "SELECT path, title, kind FROM pages p WHERE NOT EXISTS \
+             (SELECT 1 FROM page_links l WHERE l.target_path = p.path) ORDER BY path",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(OrphanPage { path: r.get(0)?, title: r.get(1)?, kind: r.get(2)? })
+        })?;
+        rows.filter_map(Result::ok).collect()
+    };
+    let scan_errors = {
+        let mut stmt = conn.prepare("SELECT path, error FROM scan_errors ORDER BY path")?;
+        let rows = stmt.query_map([], |r| Ok(ScanError { path: r.get(0)?, error: r.get(1)? }))?;
+        rows.filter_map(Result::ok).collect()
+    };
+
+    let mut files = Vec::new();
+    let mut conflicts = Vec::new();
+    collect_diag_files(vault_root, vault_root, &mut files, &mut conflicts);
+    conflicts.sort();
+    // Resolve like Obsidian: exact relative path, else filename match anywhere.
+    let rel_set: std::collections::HashSet<String> =
+        files.iter().map(|f| f.to_lowercase()).collect();
+    let name_set: std::collections::HashSet<String> = files
+        .iter()
+        .filter_map(|f| f.rsplit('/').next())
+        .map(str::to_lowercase)
+        .collect();
+    let broken_media = {
+        let mut stmt =
+            conn.prepare("SELECT source_path, target FROM page_media ORDER BY source_path, target")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(BrokenMedia { source_path: r.get(0)?, target: r.get(1)? })
+        })?;
+        rows.filter_map(Result::ok)
+            .filter(|m| {
+                let t = m.target.to_lowercase();
+                !rel_set.contains(&t)
+                    && !t.rsplit('/').next().map(|n| name_set.contains(n)).unwrap_or(false)
+            })
+            .collect()
+    };
+
+    Ok(Diagnostics { broken_links, orphans, broken_media, scan_errors, conflicts })
+}
+
 /// Sources linking to `rel` (resolved), with the raw link text — rename uses this.
 pub fn sources_linking_to(conn: &Connection, rel: &str) -> AppResult<Vec<(String, String)>> {
     let mut stmt =
@@ -640,6 +827,7 @@ mod tests {
         let names: Vec<&str> = p.links.iter().map(|l| l.target_name.as_str()).collect();
         assert_eq!(names, ["rivendell", "gandalf"]);
         assert_eq!(p.links[0].heading.as_deref(), Some("geography"));
+        assert_eq!(p.media, ["portrait.png"]);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -727,6 +915,34 @@ mod tests {
         assert_eq!(out, "See [[Elessar]] and [[Elessar#Background|the king]], not [[Aragorn II]].\n");
         assert!(rewrite_link_names("no links here", "Aragorn", "Elessar").is_none());
         assert!(rewrite_link_names("[[Gandalf]]", "Aragorn", "Elessar").is_none());
+    }
+
+    #[test]
+    fn diagnostics_reports_all_groups() {
+        let dir = tmp_vault("diag");
+        write(
+            &dir,
+            "Aragorn.md",
+            "See [[Nowhere]].\n![[portrait.png]]\n![[Assets/map.jpg|640]]\n![[missing.png]]\n",
+        );
+        write(&dir, "Orphan.md", "alone\n");
+        write(&dir, "Notes.sync-conflict-20260603-ABCDEF.md", "conflict copy\n");
+        std::fs::write(dir.join("portrait.png"), b"png").unwrap();
+        std::fs::create_dir_all(dir.join("Assets")).unwrap();
+        std::fs::write(dir.join("Assets/map.jpg"), b"jpg").unwrap();
+        std::fs::write(dir.join("Broken.md"), [0xff, 0xfe, 0x00]).unwrap(); // not UTF-8
+        let conn = open_index(&dir).unwrap();
+        rebuild(&conn, &dir).unwrap();
+        let d = diagnostics(&conn, &dir).unwrap();
+        assert_eq!(d.broken_links.len(), 1);
+        assert_eq!(d.broken_links[0].link_text, "Nowhere");
+        assert!(d.orphans.iter().any(|o| o.path == "Orphan.md"));
+        assert_eq!(d.broken_media.len(), 1);
+        assert_eq!(d.broken_media[0].target, "missing.png");
+        assert_eq!(d.scan_errors.len(), 1);
+        assert_eq!(d.scan_errors[0].path, "Broken.md");
+        assert_eq!(d.conflicts, ["Notes.sync-conflict-20260603-ABCDEF.md"]);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

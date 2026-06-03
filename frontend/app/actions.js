@@ -203,6 +203,18 @@ export async function commitCodexImport(entries) {
   return r;
 }
 
+// Zip the whole world folder on the backend; returns { path }.
+export async function exportWorld(includeAudio) {
+  const id = store.campaign.campaign_id;
+  return apiJson(`/campaigns/${id}/export-world`, 'POST', { include_audio: includeAudio });
+}
+
+// Reveal a path in Finder/Explorer (Tauri shell only; no-op in browser dev).
+export function revealPath(path) {
+  const opener = window.__TAURI__?.opener;
+  if (opener?.revealItemInDir && path) opener.revealItemInDir(path);
+}
+
 // ── Vault pages ───────────────────────────────────────────────────
 // Native folder picker in the Tauri shell; null in browser-dev (path typed instead).
 export async function pickVaultFolder() {
@@ -320,6 +332,15 @@ export async function loadVaultLinks(campaignId) {
   if (!id) return null;
   const r = await apiFetch(`/campaigns/${id}/vault/index/links`).catch(() => null);
   if (r) setState({ vaultLinks: r });
+  return r;
+}
+
+// Grouped vault diagnostics: broken links/media, orphans, conflicts, errors.
+export async function loadVaultDiagnostics(campaignId) {
+  const id = campaignId || store.campaign?.campaign_id;
+  if (!id) return null;
+  const r = await apiFetch(`/campaigns/${id}/vault/diagnostics`).catch(() => null);
+  if (r) setState({ vaultDiag: r });
   return r;
 }
 

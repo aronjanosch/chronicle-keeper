@@ -45,50 +45,59 @@ pub async fn delete(
 }
 
 /// Distill pasted notes into proposed entries (not saved — the user reviews first).
-/// Each entry is annotated with `exists`: true when an entry of the same name+kind
-/// already lives in the codex (e.g. a faction first picked up from an NPC note),
-/// so the review UI can flag it and let the user choose to replace it.
+/// Each entry is annotated with `exists`: true when a vault page of the same
+/// title already exists, so the review UI can flag it (commit then writes a
+/// suffixed page rather than overwriting).
 pub async fn import(
     State(state): State<AppState>,
     Path(campaign_id): Path<String>,
     Json(req): Json<CodexImportRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let entries = codex_import::import(&state, &campaign_id, &req.text).await?;
-    let annotated = state.with_db(|conn| {
-        entries
-            .iter()
-            .map(|e| {
-                let exists = codex::exists(conn, &campaign_id, &e.name, &e.kind)?;
-                Ok(serde_json::json!({
-                    "name": e.name, "kind": e.kind, "body": e.body, "detail": e.detail, "exists": exists,
-                }))
+    let root = super::vault::vault_root(&state, &campaign_id)?;
+    let annotated: Vec<_> = entries
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "name": e.name, "kind": e.kind, "body": e.body, "detail": e.detail,
+                "exists": crate::vault::page_exists(&root, &e.name),
             })
-            .collect::<AppResult<Vec<_>>>()
-    })?;
+        })
+        .collect();
     Ok(Json(serde_json::json!({ "entries": annotated })))
 }
 
-/// Save the reviewed entries. Upserts by natural key: a new name+kind is created,
-/// an existing one has its body replaced (the user explicitly checked it to win).
-/// A bad entry is skipped rather than failing the whole batch.
+/// Save the reviewed entries as vault pages (files-as-truth): one-liner →
+/// `summary:` frontmatter, detail → page body. Never overwrites — a taken
+/// title gets a numeric suffix. A bad entry is skipped rather than failing
+/// the whole batch.
 pub async fn commit(
     State(state): State<AppState>,
     Path(campaign_id): Path<String>,
     Json(req): Json<CodexCommitRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    state.with_db(|conn| {
-        let mut created = 0;
-        let mut updated = 0;
-        let mut skipped = 0;
-        for e in &req.entries {
-            match codex::upsert_manual(conn, &campaign_id, e) {
-                Ok(true) => created += 1,
-                Ok(false) => updated += 1,
-                Err(_) => skipped += 1,
-            }
+    let root = super::vault::vault_root(&state, &campaign_id)?;
+    let mut created = 0;
+    let mut skipped = 0;
+    for e in &req.entries {
+        let name = e.name.trim();
+        if name.is_empty()
+            || crate::vault::write_migrated_entry(
+                &root,
+                name,
+                &e.kind,
+                &e.body,
+                &e.detail,
+            )
+            .is_err()
+        {
+            skipped += 1;
+        } else {
+            created += 1;
         }
-        Ok(Json(
-            serde_json::json!({ "created": created, "updated": updated, "skipped": skipped }),
-        ))
-    })
+    }
+    let _ = state.with_index(&root, |conn| {
+        let _ = crate::store::index::rebuild(conn, &root);
+    });
+    Ok(Json(serde_json::json!({ "created": created, "updated": 0, "skipped": skipped })))
 }

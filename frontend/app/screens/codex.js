@@ -10,7 +10,7 @@ import { loadCodexEntries, createCodexEntry, openCampaign, updateCampaign,
   loadCampaignTags, renameCampaignTag, deleteCampaignTag,
   loadVaultTree, createVaultPage, createVaultFolder, moveVaultEntry,
   deleteVaultPage, deleteVaultFolder, attachVault, pickVaultFolder,
-  searchVault, loadVaultTags, sniffVault, importVaultFolder, enhanceVaultPages, watchVault } from '../actions.js';
+  searchVault, loadVaultTags, loadVaultDiagnostics, sniffVault, importVaultFolder, enhanceVaultPages, watchVault } from '../actions.js';
 import { kindForFolder } from '../folderKinds.js';
 
 export const KINDS = [
@@ -456,7 +456,16 @@ export function FileTree({ campaign, tree, active, onOpen, act }) {
   }, [query]);
   const nameMatched = new Set((matches || []).map((p) => p.path));
   const bodyHits = (ftsHits || []).filter((h) => !nameMatched.has(h.path));
-  const diag = store.vaultLinks || null;
+  const links = store.vaultLinks || null;
+  const vd = store.vaultDiag || null;
+  // Full diagnostics when loaded; the cheap links payload as fallback counts.
+  const diag = vd
+    ? {
+        unresolved: vd.broken_links.length + vd.broken_media.length,
+        orphans: vd.orphans.length,
+        issues: vd.conflicts.length + vd.scan_errors.length,
+      }
+    : links && { unresolved: links.unresolved, orphans: links.orphans, issues: 0 };
 
   function saveCurrentSearch() {
     const trimmed = q.trim();
@@ -522,10 +531,12 @@ export function FileTree({ campaign, tree, active, onOpen, act }) {
             ${tree.pages.map((p) => html`<${PageLeaf} key=${p.path} page=${p} depth=${0} active=${active} onOpen=${() => onOpen(p)} act=${act} ren=${ren} />`)}
           </div>`}
     </div>
-    ${diag && (diag.unresolved > 0 || diag.orphans > 0) && html`<div title="Vault diagnostics: unresolved [[links]] and pages nothing links to"
-      style=${{ margin: '0 -12px', borderTop: '1px solid var(--rule-soft)', padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 10.5, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>
+    ${diag && (diag.unresolved > 0 || diag.orphans > 0 || diag.issues > 0) && html`<div title="Vault diagnostics — click for the full list"
+      onClick=${() => openModal('vaultDiag')}
+      style=${{ margin: '0 -12px', borderTop: '1px solid var(--rule-soft)', padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 10.5, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', cursor: 'pointer' }}>
       ${diag.unresolved > 0 && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 4 }}><span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--ochre)' }} />${diag.unresolved} broken link${diag.unresolved === 1 ? '' : 's'}</span>`}
       ${diag.orphans > 0 && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 4 }}><span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--rule-strong)' }} />${diag.orphans} orphan${diag.orphans === 1 ? '' : 's'}</span>`}
+      ${diag.issues > 0 && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 4 }}><span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--burgundy)' }} />${diag.issues} file issue${diag.issues === 1 ? '' : 's'}</span>`}
     </div>`}
     <div onClick=${attachVaultFlow} title="Change vault folder (advanced)"
       style=${{ margin: '0 -12px -14px', borderTop: '1px solid var(--rule-soft)', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', cursor: 'pointer' }}>
@@ -630,11 +641,12 @@ function VaultView({ campaign }) {
   const [view, setView] = useState('folders');  // 'folders' | 'all' | 'tags'
   const [selTag, setSelTag] = useState(null);
 
-  useEffect(() => { loadVaultTree(campaign.campaign_id); }, [campaign.campaign_id]);
+  useEffect(() => { loadVaultTree(campaign.campaign_id); loadVaultDiagnostics(campaign.campaign_id); }, [campaign.campaign_id]);
   useEffect(() => { if (view === 'tags') loadVaultTags(campaign.campaign_id); }, [view, campaign.campaign_id]);
   useEffect(() => watchVault(campaign.campaign_id, () => {
     loadVaultTree(campaign.campaign_id);
     loadVaultTags(campaign.campaign_id);
+    loadVaultDiagnostics(campaign.campaign_id);
   }), [campaign.campaign_id]);
 
   const pages = store.vaultPages || [];

@@ -1,7 +1,7 @@
 // Screen 02 — Campaign Overview. Hero + party + codex teaser + sessions list.
 import { html, useState } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal, fmtDate, fmtDateTime, toneFor } from '../core.js';
-import { deleteCampaign, generateRecap } from '../actions.js';
+import { deleteCampaign, generateRecap, revealPath } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Sigil, Btn, StagePill, Empty, Markdown } from '../ui.js';
 import { KINDS, iconForKind } from './codex.js';
@@ -158,6 +158,8 @@ export function CampaignScreen({ store }) {
     sidebar=${html`<${Sidebar} variant="campaign" active="overview" campaign=${c} />`}
     topbar=${html`<${Topbar} crumbs=${[{ label: 'Worlds', onClick: () => navigate('library') }, c.name]} right=${html`
       <div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        ${window.__TAURI__ && c.vault_path && html`<${Btn} kind="ghost" icon="folder" title="Reveal the world folder in your file manager" onClick=${() => revealPath(c.vault_path)} />`}
+        ${c.vault_path && html`<${Btn} kind="ghost" icon="download" title="Export the whole world as a ZIP" onClick=${() => openModal('exportWorld')} />`}
         <${Btn} kind="ghost" icon="edit" onClick=${() => openModal('campaign', { edit: c })}>Edit world</${Btn}>
         <${Btn} kind="danger" icon="trash" title="Delete world" onClick=${() => {
           const n = sessions.length;

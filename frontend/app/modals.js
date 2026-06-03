@@ -1,6 +1,6 @@
 // Overlay forms: campaign editor, session editor, transcribe, export, provider, viewer.
 import { html, useState, useEffect } from '../vendor/htm-preact-standalone.mjs';
-import { store, closeModal, setOp } from './core.js';
+import { store, closeModal, navigate, setOp } from './core.js';
 import { Icon, Btn, Field, Input, Textarea, Select, Spinner } from './ui.js';
 import {
   createCampaign, updateCampaign, saveSessionMetadata, loadSession,
@@ -8,7 +8,7 @@ import {
   loadLlmProviders, saveLlmProvider, testLlmProvider, fetchLlmModels,
   importCodex, commitCodexImport,
   createPromptTemplate, updatePromptTemplate,
-  enhanceVaultPages,
+  enhanceVaultPages, loadVaultDiagnostics, exportWorld, revealPath,
 } from './actions.js';
 
 const PRONOUNS = ['she/her', 'he/him', 'they/them'];
@@ -518,6 +518,100 @@ function EnhanceFolderModal() {
   </${ModalShell}>`;
 }
 
+// ── Export world (Phase 3) ────────────────────────────────────────
+function ExportWorldModal() {
+  const [audio, setAudio] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [path, setPath] = useState(null);
+  const [err, setErr] = useState(null);
+
+  async function run() {
+    setBusy(true); setErr(null);
+    try { setPath((await exportWorld(audio)).path); }
+    catch (e) { setErr(e.message || 'Export failed'); }
+    finally { setBusy(false); }
+  }
+
+  return html`<${ModalShell} title="Export world as ZIP" footer=${path
+    ? html`<${Btn} kind="ghost" icon="folder" onClick=${() => revealPath(path)}>Reveal in file manager</${Btn}><${Btn} kind="primary" onClick=${closeModal}>Done</${Btn}>`
+    : html`<${Btn} kind="primary" icon="download" disabled=${busy} onClick=${run}>${busy ? html`<${Spinner} size=${14} /> Zipping…` : 'Export ZIP'}</${Btn}>`}>
+    <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', lineHeight: 1.5 }}>
+      Your world already is a portable folder — this zips it next to the folder itself.
+      The page index cache is left out; it rebuilds automatically.
+    </div>
+    ${!path && html`<label style=${{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+      <input type="checkbox" checked=${audio} onChange=${() => setAudio(!audio)} style=${{ width: 14, height: 14, cursor: 'pointer' }} />
+      Include session audio <span style=${{ fontSize: 11.5, color: 'var(--ink-faint)' }}>(can be gigabytes)</span>
+    </label>`}
+    ${path && html`<div style=${{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-soft)', wordBreak: 'break-all' }}>${path}</div>`}
+    ${err && html`<div style=${{ fontSize: 12.5, color: 'var(--burgundy)' }}>${err}</div>`}
+  </${ModalShell}>`;
+}
+
+// ── Vault diagnostics (Phase 3) ───────────────────────────────────
+function DiagSection({ title, items, render }) {
+  if (!items || items.length === 0) return null;
+  return html`<div>
+    <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>
+      ${title} <span style=${{ fontFamily: 'var(--font-mono)' }}>${items.length}</span>
+    </div>
+    <div style=${{ display: 'flex', flexDirection: 'column', gap: 2 }}>${items.map(render)}</div>
+  </div>`;
+}
+
+function DiagRow({ onClick, children, title }) {
+  const clickable = !!onClick;
+  return html`<div onClick=${onClick} title=${title || ''}
+    style=${{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 5, fontSize: 12.5, cursor: clickable ? 'pointer' : 'default', color: 'var(--ink-soft)' }}
+    onMouseEnter=${clickable ? (e) => { e.currentTarget.style.background = 'rgba(120,90,40,.08)'; } : null}
+    onMouseLeave=${clickable ? (e) => { e.currentTarget.style.background = 'transparent'; } : null}>
+    ${children}
+  </div>`;
+}
+
+const mono = { fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--ink-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+
+function VaultDiagnosticsModal() {
+  const [diag, setDiag] = useState(store.vaultDiag || null);
+  useEffect(() => { loadVaultDiagnostics().then((r) => { if (r) setDiag(r); }); }, []);
+  const open = (path) => { closeModal(); navigate('page', { path }); };
+  const openMd = (path) => (path.endsWith('.md') ? () => open(path) : null);
+
+  const empty = diag && !diag.broken_links.length && !diag.broken_media.length
+    && !diag.orphans.length && !diag.conflicts.length && !diag.scan_errors.length;
+
+  return html`<${ModalShell} title="Vault diagnostics" wide>
+    ${!diag && html`<${Spinner} />`}
+    ${empty && html`<div style=${{ fontSize: 13, color: 'var(--ink-muted)' }}>All clear — no broken links, orphans, or conflicts.</div>`}
+    ${diag && html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <${DiagSection} title="Broken links" items=${diag.broken_links} render=${(b, i) => html`<${DiagRow} key=${i} onClick=${() => open(b.source_path)} title="Open the page containing this link">
+        <span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--ochre)', flex: '0 0 auto' }} />
+        <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>[[${b.link_text}]]</span>
+        <span style=${{ flex: 1 }} /><span style=${mono}>${b.source_path}</span>
+      </${DiagRow}>`} />
+      <${DiagSection} title="Broken image embeds" items=${diag.broken_media} render=${(m, i) => html`<${DiagRow} key=${i} onClick=${() => open(m.source_path)} title="Open the page containing this embed">
+        <span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--ochre)', flex: '0 0 auto' }} />
+        <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>![[${m.target}]]</span>
+        <span style=${{ flex: 1 }} /><span style=${mono}>${m.source_path}</span>
+      </${DiagRow}>`} />
+      <${DiagSection} title="Orphan pages (nothing links here)" items=${diag.orphans} render=${(o) => html`<${DiagRow} key=${o.path} onClick=${() => open(o.path)}>
+        <span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--rule-strong)', flex: '0 0 auto' }} />
+        <span>${o.title}</span>
+        <span style=${{ flex: 1 }} /><span style=${mono}>${o.path}</span>
+      </${DiagRow}>`} />
+      <${DiagSection} title="Sync-conflict files (resolve by hand)" items=${diag.conflicts} render=${(c) => html`<${DiagRow} key=${c} onClick=${openMd(c)}>
+        <span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--burgundy)', flex: '0 0 auto' }} />
+        <span style=${{ ...mono, flex: 1, color: 'var(--ink-soft)' }}>${c}</span>
+      </${DiagRow}>`} />
+      <${DiagSection} title="Unreadable files" items=${diag.scan_errors} render=${(s) => html`<${DiagRow} key=${s.path} title=${s.error}>
+        <span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--burgundy)', flex: '0 0 auto' }} />
+        <span style=${{ ...mono, flex: 1, color: 'var(--ink-soft)' }}>${s.path}</span>
+        <span style=${{ fontSize: 11, color: 'var(--ink-faint)' }}>${s.error}</span>
+      </${DiagRow}>`} />
+    </div>`}
+  </${ModalShell}>`;
+}
+
 // ── Host ──────────────────────────────────────────────────────────
 export function ModalHost({ modal }) {
   if (!modal) return null;
@@ -533,6 +627,8 @@ export function ModalHost({ modal }) {
     case 'textPrompt': return html`<${TextPromptModal} ...${modal.props} />`;
     case 'movePage': return html`<${MovePageModal} ...${modal.props} />`;
     case 'enhanceFolder': return html`<${EnhanceFolderModal} />`;
+    case 'vaultDiag': return html`<${VaultDiagnosticsModal} />`;
+    case 'exportWorld': return html`<${ExportWorldModal} />`;
     default: return null;
   }
 }

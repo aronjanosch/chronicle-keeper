@@ -185,3 +185,28 @@ pub async fn next_session_number(
         }))
     })
 }
+
+#[derive(Deserialize)]
+pub struct ExportWorldRequest {
+    #[serde(default = "default_true")]
+    pub include_audio: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Zip the world folder next to it (Phase 3 "export the whole world").
+pub async fn export_world(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<ExportWorldRequest>,
+) -> AppResult<Json<Value>> {
+    let root = state
+        .with_db(|conn| campaigns::world_root_for_id(conn, &campaign_id))?
+        .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))?;
+    let path = tokio::task::spawn_blocking(move || crate::export::export_world(&root, req.include_audio))
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("export task: {e}")))??;
+    Ok(Json(json!({ "path": path })))
+}

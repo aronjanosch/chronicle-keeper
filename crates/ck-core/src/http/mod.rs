@@ -51,6 +51,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/next-session-number", get(campaigns::next_session_number))
         .route("/campaigns/:id/recap", post(campaigns::generate_recap))
+        .route("/campaigns/:id/export-world", post(campaigns::export_world))
         // campaign tag vocabulary (tag manager)
         .route("/campaigns/:id/tags", get(campaigns::list_tags))
         .route("/campaigns/:id/tags/rename", post(campaigns::rename_tag))
@@ -92,6 +93,7 @@ pub fn router(state: AppState) -> Router {
         // vault index (links/backlinks, search, page tags, change counter)
         .route("/campaigns/:id/vault/seq", get(index::seq))
         .route("/campaigns/:id/vault/index/links", get(index::links))
+        .route("/campaigns/:id/vault/diagnostics", get(index::diagnostics))
         .route("/campaigns/:id/vault/index/tags", get(index::tags))
         .route("/campaigns/:id/vault/search", get(index::search))
         // sessions

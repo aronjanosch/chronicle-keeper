@@ -92,12 +92,18 @@ pub async fn transcribe(
         })
         .unwrap_or_default();
 
+    // A lone unlabelled track is a mixed recording of the whole table — per-track
+    // speaker attribution would be wrong, so leave the segments speakerless.
+    let single_track = track_list.len() == 1;
     let tracks: Vec<(String, PathBuf, String)> = track_list
         .iter()
         .filter_map(|t| {
             let id = t.get("id").and_then(Value::as_str)?.to_string();
             let path = t.get("file_path").and_then(Value::as_str)?.to_string();
-            let label = speaker_label(speaker_map.get(&id), &id);
+            let mut label = speaker_label(speaker_map.get(&id), &id);
+            if single_track && label == id {
+                label = String::new(); // no real name assigned, only the fallback
+            }
             Some((id, PathBuf::from(path), label))
         })
         .collect();
@@ -122,7 +128,7 @@ pub async fn transcribe(
     use std::time::Duration;
 
     let timeout_secs: u64 = state
-        .with_db(|conn| crate::config::get_config_map(conn))
+        .with_db(crate::config::get_config_map)
         .ok()
         .and_then(|cfg| {
             cfg.get("transcription_timeout_seconds")

@@ -16,7 +16,8 @@ pub async fn upload(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> AppResult<Json<UploadResponse>> {
-    let mut zip_bytes: Option<Vec<u8>> = None;
+    let mut file_bytes: Option<Vec<u8>> = None;
+    let mut file_name: Option<String> = None;
     let mut session_id: Option<String> = None;
 
     while let Some(field) = multipart
@@ -26,11 +27,12 @@ pub async fn upload(
     {
         match field.name() {
             Some("file") => {
+                file_name = field.file_name().map(|s| s.to_string());
                 let data = field
                     .bytes()
                     .await
                     .map_err(|e| AppError::BadRequest(format!("read upload: {e}")))?;
-                zip_bytes = Some(data.to_vec());
+                file_bytes = Some(data.to_vec());
             }
             Some("session_id") => {
                 let v = field.text().await.unwrap_or_default();
@@ -42,12 +44,17 @@ pub async fn upload(
         }
     }
 
-    let zip_bytes = zip_bytes.ok_or_else(|| AppError::BadRequest("No file uploaded".into()))?;
+    let file_bytes = file_bytes.ok_or_else(|| AppError::BadRequest("No file uploaded".into()))?;
 
     let (sid, session_path) =
         state.with_db(|conn| sessions::resolve_for_upload(conn, session_id.as_deref()))?;
 
-    let tracks = extract_and_list(&zip_bytes, &session_path)?;
+    // A bare audio file becomes a single-track session; anything else is
+    // treated as a Craig-style ZIP of per-speaker tracks.
+    let tracks = match file_name.as_deref().filter(|n| is_audio(Path::new(n))) {
+        Some(name) => save_single_and_list(&file_bytes, name, &session_path)?,
+        None => extract_and_list(&file_bytes, &session_path)?,
+    };
     if tracks.as_array().map(|a| a.is_empty()).unwrap_or(true) {
         return Err(AppError::BadRequest(
             "No audio files found in ZIP archive".into(),
@@ -80,7 +87,33 @@ fn extract_and_list(zip_bytes: &[u8], session_path: &Path) -> AppResult<Value> {
         return Ok(Value::Array(vec![])); // caller reports "no audio"; old audio intact
     }
 
-    // Commit: drop the prior audio, then move the staged tree into place.
+    commit_and_list(&staging, session_path)
+}
+
+/// Same swap semantics as `extract_and_list`, but for a bare audio file: the
+/// session ends up with exactly this one track.
+fn save_single_and_list(bytes: &[u8], filename: &str, session_path: &Path) -> AppResult<Value> {
+    let staging = session_path.with_extension("upload.tmp");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(|e| AppError::Internal(e.into()))?;
+
+    // Strip any client path components; keep only the file name.
+    let name = Path::new(filename)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("recording");
+    std::fs::write(staging.join(name), bytes)
+        .inspect_err(|_| {
+            let _ = std::fs::remove_dir_all(&staging);
+        })
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    commit_and_list(&staging, session_path)
+}
+
+/// Commit: drop the prior audio, move the staged tree into place, and return
+/// the resulting track list sorted by filename.
+fn commit_and_list(staging: &Path, session_path: &Path) -> AppResult<Value> {
     if let Ok(entries) = std::fs::read_dir(session_path) {
         for entry in entries.flatten() {
             let p = entry.path();
@@ -89,8 +122,8 @@ fn extract_and_list(zip_bytes: &[u8], session_path: &Path) -> AppResult<Value> {
             }
         }
     }
-    move_tree(&staging, session_path)?;
-    let _ = std::fs::remove_dir_all(&staging);
+    move_tree(staging, session_path)?;
+    let _ = std::fs::remove_dir_all(staging);
 
     let mut tracks: Vec<Value> = Vec::new();
     collect_audio(session_path, &mut tracks)?;
@@ -248,6 +281,29 @@ mod tests {
         assert_eq!(arr[0]["filename"], "b.flac");
         assert!(base.join("b.flac").exists());
         assert!(!base.join("a.flac").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn single_audio_file_replaces_prior_tracks() {
+        let base = std::env::temp_dir().join(format!("ck_upload_single_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+
+        // Multi-track upload first.
+        let tracks =
+            extract_and_list(&make_zip(&[("a.flac", b"aaa"), ("b.flac", b"bbb")]), &base).unwrap();
+        assert_eq!(tracks.as_array().unwrap().len(), 2);
+
+        // Single audio file replaces them wholesale, path components stripped.
+        let tracks = save_single_and_list(b"mmm", "evil/../session.mp3", &base).unwrap();
+        let arr = tracks.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["filename"], "session.mp3");
+        assert_eq!(arr[0]["id"], "session");
+        assert!(!base.join("a.flac").exists());
+        assert!(!base.join("b.flac").exists());
 
         let _ = std::fs::remove_dir_all(&base);
     }

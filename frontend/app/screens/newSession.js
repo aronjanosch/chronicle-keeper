@@ -198,9 +198,9 @@ export function NewSessionScreen({ store }) {
         ${!tracks.length ? html`
           <div onClick=${() => fileRef.current?.click()} style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '48px 24px', background: 'var(--surface)', border: '1.5px dashed var(--rule-strong)', borderRadius: 8, cursor: uploading ? 'default' : 'pointer', textAlign: 'center' }}>
             ${uploading ? html`<${Spinner} size=${22} />` : html`<div style=${{ width: 44, height: 44, borderRadius: 8, background: 'var(--paper-deep)', border: '1px solid var(--rule)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--burgundy)' }}><${Icon} name="upload" size=${18} /></div>`}
-            <div style=${{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 500, color: 'var(--ink-soft)' }}>${uploading ? 'Unpacking recording…' : 'Drop a Craig recording'}</div>
-            <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic', fontFamily: 'var(--font-display)' }}>A Craig Bot .zip with one audio track per speaker.</div>
-            <input ref=${fileRef} type="file" accept=".zip" style=${{ display: 'none' }} onChange=${onFile} disabled=${uploading} />
+            <div style=${{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 500, color: 'var(--ink-soft)' }}>${uploading ? 'Unpacking recording…' : 'Drop a recording'}</div>
+            <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic', fontFamily: 'var(--font-display)' }}>A Craig Bot .zip with one track per speaker, or a single audio file (flac, wav, mp3, m4a, ogg).</div>
+            <input ref=${fileRef} type="file" accept=".zip,.flac,.wav,.mp3,.m4a,.ogg" style=${{ display: 'none' }} onChange=${onFile} disabled=${uploading} />
           </div>` : html`
           <div style=${{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: 'var(--moss-50)', border: '1px solid rgba(74,93,58,.22)', borderRadius: 8, marginBottom: 16 }}>
             <div style=${{ width: 36, height: 36, borderRadius: 8, background: 'var(--moss)', color: '#FBF6E9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><${Icon} name="check" size=${14} /></div>
@@ -209,13 +209,14 @@ export function NewSessionScreen({ store }) {
               <div style=${{ fontSize: 12, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>${tracks.length} track${tracks.length === 1 ? '' : 's'} extracted</div>
             </div>
             <${Btn} kind="ghost" size="sm" onClick=${() => fileRef.current?.click()}>Replace</${Btn}>
-            <input ref=${fileRef} type="file" accept=".zip" style=${{ display: 'none' }} onChange=${onFile} />
+            <input ref=${fileRef} type="file" accept=".zip,.flac,.wav,.mp3,.m4a,.ogg" style=${{ display: 'none' }} onChange=${onFile} />
           </div>
 
           <div style=${{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
             <h2 style=${{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 500 }}>Label the voices</h2>
             <span style=${{ fontSize: 12, color: 'var(--ink-muted)' }}>· ${assignedCount} of ${tracks.length} labelled</span>
           </div>
+          ${tracks.length === 1 && html`<div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic', fontFamily: 'var(--font-display)', marginBottom: 10 }}>Single track — if it mixes several voices, leave it unlabelled and the transcript stays speakerless.</div>`}
           <div style=${{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             ${tracks.map((t, i) => html`<${TrackCard} key=${t.id} track=${t} index=${i} sp=${speakers[t.id] || {}} roster=${roster} onChange=${(sp) => update(t.id, sp)} />`)}
           </div>`}

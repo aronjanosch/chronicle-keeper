@@ -4,6 +4,8 @@
 //! perplexity/minimax + Gemini's OpenAI-compat endpoint), and Anthropic's
 //! native Messages API (`/v1/messages`). Cohere is still a follow-up.
 
+pub mod agent;
+
 use std::collections::HashMap;
 use std::time::Duration;
 

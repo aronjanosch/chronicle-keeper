@@ -110,6 +110,10 @@ async fn run_summarize(
             .map(|cid| tags::distinct_tags(conn, cid))
             .transpose()?
             .unwrap_or_default();
+        let world_ctx = campaign_id
+            .as_deref()
+            .map(|cid| crate::agent::context::world_context_for_campaign(conn, cid))
+            .unwrap_or_default();
         Ok((
             session,
             transcript_text,
@@ -119,10 +123,20 @@ async fn run_summarize(
             gm,
             known_tags,
             resolved,
+            world_ctx,
         ))
     })?;
-    let (session, transcript_text, language, codex_text, codex_entries, gm, known_tags, resolved) =
-        prep;
+    let (
+        session,
+        transcript_text,
+        language,
+        codex_text,
+        codex_entries,
+        gm,
+        known_tags,
+        resolved,
+        world_ctx,
+    ) = prep;
 
     let session_context = build_context(
         &session,
@@ -131,13 +145,16 @@ async fn run_summarize(
         &codex_entries,
         &gm,
     );
-    let summary_prompt = build_summary_prompt(
-        &transcript_text,
-        req.title.as_deref(),
-        req.context.as_deref(),
-        &language,
-        req.system_prompt.as_deref(),
-        Some(&session_context),
+    let summary_prompt = crate::agent::context::apply_world_context(
+        &build_summary_prompt(
+            &transcript_text,
+            req.title.as_deref(),
+            req.context.as_deref(),
+            &language,
+            req.system_prompt.as_deref(),
+            Some(&session_context),
+        ),
+        &world_ctx,
     );
 
     // Prep is done and the prompt is built; on a big local prompt the model now
@@ -286,9 +303,10 @@ pub async fn generate_recap(
             req.model.as_deref(),
             req.base_url.as_deref(),
         )?;
-        Ok((campaign, blocks, resolved))
+        let world_ctx = crate::agent::context::world_context_for_campaign(conn, campaign_id);
+        Ok((campaign, blocks, resolved, world_ctx))
     })?;
-    let (campaign, blocks, resolved) = prep;
+    let (campaign, blocks, resolved, world_ctx) = prep;
 
     if blocks.is_empty() {
         return Err(AppError::BadRequest(
@@ -298,7 +316,10 @@ pub async fn generate_recap(
     }
     let sessions_used = blocks.len();
     let sessions_block = blocks.join("\n\n");
-    let prompt = build_recap_prompt(&campaign.name, &sessions_block, &campaign.default_language);
+    let prompt = crate::agent::context::apply_world_context(
+        &build_recap_prompt(&campaign.name, &sessions_block, &campaign.default_language),
+        &world_ctx,
+    );
 
     let recap_text = llm::chat(
         &llm::ChatRequest {

@@ -99,6 +99,9 @@ pub struct AppState {
     pub vault_seqs: Arc<Mutex<HashMap<PathBuf, Arc<AtomicU64>>>>,
     /// Echo guard: CK's own vault writes, so the watcher skips them.
     pub suppress: crate::index_watch::SuppressMap,
+    /// One active Keeper run per world: campaign id → cancel flag. Insert =
+    /// run start (second insert → 409), flag set = abort requested.
+    pub agent_runs: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
 }
 
 impl AppState {
@@ -113,6 +116,7 @@ impl AppState {
             watchers: Arc::new(Mutex::new(HashMap::new())),
             vault_seqs: Arc::new(Mutex::new(HashMap::new())),
             suppress: Arc::new(Mutex::new(HashMap::new())),
+            agent_runs: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 

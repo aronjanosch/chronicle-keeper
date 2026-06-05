@@ -575,7 +575,7 @@ pub async fn enhance_pages(
 }
 
 // World root + parsed `.ck/config.toml` (defaults when unreadable).
-fn world_cfg(
+pub(super) fn world_cfg(
     state: &AppState,
     campaign_id: &str,
 ) -> AppResult<(PathBuf, crate::world_config::WorldConfig)> {

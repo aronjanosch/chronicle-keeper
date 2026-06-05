@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod atlas;
 pub mod codex_import;
 pub mod codex_update;

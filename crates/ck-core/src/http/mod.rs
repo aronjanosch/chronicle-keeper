@@ -1,3 +1,4 @@
+mod agent;
 mod artifacts;
 mod atlas;
 mod campaigns;
@@ -113,6 +114,20 @@ pub fn router(state: AppState) -> Router {
         .route("/campaigns/:id/vault/diagnostics", get(index::diagnostics))
         .route("/campaigns/:id/vault/index/tags", get(index::tags))
         .route("/campaigns/:id/vault/search", get(index::search))
+        // the Keeper (Phase 6): agent chats
+        .route(
+            "/campaigns/:id/agent/chats",
+            get(agent::list_chats).post(agent::create_chat),
+        )
+        .route(
+            "/campaigns/:id/agent/chats/:cid",
+            get(agent::get_chat).delete(agent::delete_chat),
+        )
+        .route(
+            "/campaigns/:id/agent/chats/:cid/messages",
+            post(agent::send_message),
+        )
+        .route("/campaigns/:id/agent/chats/:cid/abort", post(agent::abort))
         // sessions
         .route("/sessions", get(sessions::list))
         .route("/session/:id", get(sessions::detail))

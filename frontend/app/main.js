@@ -4,6 +4,7 @@ import { useStore, loadApiBase, setOp, setState } from './core.js';
 import { loadCampaigns, loadConfig, refreshProviderStatus, checkMigration } from './actions.js';
 import { Icon, Spinner } from './ui.js';
 import { ModalHost } from './modals.js';
+import { KeeperDock } from './keeperPanel.js';
 import { LibraryScreen } from './screens/library.js';
 import { CampaignScreen } from './screens/campaign.js';
 import { SessionScreen } from './screens/session.js';
@@ -72,6 +73,7 @@ function App() {
   }
   return html`<div style=${{ height: '100%' }}>
     ${screen}
+    <${KeeperDock} />
     <${OpBanner} op=${store.op} />
     <${ModalHost} modal=${store.modal} />
     ${store.error && store.route.name === 'library' && !store.campaigns.length && html`

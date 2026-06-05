@@ -207,15 +207,19 @@ pub async fn generate_streamed<F: FnMut(UpdateProgress) + Send>(
             })
             .collect();
         let number = loc.st.number;
-        Ok((loc.dir, vault_root, summary, transcript, resolved, language, pages, rel_fields, number))
+        let world_ctx = crate::agent::context::world_context(&root, &world_cfg);
+        Ok((loc.dir, vault_root, summary, transcript, resolved, language, pages, rel_fields, number, world_ctx))
     })?;
-    let (session_dir, vault_root, summary, transcript, resolved, language, pages, rel_fields, number) =
+    let (session_dir, vault_root, summary, transcript, resolved, language, pages, rel_fields, number, world_ctx) =
         prep;
 
     // Stage 1 — candidate pass (summary-scoped).
     emit(UpdateProgress::Candidates);
     let lang_name = crate::codex_import::language_name(&language);
-    let stage1 = build_candidate_prompt(&summary, &pages, &vault_root, &rel_fields, number, &lang_name);
+    let stage1 = crate::agent::context::apply_world_context(
+        &build_candidate_prompt(&summary, &pages, &vault_root, &rel_fields, number, &lang_name),
+        &world_ctx,
+    );
     let raw = llm::chat(&chat_req(&resolved, &stage1), true)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Codex update request failed: {}", e.0)))?;
@@ -512,7 +516,7 @@ fn search_terms(p: &Proposal, hints: &[String]) -> Vec<String> {
 
 /// Number the transcript into 1-based "turns": one per text line, with the
 /// current `[Speaker]` block label folded in.
-fn transcript_turns(transcript: &str) -> Vec<String> {
+pub(crate) fn transcript_turns(transcript: &str) -> Vec<String> {
     let mut turns = Vec::new();
     let mut speaker = String::new();
     for line in transcript.lines() {

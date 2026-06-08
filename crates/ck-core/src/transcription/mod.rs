@@ -181,7 +181,9 @@ fn make_segment(text: String, start: f64, end: f64, track_id: &str, label: &str)
         text,
         start,
         end,
-        speaker: Some(label.to_string()),
+        // Empty label = no speaker attribution (e.g. a single mixed-voices track);
+        // downstream formatting then omits the `[Speaker]` headers entirely.
+        speaker: (!label.is_empty()).then(|| label.to_string()),
         source: Some(track_id.to_string()),
         words: None,
     }
@@ -215,7 +217,8 @@ pub fn transcribe_tracks(
         if cancel.load(Ordering::Relaxed) {
             anyhow::bail!("Transcription cancelled (timed out).");
         }
-        ModelProgress::set_transcribe(progress, idx as u64, total, label);
+        let shown = if label.is_empty() { track_id } else { label };
+        ModelProgress::set_transcribe(progress, idx as u64, total, shown);
         if !path.exists() {
             tracing::warn!("track file missing, skipping: {}", path.display());
             continue;
@@ -226,7 +229,7 @@ pub fn transcribe_tracks(
         let samples = to_target_sr(&samples, sr);
         let secs = samples.len() as f64 / TARGET_SR as f64;
         tracing::info!(
-            "track {}/{} '{label}' ({track_id}): {secs:.0}s audio, decoding…",
+            "track {}/{} '{shown}' ({track_id}): {secs:.0}s audio, decoding…",
             idx + 1,
             total
         );
@@ -235,7 +238,7 @@ pub fn transcribe_tracks(
             .and_then(|m| transcribe_vad(&recognizer, m, &samples, track_id, label, cancel))
             .unwrap_or_else(|| transcribe_fixed(&recognizer, &samples, track_id, label, cancel));
         tracing::info!(
-            "track {}/{} '{label}': {} segment(s) in {:.1}s",
+            "track {}/{} '{shown}': {} segment(s) in {:.1}s",
             idx + 1,
             total,
             segs.len(),

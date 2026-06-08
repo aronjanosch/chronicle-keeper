@@ -128,6 +128,8 @@ pub fn router(state: AppState) -> Router {
             post(agent::send_message),
         )
         .route("/campaigns/:id/agent/chats/:cid/abort", post(agent::abort))
+        .route("/campaigns/:id/agent/chats/:cid/approve", post(agent::approve))
+        .route("/campaigns/:id/agent/chats/:cid/undo", post(agent::undo))
         // sessions
         .route("/sessions", get(sessions::list))
         .route("/session/:id", get(sessions::detail))

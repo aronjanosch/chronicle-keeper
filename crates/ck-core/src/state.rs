@@ -102,7 +102,13 @@ pub struct AppState {
     /// One active Keeper run per world: campaign id → cancel flag. Insert =
     /// run start (second insert → 409), flag set = abort requested.
     pub agent_runs: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
+    /// Parked permission asks: request id → (campaign id, decision sender).
+    /// Resolved by `/approve`; drained (= denied) on abort.
+    pub agent_asks: AgentAsks,
 }
+
+pub type AgentAsks =
+    Arc<Mutex<HashMap<String, (String, tokio::sync::oneshot::Sender<crate::agent::Decision>)>>>;
 
 impl AppState {
     pub fn new(paths: Paths) -> Result<Self> {
@@ -117,6 +123,7 @@ impl AppState {
             vault_seqs: Arc::new(Mutex::new(HashMap::new())),
             suppress: Arc::new(Mutex::new(HashMap::new())),
             agent_runs: Arc::new(Mutex::new(HashMap::new())),
+            agent_asks: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 

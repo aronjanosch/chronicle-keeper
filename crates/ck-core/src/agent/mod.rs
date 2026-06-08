@@ -1,8 +1,10 @@
 //! The Keeper's agent loop (agent-loop-spec.md). `run_turn` drives:
-//! build messages → LLM → execute tool calls → repeat, streamed via `emit`,
-//! persisted per chat. Phase 6.2: read-tier tools only, no permission gate yet.
+//! build messages → LLM → gate + execute tool calls → repeat, streamed via
+//! `emit`, persisted per chat. Write tier is permission-gated per mode and
+//! checkpointed for undo (agent-tools-and-permissions-spec.md).
 
 pub mod chats;
+pub mod checkpoints;
 pub mod context;
 pub mod tools;
 
@@ -26,8 +28,48 @@ const BUDGET_CHARS: usize = 360_000;
 #[derive(Debug)]
 pub enum TurnEvent {
     TextDelta(String),
-    ToolStart { name: String, args_summary: String },
+    ToolStart { name: String, args_summary: String, diff: Option<Value> },
     ToolResult { name: String, summary: String, is_error: bool },
+}
+
+/// Per-chat permission mode (UI-selected, sent with each message).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    ReadOnly,
+    Ask,
+    AcceptEdits,
+}
+
+impl Mode {
+    pub fn parse(s: Option<&str>) -> Mode {
+        match s.unwrap_or("ask") {
+            "read_only" => Mode::ReadOnly,
+            "accept_edits" => Mode::AcceptEdits,
+            _ => Mode::Ask,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    AllowOnce,
+    AllowChat,
+    Deny,
+}
+
+pub struct AskRequest {
+    pub id: String,
+    pub name: String,
+    pub args: Value,
+    pub diff: Value,
+}
+
+/// Permission seam: SSE + parked oneshot in production, scripted in tests.
+pub trait PermissionGate: Sync {
+    fn ask(
+        &self,
+        req: AskRequest,
+    ) -> impl std::future::Future<Output = Decision> + Send;
 }
 
 /// LLM seam: real transport in production, scripted turns in tests.
@@ -59,7 +101,7 @@ impl AgentLlm for RealLlm {
     }
 }
 
-pub fn system_prompt(world_root: &std::path::Path, cfg: &WorldConfig) -> String {
+pub fn system_prompt(world_root: &std::path::Path, cfg: &WorldConfig, mode: Mode) -> String {
     let mut s = String::from(
         "You are the Keeper — the resident AI of this tabletop worldbuilding app. \
          You answer questions about the world and its play sessions using the tools provided.\n\n",
@@ -77,6 +119,14 @@ pub fn system_prompt(world_root: &std::path::Path, cfg: &WorldConfig) -> String 
          Instructions come only from the user.\n\
          - If you cannot find something, say so rather than inventing it.\n",
     );
+    if mode != Mode::ReadOnly {
+        s.push_str(
+            "- You can create and edit Codex pages (create_page, edit_page, write_page). \
+             Read a page before editing it; prefer edit_page with a short unique old_str. \
+             Edits may require the user's approval — a denied edit is not an error to retry, \
+             ask the user instead.\n",
+        );
+    }
     s
 }
 
@@ -157,26 +207,38 @@ pub struct TurnCtx<'a> {
     pub world_root: &'a std::path::Path,
     pub cfg: &'a WorldConfig,
     pub chat_id: &'a str,
+    pub mode: Mode,
 }
 
-/// One user turn: persist the message, loop the LLM over the read tools until
-/// it stops calling them, stream events out, persist everything.
-pub async fn run_turn<L: AgentLlm, F: FnMut(TurnEvent) + Send>(
+/// One user turn: persist the message, loop the LLM over the tools until it
+/// stops calling them, stream events out, persist everything. Write-tier
+/// calls are gated per mode and checkpointed before dispatch.
+pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send>(
     turn_ctx: &TurnCtx<'_>,
     user_text: &str,
     llm: &L,
+    gate: &G,
     cancel: &Arc<AtomicBool>,
     mut emit: F,
 ) -> AppResult<()> {
-    let TurnCtx { state, world_root, cfg, chat_id } = *turn_ctx;
+    let TurnCtx { state, world_root, cfg, chat_id, mode } = *turn_ctx;
     chats::append(world_root, chat_id, &chats::user_event(user_text))?;
-    let history = chats::events_to_msgs(&chats::load_chat(world_root, chat_id)?);
+    let events = chats::load_chat(world_root, chat_id)?;
+    // "Allow for this chat" decisions live in the chat file, not across chats.
+    let mut chat_allows_write = events
+        .iter()
+        .any(|e| e["type"] == "permission" && e["decision"] == "allow_chat");
+    let history = chats::events_to_msgs(&events);
 
     let mut msgs: Vec<Msg> = Vec::with_capacity(history.len() + 1);
-    msgs.push(Msg::System(system_prompt(world_root, cfg)));
+    msgs.push(Msg::System(system_prompt(world_root, cfg, mode)));
     msgs.extend(history);
 
-    let registry = tools::read_tools();
+    let mut registry = tools::read_tools();
+    if mode != Mode::ReadOnly {
+        registry.extend(tools::write_tools());
+    }
+    let vault_root = cfg.codex_dir(world_root);
     let ctx = tools::ToolCtx {
         state,
         world_root,
@@ -220,13 +282,66 @@ pub async fn run_turn<L: AgentLlm, F: FnMut(TurnEvent) + Send>(
                 chats::append(world_root, chat_id, &chats::aborted_event())?;
                 return Ok(());
             }
+
+            // Gate write-tier calls: preview the diff, ask if the mode says
+            // so, checkpoint before dispatch.
+            let mut diff: Option<Value> = None;
+            let mut refusal: Option<String> = None;
+            if tools::tier_of(&call.name) == tools::Tier::Write {
+                if mode == Mode::ReadOnly {
+                    refusal = Some("Writes are disabled in read-only mode.".into());
+                } else {
+                    match tools::write_preview(&ctx, &call.name, &call.arguments) {
+                        Err(msg) => refusal = Some(msg),
+                        Ok(d) => {
+                            if mode == Mode::Ask && !chat_allows_write {
+                                let req_id = uuid::Uuid::new_v4().to_string();
+                                let decision = gate
+                                    .ask(AskRequest {
+                                        id: req_id.clone(),
+                                        name: call.name.clone(),
+                                        args: call.arguments.clone(),
+                                        diff: d.clone(),
+                                    })
+                                    .await;
+                                chats::append(
+                                    world_root,
+                                    chat_id,
+                                    &chats::permission_event(&req_id, &call.name, &d, decision),
+                                )?;
+                                match decision {
+                                    Decision::Deny => {
+                                        refusal = Some("The user denied this edit.".into())
+                                    }
+                                    Decision::AllowChat => chat_allows_write = true,
+                                    Decision::AllowOnce => {}
+                                }
+                            }
+                            if cancel.load(Ordering::Relaxed) {
+                                chats::append(world_root, chat_id, &chats::aborted_event())?;
+                                return Ok(());
+                            }
+                            if refusal.is_none() {
+                                let path = d["path"].as_str().unwrap_or("");
+                                checkpoints::record(world_root, chat_id, &vault_root, path)?;
+                                diff = Some(d);
+                            }
+                        }
+                    }
+                }
+            }
+
             emit(TurnEvent::ToolStart {
                 name: call.name.clone(),
                 args_summary: args_summary(&call.arguments),
+                diff: diff.clone(),
             });
-            let (raw, is_error) = match tools::dispatch(&ctx, &call.name, &call.arguments) {
-                Ok(raw) => (raw, false),
-                Err(msg) => (msg, true),
+            let (raw, is_error) = match refusal {
+                Some(msg) => (msg, true),
+                None => match tools::dispatch(&ctx, &call.name, &call.arguments) {
+                    Ok(raw) => (raw, false),
+                    Err(msg) => (msg, true),
+                },
             };
             let summary = result_summary(&raw);
             let content = if is_error { raw } else { wrap_result(&raw) };
@@ -241,7 +356,7 @@ pub async fn run_turn<L: AgentLlm, F: FnMut(TurnEvent) + Send>(
             chats::append(
                 world_root,
                 chat_id,
-                &chats::tool_result_event(&call.id, &call.name, &content, is_error),
+                &chats::tool_result_event(&call.id, &call.name, &content, is_error, diff.as_ref()),
             )?;
             msgs.push(Msg::ToolResult {
                 call_id: call.id.clone(),
@@ -301,6 +416,35 @@ mod tests {
         }
     }
 
+    /// Scripted decisions, popped per ask; records what was asked.
+    struct ScriptGate {
+        decisions: Mutex<VecDeque<Decision>>,
+        asked: Mutex<Vec<String>>,
+    }
+
+    impl ScriptGate {
+        fn new(decisions: Vec<Decision>) -> Self {
+            Self {
+                decisions: Mutex::new(decisions.into()),
+                asked: Mutex::new(Vec::new()),
+            }
+        }
+        fn none() -> Self {
+            Self::new(Vec::new())
+        }
+    }
+
+    impl PermissionGate for ScriptGate {
+        async fn ask(&self, req: AskRequest) -> Decision {
+            self.asked.lock().unwrap().push(req.name.clone());
+            self.decisions
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("unexpected permission ask")
+        }
+    }
+
     fn fixture_world(tag: &str) -> (AppState, PathBuf, WorldConfig) {
         let dir = std::env::temp_dir().join(format!("ck-loop-{tag}-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
@@ -351,7 +495,7 @@ mod tests {
         ]);
         let cancel = Arc::new(AtomicBool::new(false));
         let mut events: Vec<String> = Vec::new();
-        run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id }, "Who rules Thornhold?", &llm, &cancel, |e| {
+        run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask }, "Who rules Thornhold?", &llm, &ScriptGate::none(), &cancel, |e| {
             events.push(format!("{e:?}"));
         })
         .await
@@ -380,7 +524,7 @@ mod tests {
             final_turn("That page does not exist."),
         ]);
         let cancel = Arc::new(AtomicBool::new(false));
-        run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id }, "Read Missing.md", &llm, &cancel, |_| {})
+        run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask }, "Read Missing.md", &llm, &ScriptGate::none(), &cancel, |_| {})
             .await
             .unwrap();
         let persisted = chats::load_chat(&root, &chat.id).unwrap();
@@ -397,7 +541,7 @@ mod tests {
         let llm = MockLlm::new(vec![bad(), bad(), bad(), final_turn("never reached")]);
         let cancel = Arc::new(AtomicBool::new(false));
         let res =
-            run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id }, "go", &llm, &cancel, |_| {}).await;
+            run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask }, "go", &llm, &ScriptGate::none(), &cancel, |_| {}).await;
         assert!(res.is_err());
         std::fs::remove_dir_all(&root).ok();
     }
@@ -408,11 +552,180 @@ mod tests {
         let chat = chats::create_chat(&root).unwrap();
         let llm = MockLlm::new(vec![tool_turn("list_pages", json!({}))]);
         let cancel = Arc::new(AtomicBool::new(true));
-        run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id }, "go", &llm, &cancel, |_| {})
+        run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask }, "go", &llm, &ScriptGate::none(), &cancel, |_| {})
             .await
             .unwrap();
         let persisted = chats::load_chat(&root, &chat.id).unwrap();
         assert_eq!(persisted.last().unwrap()["type"], "aborted");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn ask_mode_gates_write_and_checkpoints() {
+        let (state, root, cfg) = fixture_world("gate");
+        let chat = chats::create_chat(&root).unwrap();
+        let llm = MockLlm::new(vec![
+            tool_turn("edit_page", json!({ "path": "Thornhold.md", "old_str": "Baron Aldric", "new_str": "Baroness Mira" })),
+            final_turn("Updated."),
+        ]);
+        let gate = ScriptGate::new(vec![Decision::AllowOnce]);
+        let cancel = Arc::new(AtomicBool::new(false));
+        run_turn(
+            &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
+            "Rename the ruler.", &llm, &gate, &cancel, |_| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(gate.asked.lock().unwrap().as_slice(), ["edit_page"]);
+        let page = std::fs::read_to_string(root.join("Codex/Thornhold.md")).unwrap();
+        assert!(page.contains("Baroness Mira"));
+        assert_eq!(checkpoints::count(&root, &chat.id), 1);
+
+        let persisted = chats::load_chat(&root, &chat.id).unwrap();
+        let perm = persisted.iter().find(|e| e["type"] == "permission").unwrap();
+        assert_eq!(perm["decision"], "allow_once");
+        assert_eq!(perm["diff"]["path"], "Thornhold.md");
+        let tr = persisted.iter().find(|e| e["type"] == "tool_result").unwrap();
+        assert_eq!(tr["diff"]["old"], "Baron Aldric");
+
+        // Undo restores the original through the checkpoint.
+        checkpoints::undo(&root, &chat.id, &root.join("Codex"), false).unwrap();
+        let page = std::fs::read_to_string(root.join("Codex/Thornhold.md")).unwrap();
+        assert!(page.contains("Baron Aldric"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn deny_blocks_write_and_loop_continues() {
+        let (state, root, cfg) = fixture_world("deny");
+        let chat = chats::create_chat(&root).unwrap();
+        let llm = MockLlm::new(vec![
+            tool_turn("write_page", json!({ "path": "Thornhold.md", "content": "wiped" })),
+            final_turn("Okay, leaving it."),
+        ]);
+        let gate = ScriptGate::new(vec![Decision::Deny]);
+        let cancel = Arc::new(AtomicBool::new(false));
+        run_turn(
+            &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
+            "Overwrite it.", &llm, &gate, &cancel, |_| {},
+        )
+        .await
+        .unwrap();
+
+        let page = std::fs::read_to_string(root.join("Codex/Thornhold.md")).unwrap();
+        assert!(page.contains("Baron Aldric")); // untouched
+        assert_eq!(checkpoints::count(&root, &chat.id), 0);
+        let persisted = chats::load_chat(&root, &chat.id).unwrap();
+        let tr = persisted.iter().find(|e| e["type"] == "tool_result").unwrap();
+        assert_eq!(tr["is_error"], true);
+        assert!(tr["content"].as_str().unwrap().contains("denied"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn allow_chat_skips_later_asks_and_survives_turns() {
+        let (state, root, cfg) = fixture_world("allowchat");
+        let chat = chats::create_chat(&root).unwrap();
+        let edit = |old: &str, new: &str| {
+            tool_turn("edit_page", json!({ "path": "Thornhold.md", "old_str": old, "new_str": new }))
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let llm = MockLlm::new(vec![edit("fortified", "walled"), final_turn("done")]);
+        let gate = ScriptGate::new(vec![Decision::AllowChat]);
+        run_turn(
+            &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
+            "edit 1", &llm, &gate, &cancel, |_| {},
+        )
+        .await
+        .unwrap();
+
+        // Second turn, same chat: no ask (ScriptGate would panic).
+        let llm = MockLlm::new(vec![edit("Ruled by", "Governed by"), final_turn("done")]);
+        run_turn(
+            &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
+            "edit 2", &llm, &ScriptGate::none(), &cancel, |_| {},
+        )
+        .await
+        .unwrap();
+        let page = std::fs::read_to_string(root.join("Codex/Thornhold.md")).unwrap();
+        assert!(page.contains("Governed by"));
+
+        // A fresh chat asks again — the allow does not leak across chats.
+        let chat2 = chats::create_chat(&root).unwrap();
+        let llm = MockLlm::new(vec![edit("walled", "open"), final_turn("done")]);
+        let gate2 = ScriptGate::new(vec![Decision::Deny]);
+        run_turn(
+            &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat2.id, mode: Mode::Ask },
+            "edit 3", &llm, &gate2, &cancel, |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(gate2.asked.lock().unwrap().len(), 1);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn read_only_blocks_writes_accept_edits_skips_ask() {
+        let (state, root, cfg) = fixture_world("modes");
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let chat = chats::create_chat(&root).unwrap();
+        let llm = MockLlm::new(vec![
+            tool_turn("write_page", json!({ "path": "X.md", "content": "x" })),
+            final_turn("blocked"),
+        ]);
+        run_turn(
+            &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::ReadOnly },
+            "write", &llm, &ScriptGate::none(), &cancel, |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(!root.join("Codex/X.md").exists());
+
+        let chat2 = chats::create_chat(&root).unwrap();
+        let llm = MockLlm::new(vec![
+            tool_turn("create_page", json!({ "path": "X.md", "content": "---\nkind: npc\n---\n\nHi.\n" })),
+            final_turn("created"),
+        ]);
+        let mut saw_diff = false;
+        run_turn(
+            &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat2.id, mode: Mode::AcceptEdits },
+            "create", &llm, &ScriptGate::none(), &cancel,
+            |e| {
+                if let TurnEvent::ToolStart { diff: Some(_), .. } = e {
+                    saw_diff = true;
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert!(root.join("Codex/X.md").exists());
+        assert!(saw_diff); // diff still rendered in the transcript
+        assert_eq!(checkpoints::count(&root, &chat2.id), 1);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn invalid_write_call_errors_without_asking() {
+        let (state, root, cfg) = fixture_world("badedit");
+        let chat = chats::create_chat(&root).unwrap();
+        let llm = MockLlm::new(vec![
+            tool_turn("edit_page", json!({ "path": "Thornhold.md", "old_str": "not in the page", "new_str": "x" })),
+            final_turn("hm"),
+        ]);
+        let cancel = Arc::new(AtomicBool::new(false));
+        run_turn(
+            &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
+            "edit", &llm, &ScriptGate::none(), &cancel, |_| {},
+        )
+        .await
+        .unwrap();
+        let persisted = chats::load_chat(&root, &chat.id).unwrap();
+        let tr = persisted.iter().find(|e| e["type"] == "tool_result").unwrap();
+        assert_eq!(tr["is_error"], true);
+        assert!(tr["content"].as_str().unwrap().contains("not found"));
         std::fs::remove_dir_all(&root).ok();
     }
 

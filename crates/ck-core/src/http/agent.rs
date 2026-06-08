@@ -1,8 +1,9 @@
-//! Keeper agent endpoints: chat CRUD, the SSE message stream, abort.
-//! SSE frames (one JSON object per `data:` line):
+//! Keeper agent endpoints: chat CRUD, the SSE message stream, permission
+//! approve, undo, abort. SSE frames (one JSON object per `data:` line):
 //!   {type:"text_delta", text}
-//!   {type:"tool_start", name, args_summary}
+//!   {type:"tool_start", name, args_summary, diff?}
 //!   {type:"tool_result", name, summary, is_error}
+//!   {type:"permission_request", request_id, name, args, diff}
 //!   {type:"turn_done"}
 //!   {type:"error", message}
 
@@ -17,7 +18,7 @@ use futures_util::Stream;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::agent::{self, chats, RealLlm, TurnEvent};
+use crate::agent::{self, chats, checkpoints, AskRequest, Decision, PermissionGate, RealLlm, TurnEvent};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
@@ -61,23 +62,125 @@ pub async fn abort(
     State(state): State<AppState>,
     Path((campaign_id, _chat_id)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
-    let runs = state.agent_runs.lock().unwrap_or_else(|e| e.into_inner());
-    let aborted = match runs.get(&campaign_id) {
-        Some(flag) => {
-            flag.store(true, Ordering::Relaxed);
-            true
+    let aborted = {
+        let runs = state.agent_runs.lock().unwrap_or_else(|e| e.into_inner());
+        match runs.get(&campaign_id) {
+            Some(flag) => {
+                flag.store(true, Ordering::Relaxed);
+                true
+            }
+            None => false,
         }
-        None => false,
     };
+    // A run parked on a permission ask only sees the flag once the ask
+    // resolves — dropping the sender resolves it as a deny.
+    let mut asks = state.agent_asks.lock().unwrap_or_else(|e| e.into_inner());
+    asks.retain(|_, (cid, _)| cid != &campaign_id);
     Ok(Json(json!({ "aborted": aborted })))
+}
+
+#[derive(Deserialize)]
+pub struct ApproveRequest {
+    pub request_id: String,
+    pub decision: String,
+}
+
+pub async fn approve(
+    State(state): State<AppState>,
+    Path((_campaign_id, _chat_id)): Path<(String, String)>,
+    Json(req): Json<ApproveRequest>,
+) -> AppResult<Json<Value>> {
+    let decision = match req.decision.as_str() {
+        "allow_once" => Decision::AllowOnce,
+        "allow_chat" => Decision::AllowChat,
+        "deny" => Decision::Deny,
+        other => return Err(AppError::BadRequest(format!("Unknown decision: {other}"))),
+    };
+    let sender = {
+        let mut asks = state.agent_asks.lock().unwrap_or_else(|e| e.into_inner());
+        asks.remove(&req.request_id).map(|(_, tx)| tx)
+    };
+    let Some(sender) = sender else {
+        return Err(AppError::NotFound("No pending permission request.".into()));
+    };
+    let _ = sender.send(decision); // run gone = nothing to resolve
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct UndoRequest {
+    pub scope: Option<String>,
+}
+
+pub async fn undo(
+    State(state): State<AppState>,
+    Path((campaign_id, chat_id)): Path<(String, String)>,
+    Json(req): Json<UndoRequest>,
+) -> AppResult<Json<Value>> {
+    {
+        let runs = state.agent_runs.lock().unwrap_or_else(|e| e.into_inner());
+        if runs.contains_key(&campaign_id) {
+            return Err(AppError::Conflict(
+                "The Keeper is working — stop it before undoing.".into(),
+            ));
+        }
+    }
+    let (root, cfg) = world_cfg(&state, &campaign_id)?;
+    chats::load_chat(&root, &chat_id)?; // 404 on unknown chat
+    let vault_root = cfg.codex_dir(&root);
+    let all = req.scope.as_deref() == Some("all");
+    let restored = checkpoints::undo(&root, &chat_id, &vault_root, all)?;
+    for rel in &restored {
+        state.note_vault_write(&vault_root, rel);
+        let _ = state.with_index(&vault_root, |conn| {
+            if vault_root.join(rel).is_file() {
+                let _ = crate::store::index::upsert_path(conn, &vault_root, rel);
+            } else {
+                let _ = crate::store::index::remove_path(conn, rel);
+            }
+        });
+    }
+    Ok(Json(json!({
+        "restored": restored,
+        "remaining": checkpoints::count(&root, &chat_id),
+    })))
 }
 
 #[derive(Deserialize)]
 pub struct MessageRequest {
     pub text: String,
+    pub mode: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub base_url: Option<String>,
+}
+
+/// Production gate: emit a `permission_request` SSE frame, park on a oneshot
+/// until `/approve` resolves it (or abort drains it → deny).
+struct SseGate {
+    state: AppState,
+    campaign_id: String,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+}
+
+impl PermissionGate for SseGate {
+    async fn ask(&self, req: AskRequest) -> Decision {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut asks = self.state.agent_asks.lock().unwrap_or_else(|e| e.into_inner());
+            asks.insert(req.id.clone(), (self.campaign_id.clone(), tx));
+        }
+        let frame = json!({
+            "type": "permission_request",
+            "request_id": req.id,
+            "name": req.name,
+            "args": req.args,
+            "diff": req.diff,
+        });
+        let ev = Event::default().json_data(&frame).unwrap_or_else(|_| Event::default());
+        let _ = self.tx.send(ev);
+        rx.await.unwrap_or(Decision::Deny)
+    }
 }
 
 /// Claim the per-world run slot. Err(Conflict) while another run is active.
@@ -130,21 +233,28 @@ pub async fn send_message(
             let _ = tx.send(ev);
         };
         let llm = RealLlm { resolved };
+        let gate = SseGate {
+            state: st.clone(),
+            campaign_id: campaign_id.clone(),
+            tx: tx.clone(),
+        };
         let turn_ctx = agent::TurnCtx {
             state: &st,
             world_root: &root,
             cfg: &cfg,
             chat_id: &chat_id,
+            mode: agent::Mode::parse(req.mode.as_deref()),
         };
         let result = agent::run_turn(
             &turn_ctx,
             &req.text,
             &llm,
+            &gate,
             &cancel,
             |e| match e {
                 TurnEvent::TextDelta(t) => send(json!({ "type": "text_delta", "text": t })),
-                TurnEvent::ToolStart { name, args_summary } => {
-                    send(json!({ "type": "tool_start", "name": name, "args_summary": args_summary }))
+                TurnEvent::ToolStart { name, args_summary, diff } => {
+                    send(json!({ "type": "tool_start", "name": name, "args_summary": args_summary, "diff": diff }))
                 }
                 TurnEvent::ToolResult { name, summary, is_error } => send(json!({
                     "type": "tool_result", "name": name, "summary": summary, "is_error": is_error

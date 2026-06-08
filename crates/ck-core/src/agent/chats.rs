@@ -100,7 +100,8 @@ pub fn delete_chat(world_root: &Path, chat_id: &str) -> AppResult<()> {
     }
     std::fs::remove_file(&path)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("delete chat: {e}")))?;
-    // 6.3: also drop .ck/checkpoints/<chat-id>/; 6.4: attachments.
+    super::checkpoints::delete_for_chat(world_root, chat_id);
+    // 6.4: also drop attachments.
     Ok(())
 }
 
@@ -162,13 +163,44 @@ pub fn assistant_event(text: &str, tool_calls: &[ToolCall]) -> Value {
     })
 }
 
-pub fn tool_result_event(call_id: &str, name: &str, content: &str, is_error: bool) -> Value {
-    json!({
+pub fn tool_result_event(
+    call_id: &str,
+    name: &str,
+    content: &str,
+    is_error: bool,
+    diff: Option<&Value>,
+) -> Value {
+    let mut ev = json!({
         "type": "tool_result",
         "call_id": call_id,
         "name": name,
         "content": content,
         "is_error": is_error,
+        "at": crate::store::now(),
+    });
+    if let Some(d) = diff {
+        ev["diff"] = d.clone();
+    }
+    ev
+}
+
+pub fn permission_event(
+    request_id: &str,
+    name: &str,
+    diff: &Value,
+    decision: super::Decision,
+) -> Value {
+    let decision = match decision {
+        super::Decision::AllowOnce => "allow_once",
+        super::Decision::AllowChat => "allow_chat",
+        super::Decision::Deny => "deny",
+    };
+    json!({
+        "type": "permission",
+        "request_id": request_id,
+        "name": name,
+        "diff": diff,
+        "decision": decision,
         "at": crate::store::now(),
     })
 }
@@ -249,7 +281,7 @@ mod tests {
         };
         append(&root, &chat.id, &user_event("q")).unwrap();
         append(&root, &chat.id, &assistant_event("", std::slice::from_ref(&call))).unwrap();
-        append(&root, &chat.id, &tool_result_event("c1", "search_pages", "hit", false)).unwrap();
+        append(&root, &chat.id, &tool_result_event("c1", "search_pages", "hit", false, None)).unwrap();
         append(&root, &chat.id, &error_event("boom")).unwrap();
 
         let msgs = events_to_msgs(&load_chat(&root, &chat.id).unwrap());

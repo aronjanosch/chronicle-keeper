@@ -1,6 +1,6 @@
-//! Read-tier tool registry + dispatch (agent-tools-and-permissions-spec.md).
+//! Tool registry + dispatch (agent-tools-and-permissions-spec.md).
 //! All paths resolve through the traversal-safe `vault.rs`; everything is
-//! scoped to the world folder. Write/structural/shell tiers land in 6.3/6.4.
+//! scoped to the world folder. Read + write tiers; structural/shell land in 6.4.
 
 use serde_json::{json, Value};
 
@@ -15,6 +15,21 @@ use crate::{session_files, vault};
 pub const RESULT_CAP: usize = 16 * 1024;
 const MAX_TRANSCRIPT_SLICE: usize = 100;
 const MAX_SEARCH_HITS: usize = 20;
+/// Per-side cap on diff previews shown in approval cards.
+const PREVIEW_CAP: usize = 8 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    Read,
+    Write,
+}
+
+pub fn tier_of(name: &str) -> Tier {
+    match name {
+        "create_page" | "edit_page" | "write_page" => Tier::Write,
+        _ => Tier::Read,
+    }
+}
 
 pub struct ToolCtx<'a> {
     pub state: &'a AppState,
@@ -87,6 +102,107 @@ pub fn read_tools() -> Vec<ToolDef> {
             ),
         },
     ]
+}
+
+pub fn write_tools() -> Vec<ToolDef> {
+    fn obj(props: Value, required: &[&str]) -> Value {
+        json!({ "type": "object", "properties": props, "required": required })
+    }
+    vec![
+        ToolDef {
+            name: "create_page".into(),
+            description: "Create a new Codex page. Full file content including `---` frontmatter (kind, summary). Errors if the page already exists.".into(),
+            schema: obj(
+                json!({
+                    "path": { "type": "string", "description": "vault-relative, e.g. NPCs/Baron Aldric.md" },
+                    "content": { "type": "string" }
+                }),
+                &["path", "content"],
+            ),
+        },
+        ToolDef {
+            name: "edit_page".into(),
+            description: "Replace one exact string in a Codex page. old_str must match exactly once — read the page first. Use for targeted edits.".into(),
+            schema: obj(
+                json!({
+                    "path": { "type": "string" },
+                    "old_str": { "type": "string" },
+                    "new_str": { "type": "string" }
+                }),
+                &["path", "old_str", "new_str"],
+            ),
+        },
+        ToolDef {
+            name: "write_page".into(),
+            description: "Overwrite a whole Codex page with new content. Only for restructures where edit_page is impractical.".into(),
+            schema: obj(
+                json!({
+                    "path": { "type": "string" },
+                    "content": { "type": "string" }
+                }),
+                &["path", "content"],
+            ),
+        },
+    ]
+}
+
+fn norm_md_path(raw: &str) -> String {
+    let p = raw.trim().trim_matches('/');
+    if p.to_lowercase().ends_with(".md") {
+        p.to_string()
+    } else {
+        format!("{p}.md")
+    }
+}
+
+fn cap_preview(s: &str) -> String {
+    if s.len() <= PREVIEW_CAP {
+        return s.to_string();
+    }
+    let mut end = PREVIEW_CAP;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\n[truncated]", &s[..end])
+}
+
+/// Diff payload for a write call's approval card: `{path, old, new}`.
+/// `Err` = the call is invalid as-is (no point asking the user).
+pub fn write_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, String> {
+    let str_arg = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let path = norm_md_path(&str_arg("path"));
+    if path == ".md" {
+        return Err("missing 'path'".into());
+    }
+    let vault_root = ctx.cfg.codex_dir(ctx.world_root);
+    match name {
+        "create_page" => {
+            if vault::read_page(&vault_root, &path).is_ok() {
+                return Err(format!("Page already exists: {path} — use edit_page or write_page."));
+            }
+            Ok(json!({ "path": path, "old": Value::Null, "new": cap_preview(&str_arg("content")) }))
+        }
+        "edit_page" => {
+            let page = vault::read_page(&vault_root, &path)
+                .map_err(|_| format!("Page not found: {path} — read or list pages first."))?;
+            let old_str = str_arg("old_str");
+            if old_str.is_empty() {
+                return Err("old_str is empty".into());
+            }
+            match page.content.matches(&old_str).count() {
+                0 => Err("old_str not found in the page — read the page and copy the exact text.".into()),
+                1 => Ok(json!({ "path": path, "old": cap_preview(&old_str), "new": cap_preview(&str_arg("new_str")) })),
+                n => Err(format!("old_str matches {n} times — include more surrounding context to make it unique.")),
+            }
+        }
+        "write_page" => {
+            let old = vault::read_page(&vault_root, &path)
+                .ok()
+                .map_or(Value::Null, |p| Value::String(cap_preview(&p.content)));
+            Ok(json!({ "path": path, "old": old, "new": cap_preview(&str_arg("content")) }))
+        }
+        other => Err(format!("not a write tool: {other}")),
+    }
 }
 
 /// Run one read-tier tool. `Err` content goes back to the model as a
@@ -273,8 +389,49 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
                 .collect::<Vec<_>>()
                 .join("\n"))
         }
+        "create_page" => {
+            let path = norm_md_path(&str_arg("path"));
+            let vault_root = ctx.cfg.codex_dir(ctx.world_root);
+            if vault::read_page(&vault_root, &path).is_ok() {
+                return Err(format!("Page already exists: {path}"));
+            }
+            vault::write_page(&vault_root, &path, &str_arg("content")).map_err(app_err)?;
+            reindex(ctx, &vault_root, &path);
+            Ok(format!("Created {path}."))
+        }
+        "edit_page" => {
+            let path = norm_md_path(&str_arg("path"));
+            let vault_root = ctx.cfg.codex_dir(ctx.world_root);
+            let page = vault::read_page(&vault_root, &path).map_err(app_err)?;
+            let old_str = str_arg("old_str");
+            match page.content.matches(&old_str).count() {
+                1 => {}
+                0 => return Err("old_str not found in the page.".into()),
+                n => return Err(format!("old_str matches {n} times — not unique.")),
+            }
+            let content = page.content.replacen(&old_str, &str_arg("new_str"), 1);
+            vault::write_page(&vault_root, &path, &content).map_err(app_err)?;
+            reindex(ctx, &vault_root, &path);
+            Ok(format!("Edited {path}."))
+        }
+        "write_page" => {
+            let path = norm_md_path(&str_arg("path"));
+            let vault_root = ctx.cfg.codex_dir(ctx.world_root);
+            vault::write_page(&vault_root, &path, &str_arg("content")).map_err(app_err)?;
+            reindex(ctx, &vault_root, &path);
+            Ok(format!("Wrote {path}."))
+        }
         other => Err(format!("unknown tool: {other}")),
     }
+}
+
+/// Suppress the watcher echo + refresh the index row, like every CK-side
+/// vault write. Index is a cache — failure must not fail the write.
+fn reindex(ctx: &ToolCtx<'_>, vault_root: &std::path::Path, rel: &str) {
+    ctx.state.note_vault_write(vault_root, rel);
+    let _ = ctx.state.with_index(vault_root, |conn| {
+        let _ = index::upsert_path(conn, vault_root, rel);
+    });
 }
 
 fn app_err(e: AppError) -> String {

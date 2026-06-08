@@ -1,14 +1,21 @@
-// The Keeper docked panel (Phase 6.2 minimal cut): floating pill on every
-// in-world screen, right-docked chat over the current screen. Keeper screen,
-// permission cards, attachments land in later sprints.
+// The Keeper docked panel: floating pill on every in-world screen,
+// right-docked chat over the current screen. 6.3: permission mode selector,
+// diff-approval cards, undo. Keeper screen + attachments land in 6.4.
 import { html, useState, useEffect, useRef } from '../vendor/htm-preact-standalone.mjs';
-import { apiFetch, apiJson, apiStream, setState, store } from './core.js';
+import { apiFetch, apiJson, apiStream, setOp, setState, store } from './core.js';
 import { Icon, Spinner, renderBlockHtml, wikilinkClick } from './ui.js';
 
-// store.keeper = { open, chatId, events[], live: {text, tools[]}|null, error }
+// store.keeper = { open, chatId, events[], live: {text, tools[], ask}|null, error, mode }
+
+const MODES = [
+  { id: 'read_only', label: 'Read-only' },
+  { id: 'ask', label: 'Ask' },
+  { id: 'accept_edits', label: 'Accept edits' },
+];
 
 function keeperState() {
-  return store.keeper || { open: false, chatId: null, events: [], live: null, error: null };
+  const k = store.keeper || { open: false, chatId: null, events: [], live: null, error: null };
+  return k.mode ? k : { ...k, mode: localStorage.getItem('ck_keeper_mode') || 'ask' };
 }
 
 function patchKeeper(patch) {
@@ -53,20 +60,22 @@ async function sendMessage(text) {
   const events = [...k.events, { type: 'user', text }];
   patchKeeper({ events, live: { text: '', tools: [] }, error: null });
   try {
-    await apiStream(`/campaigns/${cid}/agent/chats/${k.chatId}/messages`, { text }, (ev) => {
+    await apiStream(`/campaigns/${cid}/agent/chats/${k.chatId}/messages`, { text, mode: k.mode }, (ev) => {
       const cur = keeperState();
       const live = cur.live || { text: '', tools: [] };
       if (ev.type === 'text_delta') {
         patchKeeper({ live: { ...live, text: live.text + ev.text } });
+      } else if (ev.type === 'permission_request') {
+        patchKeeper({ live: { ...live, ask: { requestId: ev.request_id, name: ev.name, diff: ev.diff } } });
       } else if (ev.type === 'tool_start') {
-        patchKeeper({ live: { ...live, tools: [...live.tools, { name: ev.name, args: ev.args_summary, running: true }] } });
+        patchKeeper({ live: { ...live, ask: null, tools: [...live.tools, { name: ev.name, args: ev.args_summary, diff: ev.diff, running: true }] } });
       } else if (ev.type === 'tool_result') {
         const tools = live.tools.slice();
         const i = tools.findLastIndex((t) => t.running && t.name === ev.name);
         if (i >= 0) tools[i] = { ...tools[i], running: false, summary: ev.summary, isError: ev.is_error };
         // A tool round means the streamed text so far belongs to a finished
         // assistant turn — fold it into the row list and reset the buffer.
-        patchKeeper({ live: { text: '', tools } });
+        patchKeeper({ live: { ...live, text: '', tools, ask: null } });
         if (live.text.trim()) {
           patchKeeper({ events: [...keeperState().events, { type: 'assistant', text: live.text }] });
         }
@@ -93,22 +102,91 @@ async function abortRun() {
   try { await apiJson(`/campaigns/${cid}/agent/chats/${k.chatId}/abort`, 'POST', {}); } catch (_) {}
 }
 
-function ToolRow({ name, summary, isError, running, args }) {
+function setMode(mode) {
+  localStorage.setItem('ck_keeper_mode', mode);
+  patchKeeper({ mode });
+}
+
+async function decide(requestId, decision) {
+  const cid = store.campaign?.campaign_id;
+  const k = keeperState();
+  if (!cid || !k.chatId) return;
+  if (k.live) patchKeeper({ live: { ...k.live, ask: null } });
+  try {
+    await apiJson(`/campaigns/${cid}/agent/chats/${k.chatId}/approve`, 'POST', { request_id: requestId, decision });
+  } catch (e) {
+    patchKeeper({ error: String(e.message || e) });
+  }
+}
+
+async function undoLast() {
+  const cid = store.campaign?.campaign_id;
+  const k = keeperState();
+  if (!cid || !k.chatId || k.live) return;
+  try {
+    const { restored } = await apiJson(`/campaigns/${cid}/agent/chats/${k.chatId}/undo`, 'POST', { scope: 'last' });
+    setOp(restored.length ? `Restored ${restored.join(', ')}` : 'Nothing to undo', restored.length ? 'done' : '');
+  } catch (e) {
+    patchKeeper({ error: String(e.message || e) });
+  }
+}
+
+// {path, old, new} → red/green diff lines (Phase 5 DiffLine styling).
+function DiffView({ diff }) {
+  const lines = (s) => (s == null ? [] : String(s).split('\n'));
+  const row = (mode, text, i) => {
+    const tone = mode === 'add'
+      ? { bg: 'var(--moss-50)', col: 'var(--ink)', mark: '+', markCol: 'var(--moss)' }
+      : { bg: 'rgba(122,46,31,.07)', col: 'var(--ink-muted)', mark: '−', markCol: 'var(--burgundy-700)' };
+    return html`<div key=${`${mode}${i}`} style=${{ display: 'flex', gap: 8, padding: '2px 10px', background: tone.bg, fontSize: 12, lineHeight: 1.5 }}>
+      <span style=${{ fontFamily: 'var(--font-mono)', color: tone.markCol, flex: '0 0 auto', width: 9 }}>${tone.mark}</span>
+      <span style=${{ color: tone.col, whiteSpace: 'pre-wrap', wordBreak: 'break-word', textDecoration: mode === 'remove' ? 'line-through' : 'none', textDecorationColor: 'rgba(122,46,31,.4)' }}>${text}</span>
+    </div>`;
+  };
+  return html`<div style=${{ border: '1px solid var(--rule)', borderRadius: 6, overflow: 'auto', background: 'var(--surface)', padding: '4px 0', maxHeight: 260 }}>
+    ${lines(diff.old).map((l, i) => row('remove', l, i))}
+    ${lines(diff.new).map((l, i) => row('add', l, i))}
+  </div>`;
+}
+
+const WRITE_VERB = { create_page: 'create', edit_page: 'edit', write_page: 'overwrite' };
+
+function PermissionCard({ ask }) {
+  return html`<div style=${{ margin: '10px 0', border: '1px solid var(--rule)', borderRadius: 8, background: 'var(--paper-deep)', overflow: 'hidden' }}>
+    <div style=${{ padding: '8px 12px', fontSize: 12.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
+      <${Icon} name="feather" size=${13} />
+      The Keeper wants to ${WRITE_VERB[ask.name] || ask.name} ${' '}
+      <span style=${{ fontFamily: 'var(--font-mono)', fontWeight: 500 }}>${ask.diff?.path || ''}</span>
+    </div>
+    <div style=${{ padding: '0 10px 8px' }}>
+      ${ask.diff && html`<${DiffView} diff=${ask.diff} />`}
+    </div>
+    <div style=${{ display: 'flex', gap: 8, padding: '0 10px 10px' }}>
+      <button class="ck-btn ck-btn--primary" onClick=${() => decide(ask.requestId, 'allow_once')}>Allow once</button>
+      <button class="ck-btn" onClick=${() => decide(ask.requestId, 'allow_chat')}>Allow for this chat</button>
+      <button class="ck-btn" style=${{ marginLeft: 'auto', color: 'var(--burgundy-700)' }} onClick=${() => decide(ask.requestId, 'deny')}>Deny</button>
+    </div>
+  </div>`;
+}
+
+function ToolRow({ name, summary, isError, running, args, diff }) {
   const [openRow, setOpenRow] = useState(false);
   const tint = isError ? 'var(--burgundy-700)' : 'var(--ink-muted)';
+  const expandable = !!summary || !!diff;
   return html`<div style=${{ margin: '6px 0' }}>
     <div onClick=${() => setOpenRow(!openRow)} style=${{
       display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: tint,
       padding: '4px 8px', background: 'var(--paper-deep)', borderRadius: 5,
-      border: '1px solid var(--rule-soft)', cursor: summary ? 'pointer' : 'default',
+      border: '1px solid var(--rule-soft)', cursor: expandable ? 'pointer' : 'default',
     }}>
       ${running ? html`<${Spinner} size=${12} />` : html`<${Icon} name=${isError ? 'x' : 'check'} size=${12} />`}
       <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>${name}</span>
       <span style=${{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--ink-faint)' }}>
-        ${running ? (args || '') : (summary || '')}
+        ${diff?.path || (running ? (args || '') : (summary || ''))}
       </span>
     </div>
-    ${openRow && summary && html`<div style=${{ fontSize: 12, color: 'var(--ink-muted)', padding: '6px 10px', whiteSpace: 'pre-wrap', fontFamily: 'var(--font-mono)' }}>${summary}</div>`}
+    ${openRow && diff && html`<div style=${{ margin: '4px 0 0 20px' }}><${DiffView} diff=${diff} /></div>`}
+    ${openRow && !diff && summary && html`<div style=${{ fontSize: 12, color: 'var(--ink-muted)', padding: '6px 10px', whiteSpace: 'pre-wrap', fontFamily: 'var(--font-mono)' }}>${summary}</div>`}
   </div>`;
 }
 
@@ -125,7 +203,10 @@ function EventRow({ ev }) {
   }
   if (ev.type === 'tool_result') {
     const first = (ev.content || '').split('\n').find((l) => l.trim() && !l.startsWith('Tool output') && l.trim() !== '```') || '';
-    return html`<${ToolRow} name=${ev.name} summary=${first.trim()} isError=${ev.is_error} />`;
+    return html`<${ToolRow} name=${ev.name} summary=${first.trim()} isError=${ev.is_error} diff=${ev.diff} />`;
+  }
+  if (ev.type === 'permission' && ev.decision === 'deny') {
+    return html`<div style=${{ margin: '8px 0', fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>Edit to ${ev.diff?.path || 'a page'} denied.</div>`;
   }
   if (ev.type === 'error') {
     return html`<div style=${{ margin: '8px 0', fontSize: 12, color: 'var(--burgundy-700)' }}>⚠ ${ev.message}</div>`;
@@ -162,7 +243,7 @@ function Transcript({ k }) {
   const ref = useRef(null);
   useEffect(() => {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [k.events.length, k.live?.text, k.live?.tools?.length]);
+  }, [k.events.length, k.live?.text, k.live?.tools?.length, k.live?.ask]);
   const empty = !k.events.length && !k.live;
   return html`<div ref=${ref} style=${{ flex: 1, overflow: 'auto', padding: '6px 14px' }}>
     ${empty && html`<div style=${{ color: 'var(--ink-faint)', fontSize: 13, padding: '24px 8px', textAlign: 'center', lineHeight: 1.6 }}>
@@ -173,7 +254,8 @@ function Transcript({ k }) {
       ${k.live.tools.map((t, i) => html`<${ToolRow} key=${`t${i}`} ...${t} />`)}
       ${k.live.text && html`<div class="ck-prose" style=${{ fontSize: 13, margin: '10px 0' }}
         dangerouslySetInnerHTML=${{ __html: renderBlockHtml(k.live.text, store.vaultPages) }} />`}
-      ${!k.live.text && !k.live.tools.some((t) => t.running) && html`<div style=${{ padding: '8px 0' }}><${Spinner} size=${14} /></div>`}
+      ${k.live.ask && html`<${PermissionCard} ask=${k.live.ask} />`}
+      ${!k.live.text && !k.live.ask && !k.live.tools.some((t) => t.running) && html`<div style=${{ padding: '8px 0' }}><${Spinner} size=${14} /></div>`}
     `}
     ${k.error && html`<div style=${{ margin: '8px 0', fontSize: 12, color: 'var(--burgundy-700)' }}>⚠ ${k.error}</div>`}
   </div>`;
@@ -217,6 +299,12 @@ export function KeeperDock() {
     <div style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid var(--rule)' }}>
       <${Icon} name="feather" size=${15} />
       <div style=${{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, flex: 1 }}>The Keeper</div>
+      <select value=${k.mode} onChange=${(e) => setMode(e.target.value)}
+        title="What the Keeper may do without asking"
+        style=${{ fontSize: 11.5, padding: '3px 4px', borderRadius: 5, border: '1px solid var(--rule)', background: 'var(--surface)', color: 'var(--ink-muted)' }}>
+        ${MODES.map((m) => html`<option key=${m.id} value=${m.id}>${m.label}</option>`)}
+      </select>
+      <button class="ck-btn" title="Undo the Keeper's last edit in this chat" onClick=${undoLast} disabled=${!!k.live}>Undo</button>
       <button class="ck-btn" title="New chat" onClick=${newChat}>New</button>
       <button onClick=${() => patchKeeper({ open: false })} title="Close (Esc)"
         style=${{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-muted)', display: 'flex' }}>

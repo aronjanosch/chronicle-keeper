@@ -100,6 +100,18 @@ pub static REGISTRY: &[Provider] = &[
         transport: Transport::Anthropic,
     },
     Provider {
+        id: "openrouter",
+        name: "OpenRouter",
+        needs_key: true,
+        default_api_base: Some("https://openrouter.ai/api/v1"),
+        // OpenRouter proxies the entire vendor-prefixed catalogue and adds new
+        // models constantly, so no baked-in list: type any id from
+        // openrouter.ai/models (free-text field).
+        models: &[],
+        default_model: "",
+        transport: Transport::OpenAiCompat,
+    },
+    Provider {
         id: "gemini",
         name: "Google Gemini",
         needs_key: true,

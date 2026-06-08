@@ -1,6 +1,6 @@
 [package]
 name = "chronicle-keeper"
-version = "0.5.1"
+version = "0.5.4"
 description = "Generate structured D&D session notes from Craig Bot recordings — local-first, bring-your-own-LLM."
 authors = ["Aron Wiederkehr"]
 edition = "2021"

@@ -69,6 +69,21 @@ jobs:
             patchelf \
             build-essential curl wget file libssl-dev
 
+      # Bundle version comes from tauri.conf.json, which can drift behind the
+      # git tag. On a tag build, force both it and Cargo.toml to the tag so the
+      # installers are always named for the release being cut. sed -i.bak is the
+      # portable form (works on BSD sed too); bash is available on all runners.
+      - name: Sync version to tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          jq --arg v "$VER" '.version = $v' src-tauri/tauri.conf.json > tauri.conf.tmp
+          mv tauri.conf.tmp src-tauri/tauri.conf.json
+          sed -i.bak -E "s/^version = \"[^\"]*\"/version = \"$VER\"/" src-tauri/Cargo.toml
+          rm -f src-tauri/Cargo.toml.bak
+          echo "Set version to $VER"
+
       - name: Build app (tauri-action)
         uses: tauri-apps/tauri-action@v0
         env:

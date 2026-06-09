@@ -7,7 +7,7 @@ import { Icon, Sigil, BrandMark } from './ui.js';
 // Drag-resizable sidebar width, persisted per key. Returns [width, onMouseDown].
 // opts.fromRight flips the drag direction for panels anchored on the right edge.
 const SIDEBAR_MIN = 180;
-const SIDEBAR_MAX = 420;
+const SIDEBAR_MAX = 480;
 export function useSidebarWidth(key, fallback = 220, opts = {}) {
   const min = opts.min ?? SIDEBAR_MIN;
   const max = opts.max ?? SIDEBAR_MAX;

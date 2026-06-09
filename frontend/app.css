@@ -142,11 +142,10 @@ button { font-family: inherit; }
 .ck-prose a.ck-wikilink--broken { color: var(--ochre); border-bottom: 1px dashed var(--ochre); }
 
 /* Plain source editor (default edit mode) */
-.ck-source-edit {
-  display: block; width: 100%; box-sizing: border-box; min-height: 60vh; margin-top: 8px;
-  font-family: var(--font-mono); font-size: 13.5px; line-height: 1.7; color: var(--ink);
-  background: transparent; border: none; outline: none; resize: none; overflow: hidden; padding: 0;
-}
+/* CodeMirror 6 page editor (Phase 7.5) — fills the column; outer div scrolls. */
+.ck-cm { margin-top: 8px; min-height: 60vh; }
+.ck-cm .cm-editor { height: auto; }
+.ck-cm .cm-gutters { margin-right: 6px; }
 
 /* ── Live-preview page editor ───────────────────────────────────── */
 .ck-live { position: relative; }

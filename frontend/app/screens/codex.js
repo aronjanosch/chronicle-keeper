@@ -5,7 +5,7 @@
 import { html, useState, useEffect, useRef } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal, useStore } from '../core.js';
 import { Shell, Sidebar, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
-import { Btn, Empty, Icon, Markdown, Input, Textarea, Select, BrandMark, Menu } from '../ui.js';
+import { Btn, Empty, Icon, Markdown, Input, Textarea, Select, BrandMark } from '../ui.js';
 import { loadCodexEntries, createCodexEntry, openCampaign, updateCampaign,
   loadCampaignTags, renameCampaignTag, deleteCampaignTag,
   loadVaultTree, createVaultPage, createVaultFolder, moveVaultEntry,
@@ -431,7 +431,9 @@ function storeSavedSearches(campaignId, list) {
   try { localStorage.setItem(savedSearchKey(campaignId), JSON.stringify(list)); } catch (_) { /* private mode */ }
 }
 
-export function FileTree({ campaign, tree, active, onOpen, act }) {
+// The vault file browser — search, tree, diagnostics, vault-path footer. Filling
+// the rest of the FileTree aside below the brand + world nav.
+function VaultPanel({ campaign, tree, active, onOpen, act }) {
   const store = useStore();
   const [q, setQ] = useState('');
   const [openSet, setOpenSet] = useState(() => new Set());
@@ -519,23 +521,7 @@ export function FileTree({ campaign, tree, active, onOpen, act }) {
     setSaved(next); storeSavedSearches(campaign?.campaign_id, next);
   }
 
-  const [width, onResize] = useSidebarWidth('ck_tree_w');
-  return html`<aside style=${{ width, flex: `0 0 ${width}px`, borderRight: '1px solid var(--rule)', background: 'var(--paper-deep)', padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0, position: 'relative' }}>
-    <${ResizeHandle} onMouseDown=${onResize} />
-    <div style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 6px 14px', borderBottom: '1px solid var(--rule-soft)', marginBottom: 4, cursor: 'pointer' }}
-      onClick=${() => navigate('library')}>
-      <${BrandMark} size=${30} />
-      <div style=${{ lineHeight: 1.15 }}>
-        <div style=${{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 500, letterSpacing: '-0.01em' }}>Chronicle Keeper</div>
-        <div style=${{ fontSize: 10, fontWeight: 500, color: 'var(--ink-faint)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 2 }}>v0.5 · worldbuilding</div>
-      </div>
-    </div>
-    <div onClick=${() => openCampaign(campaign?.campaign_id)} style=${{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px', borderRadius: 4, color: 'var(--ink-soft)', fontSize: 13, fontWeight: 500, background: 'transparent', border: '1px solid transparent', cursor: 'pointer' }}
-      onMouseEnter=${(e) => { e.currentTarget.style.background = 'rgba(120,90,40,.08)'; }}
-      onMouseLeave=${(e) => { e.currentTarget.style.background = 'transparent'; }}>
-      <${Icon} name="chev-l" size=${13} />
-      <span style=${{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${campaign?.name || 'World'}</span>
-    </div>
+  return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minHeight: 0 }}>
     <div style=${{ display: 'flex', gap: 4, alignItems: 'center' }}>
       <${Input} value=${q} onInput=${setQ} placeholder="Search the vault…" style=${{ fontSize: 12.5, flex: 1 }} />
       ${query && html`<span title="Save this search" onClick=${saveCurrentSearch}
@@ -583,10 +569,56 @@ export function FileTree({ campaign, tree, active, onOpen, act }) {
       ${diag.issues > 0 && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 4 }}><span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--burgundy)' }} />${diag.issues} file issue${diag.issues === 1 ? '' : 's'}</span>`}
     </div>`}
     <div onClick=${attachVaultFlow} title="Change vault folder (advanced)"
-      style=${{ margin: '0 -12px -14px', borderTop: '1px solid var(--rule-soft)', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', cursor: 'pointer' }}>
+      style=${{ margin: '0 -12px', borderTop: '1px solid var(--rule-soft)', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', cursor: 'pointer' }}>
       <span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--moss)', flex: '0 0 auto' }} />
       <span style=${{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', direction: 'rtl', textAlign: 'left' }}>${campaign.vault_path}</span>
     </div>
+  </div>`;
+}
+
+// Compact icon nav for the Codex/page screens — the same world destinations as
+// the main Sidebar, but a single icon row so the file browser keeps its height.
+function WorldNavBar({ campaign }) {
+  const id = campaign?.campaign_id;
+  const items = [
+    { icon: 'compass', title: 'Overview', go: () => navigate('campaign', { id }) },
+    { icon: 'book', title: 'The Codex', active: true, go: () => navigate('codex', { id }) },
+    { icon: 'search', title: 'Search', go: () => navigate('search', { id }) },
+    { icon: 'map', title: 'Atlas', go: () => navigate('atlas', { id }) },
+    { icon: 'feather', title: 'The Keeper', go: () => navigate('keeper', { id }) },
+    { icon: 'mic', title: 'Sessions', go: () => navigate('sessions', { id }) },
+    { icon: 'cog', title: 'Settings', go: () => navigate('settings') },
+  ];
+  return html`<div style=${{ display: 'flex', gap: 2, padding: '2px 0 6px', marginBottom: 2, borderBottom: '1px solid var(--rule-soft)' }}>
+    ${items.map((it) => html`<span key=${it.title} title=${it.title} onClick=${it.go} style=${{
+      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 0', borderRadius: 4, cursor: 'pointer',
+      color: it.active ? 'var(--burgundy)' : 'var(--ink-soft)',
+      background: it.active ? 'var(--burgundy-50)' : 'transparent',
+    }}
+      onMouseEnter=${(e) => { if (!it.active) e.currentTarget.style.background = 'rgba(120,90,40,.08)'; }}
+      onMouseLeave=${(e) => { if (!it.active) e.currentTarget.style.background = 'transparent'; }}>
+      <${Icon} name=${it.icon} size=${15} />
+    </span>`)}
+  </div>`;
+}
+
+// Public sidebar for the Codex/page screens: brand + compact world nav, then the
+// vault file browser filling the rest. Width shares `ck_sidebar_w` with the main
+// Sidebar so resizing is consistent app-wide.
+export function FileTree({ campaign, tree, active, onOpen, act }) {
+  const [width, onResize] = useSidebarWidth('ck_sidebar_w');
+  return html`<aside style=${{ width, flex: `0 0 ${width}px`, borderRight: '1px solid var(--rule)', background: 'var(--paper-deep)', padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0, position: 'relative' }}>
+    <${ResizeHandle} onMouseDown=${onResize} />
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 6px 12px', borderBottom: '1px solid var(--rule-soft)', marginBottom: 4, cursor: 'pointer' }}
+      onClick=${() => navigate('library')}>
+      <${BrandMark} size=${30} />
+      <div style=${{ lineHeight: 1.15, minWidth: 0 }}>
+        <div style=${{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 500, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${campaign?.name || 'World'}</div>
+        <div style=${{ fontSize: 10, fontWeight: 500, color: 'var(--ink-faint)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 2 }}>${campaign?.system || 'Worldbuilding'}</div>
+      </div>
+    </div>
+    <${WorldNavBar} campaign=${campaign} />
+    <${VaultPanel} campaign=${campaign} tree=${tree} active=${active} onOpen=${onOpen} act=${act} />
   </aside>`;
 }
 
@@ -709,7 +741,11 @@ function VaultView({ campaign }) {
   const recent = [...pages].sort((a, b) => (b.modified || 0) - (a.modified || 0));
   const crumbs = sel ? sel.split('/') : [];
 
-  const topbar = html`<${Topbar} crumbs=${[{ label: campaign.name, onClick: () => openCampaign(campaign.campaign_id) }, 'Codex']} />`;
+  const topbar = html`<${Topbar} crumbs=${[{ label: campaign.name, onClick: () => openCampaign(campaign.campaign_id) }, 'Codex']}
+    right=${html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <${Btn} kind="secondary" size="sm" icon="download" onClick=${importNotesFlow}>Import notes</${Btn}>
+      <${Btn} kind="secondary" size="sm" icon="sparkle" onClick=${enhanceFlow}>Enhance with AI</${Btn}>
+    </div>`} />`;
   return html`<${Shell}
     sidebar=${html`<${FileTree} campaign=${campaign} tree=${tree} active=${null} onOpen=${openPage} act=${act} />`}
     topbar=${topbar} bodyStyle=${{ padding: 0 }}>
@@ -725,15 +761,9 @@ function VaultView({ campaign }) {
           </div>
         </div>
         <span style=${{ flex: 1 }} />
-        <div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style=${{ display: 'flex', gap: 4, padding: 3, background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 5 }}>
-            ${[['folders', 'grid', 'Folders'], ['all', 'scroll', 'All pages'], ['tags', 'tag', 'Tags']].map(([v, ic, label]) => html`
-              <button key=${v} onClick=${() => { setView(v); if (v !== 'folders') setSel(''); }} style=${{ padding: '5px 9px', borderRadius: 3, whiteSpace: 'nowrap', background: view === v ? 'var(--paper-deep)' : 'transparent', color: view === v ? 'var(--ink)' : 'var(--ink-muted)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', border: 'none' }}><${Icon} name=${ic} size=${12} /> ${label}</button>`)}
-          </div>
-          <${Menu} items=${[
-            { label: 'Import notes…', icon: 'download', onClick: importNotesFlow },
-            { label: 'Enhance with AI', icon: 'sparkle', onClick: enhanceFlow },
-          ]} />
+        <div style=${{ display: 'flex', gap: 4, padding: 3, background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 5 }}>
+          ${[['folders', 'grid', 'Folders'], ['all', 'scroll', 'All pages'], ['tags', 'tag', 'Tags']].map(([v, ic, label]) => html`
+            <button key=${v} onClick=${() => { setView(v); if (v !== 'folders') setSel(''); }} style=${{ padding: '5px 9px', borderRadius: 3, whiteSpace: 'nowrap', background: view === v ? 'var(--paper-deep)' : 'transparent', color: view === v ? 'var(--ink)' : 'var(--ink-muted)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', border: 'none' }}><${Icon} name=${ic} size=${12} /> ${label}</button>`)}
         </div>
       </div>
 

@@ -1,14 +1,16 @@
-// The Page — Obsidian-style reading view + single live-preview editor.
-// Live preview is block-granular: every markdown block renders in place; the block
-// you click into reveals its raw markdown in an auto-growing textarea, and re-renders
-// on blur. Frontmatter shows as a Properties strip (click to edit raw YAML). Typing
-// `[[` opens a wikilink autocomplete at the caret. Auto-saves to the vault (800ms).
+// The Page — rendered reading view + a CodeMirror 6 source editor (Phase 7.5).
+// Read mode renders the markdown with the right rail (infobox, AI memory, outline,
+// backlinks). Edit mode mounts CM6 over the literal .md (frontmatter + body), with
+// markdown highlight, [[ / #tag autocomplete, ⌘F search, and format shortcuts.
+// Auto-saves to the vault (800ms). See cm.js.
 import { html, useState, useEffect, useRef, useMemo } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, useStore } from '../core.js';
-import { Shell, Topbar } from '../shell.js';
-import { Btn, Empty, Icon, PageBody, renderBlockHtml, splitDoc, joinDoc, parseProps } from '../ui.js';
+import { Shell, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
+import { Empty, Icon, PageBody, splitDoc, joinDoc, parseProps } from '../ui.js';
 import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault } from '../actions.js';
+import { mountEditor } from '../cm.js';
 import { FileTree, buildTree, makeVaultActions, iconForKind, KINDS } from './codex.js';
+import { keeperState, openPanel, Conversation } from '../keeperPanel.js';
 
 function kindLabel(k) {
   return (KINDS.find((x) => x.value === k) || {}).label || k || 'Page';
@@ -224,16 +226,6 @@ function BacklinksCard({ path, pages, links }) {
   </${RailCard}>`;
 }
 
-let _blkId = 0;
-const newId = () => 'blk' + (_blkId++);
-function splitBody(body) {
-  return (body || '')
-    .split(/\n{2,}/)
-    .map((s) => s.replace(/\s+$/, ''))
-    .filter((s) => s.trim() !== '')
-    .map((text) => ({ id: newId(), text }));
-}
-
 function autoGrow(ta) {
   ta.style.height = 'auto';
   ta.style.height = ta.scrollHeight + 'px';
@@ -273,219 +265,23 @@ export function caretCoords(ta) {
   }
 }
 
-function PropsStrip({ fmText, schemas, onEdit }) {
-  const props = parseProps(fmText).filter((p) => p.key !== 'summary');
-  const kind = ((props.find((p) => p.key === 'kind') || {}).values || [])[0];
-  const fields = schemaFor(schemas, kind);
-  const typeOf = new Map(fields.map((f) => [f.name, f.type]));
-  const have = new Set(props.map((p) => p.key));
-  const missing = fields.filter((f) => !have.has(f.name));
-  return html`<div class="ck-props" onClick=${onEdit} title="Click to edit properties">
-    ${props.length || missing.length
-      ? html`${props.map((p) => {
-          const vals = p.values.filter((v) => v !== '');
-          return html`<div class="ck-prop-row" key=${p.key}>
-            <span class="ck-prop-key">${p.key}</span>
-            <span class="ck-prop-vals">
-              ${p.key === 'tags'
-                ? vals.map((v, i) => html`<span class="ck-prop-tag mono" key=${i}>${'#' + String(v).replace(/^#/, '')}</span>`)
-                : !vals.length
-                  ? html`<span class="ck-prop-blank">—</span>`
-                  : html`<${FieldVal} type=${typeOf.get(p.key) || 'text'} values=${vals} />`}
-            </span>
-          </div>`;
-        })}
-        ${missing.map((f) => html`<div class="ck-prop-row" key=${f.name}>
-          <span class="ck-prop-key">${f.name}</span>
-          <span class="ck-prop-vals"><span class="ck-prop-blank">—</span></span>
-        </div>`)}`
-      : html`<div class="ck-prop-empty"><${Icon} name="plus" size=${11} /> Add properties</div>`}
-  </div>`;
-}
-
-function LiveEditor({ content, pages, schemas, onSave, onState }) {
-  const init = useMemo(() => splitDoc(content), []);
-  const [fmText, setFmText] = useState(init.fm);
-  const [blocks, setBlocks] = useState(() => splitBody(init.body));
-  const [activeId, setActiveId] = useState(null);
-  const [ac, setAc] = useState(null);
-
-  const taRef = useRef(null);
-  const draft = useRef('');
-  const saveTimer = useRef(null);
-  const pending = useRef({ dirty: false, doc: content });
-  const cache = useRef(new Map());
-
-  useEffect(() => { cache.current.clear(); }, [pages]);
-
-  useEffect(() => () => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    if (pending.current.dirty) { try { onSave(pending.current.doc); } catch (_) { /* unmount */ } }
-  }, []);
-
-  // Set the active textarea's content + focus once, when a block is activated.
+// CodeMirror 6 source editor — edits the whole .md (frontmatter + body) as literal
+// text. Lazy-mounts the vendored bundle into a div; re-keyed on path/reload by parent.
+function CmEditor({ content, pages, onSave, onCreate, onState }) {
+  const hostRef = useRef(null);
+  const pagesRef = useRef(pages); pagesRef.current = pages;
   useEffect(() => {
-    if (activeId != null && taRef.current) {
-      const ta = taRef.current;
-      ta.value = draft.current;
-      autoGrow(ta);
-      ta.focus();
-      ta.setSelectionRange(ta.value.length, ta.value.length);
-    }
-  }, [activeId]);
-
-  function htmlFor(text) {
-    const c = cache.current;
-    if (c.has(text)) return c.get(text);
-    const h = renderBlockHtml(text, pages);
-    c.set(text, h);
-    return h;
-  }
-
-  function scheduleSave(doc) {
-    pending.current = { dirty: true, doc };
-    if (onState) onState('dirty');
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      if (onState) onState('saving');
-      Promise.resolve(onSave(pending.current.doc))
-        .then(() => { pending.current.dirty = false; if (onState) onState('saved'); })
-        .catch(() => { if (onState) onState('dirty'); });
-    }, 800);
-  }
-  function scheduleSaveLive() {
-    const fm = activeId === '__fm__' ? draft.current : fmText;
-    const body = blocks.map((b) => (b.id === activeId ? draft.current : b.text)).join('\n\n');
-    scheduleSave(joinDoc(fm, body));
-  }
-
-  function enterEdit(b) { draft.current = b.text; setAc(null); setActiveId(b.id); }
-  function enterFm() { draft.current = fmText; setAc(null); setActiveId('__fm__'); }
-
-  function commitActive() {
-    const id = activeId;
-    if (id == null) return;
-    if (id === '__fm__') {
-      setFmText(draft.current);
-    } else {
-      setBlocks((bs) => {
-        const i = bs.findIndex((b) => b.id === id);
-        if (i < 0) return bs;
-        const parts = draft.current.split(/\n{2,}/).map((s) => s.replace(/\s+$/, '')).filter((s) => s.trim() !== '');
-        const repl = parts.map((t) => ({ id: newId(), text: t }));
-        return [...bs.slice(0, i), ...repl, ...bs.slice(i + 1)];
-      });
-    }
-    setActiveId(null);
-    setAc(null);
-  }
-
-  function addBlockEnd() {
-    const id = newId();
-    setBlocks((bs) => [...bs, { id, text: '' }]);
-    draft.current = '';
-    setActiveId(id);
-  }
-
-  function updateAutocomplete(ta) {
-    try {
-      const caret = ta.selectionStart;
-      const before = ta.value.slice(0, caret);
-      const open = before.lastIndexOf('[[');
-      if (open < 0) { setAc(null); return; }
-      const between = before.slice(open + 2);
-      if (between.includes(']]') || between.includes('\n')) { setAc(null); return; }
-      const ql = between.toLowerCase();
-      // Match on title or any alias (aliases come normalized lowercase from the index).
-      const items = (pages || [])
-        .filter((p) => p.title && (p.title.toLowerCase().includes(ql)
-          || (p.aliases || []).some((a) => a.includes(ql))))
-        .slice(0, 6);
-      const co = caretCoords(ta);
-      setAc({ open, query: between, items, index: 0, top: co.top + co.lineHeight, left: co.left });
-    } catch (_) { setAc(null); }
-  }
-
-  function acceptAc(choice) {
-    const cur = ac;
-    const ta = taRef.current;
-    if (!cur || !ta) return;
-    const title = (choice === 'create' ? cur.query : choice.title).trim();
-    if (!title) { setAc(null); return; }
-    const val = ta.value;
-    const newVal = val.slice(0, cur.open) + `[[${title}]]` + val.slice(ta.selectionStart);
-    ta.value = newVal;
-    const pos = cur.open + title.length + 4;
-    ta.setSelectionRange(pos, pos);
-    draft.current = newVal;
-    autoGrow(ta);
-    ta.focus();
-    setAc(null);
-    scheduleSaveLive();
-    if (choice === 'create') createVaultPage(title, 'lore', '').catch(() => {});
-  }
-
-  function onKeyDown(e) {
-    if (ac) {
-      const total = ac.items.length + 1;
-      if (e.key === 'ArrowDown') { e.preventDefault(); setAc({ ...ac, index: (ac.index + 1) % total }); return; }
-      if (e.key === 'ArrowUp') { e.preventDefault(); setAc({ ...ac, index: (ac.index - 1 + total) % total }); return; }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault();
-        acceptAc(ac.index < ac.items.length ? ac.items[ac.index] : 'create');
-        return;
-      }
-      if (e.key === 'Escape') { e.preventDefault(); setAc(null); return; }
-    }
-    if (e.key === 'Escape') { e.preventDefault(); e.target.blur(); }
-  }
-
-  const taProps = {
-    ref: taRef,
-    class: 'ck-block-edit',
-    spellcheck: 'false',
-    onInput: (e) => { draft.current = e.target.value; autoGrow(e.target); scheduleSaveLive(); updateAutocomplete(e.target); },
-    onBlur: commitActive,
-    onKeyDown,
-  };
-
-  return html`<div class="ck-live">
-    ${activeId === '__fm__'
-      ? html`<textarea ...${taProps} key="__fm__" style=${{ fontFamily: 'var(--font-mono)' }} />`
-      : html`<${PropsStrip} fmText=${fmText} schemas=${schemas} onEdit=${enterFm} />`}
-
-    <div class="ck-live-body">
-      ${blocks.map((b) => (b.id === activeId
-        ? html`<textarea ...${taProps} key=${b.id} />`
-        : html`<div class="ck-prose ck-block" key=${b.id} onClick=${() => enterEdit(b)}
-            dangerouslySetInnerHTML=${{ __html: htmlFor(b.text) }} />`))}
-      ${blocks.length === 0 && activeId == null
-        ? html`<div class="ck-block-empty" onClick=${addBlockEnd}>This page is empty. Click to start writing…</div>`
-        : html`<div class="ck-add-zone" onClick=${addBlockEnd} title="Add a paragraph" />`}
-    </div>
-
-    ${ac && html`<div class="ck-ac" style=${{ top: ac.top, left: ac.left }}>
-      <div class="ck-ac-head">Link a page</div>
-      ${ac.items.map((it, i) => {
-        const ql = ac.query.toLowerCase();
-        const via = !it.title.toLowerCase().includes(ql)
-          && ((it.aliases || []).find((a) => a.includes(ql)) || null);
-        return html`<div class="ck-ac-item ${i === ac.index ? 'on' : ''}" key=${it.path}
-          onMouseDown=${(e) => { e.preventDefault(); acceptAc(it); }}>
-        <span class="ck-ac-glyph"><${Icon} name=${iconForKind(it.kind)} size=${13} /></span>
-        <div style=${{ flex: 1, minWidth: 0 }}>
-          <div class="ck-ac-name">${it.title}</div>
-          <div class="ck-ac-sub">${kindLabel(it.kind)}${via ? ` · alias “${via}”` : ''}</div>
-        </div>
-        ${i === ac.index && html`<span class="ck-ac-kbd">↵</span>`}
-      </div>`;
-      })}
-      <div class="ck-ac-item ck-ac-create ${ac.index === ac.items.length ? 'on' : ''}"
-          onMouseDown=${(e) => { e.preventDefault(); acceptAc('create'); }}>
-        <${Icon} name="plus" size=${11} /> <span>Create ${ac.query ? `“${ac.query}”` : 'a new page'}</span>
-      </div>
-    </div>`}
-  </div>`;
+    let ctl = null, dead = false;
+    mountEditor(hostRef.current, {
+      doc: content,
+      getPages: () => pagesRef.current,
+      onCreatePage: (name) => onCreate(name),
+      onSave,
+      onState,
+    }).then((c) => { if (dead) c.destroy(); else ctl = c; });
+    return () => { dead = true; if (ctl) ctl.destroy(); };
+  }, []);
+  return html`<div ref=${hostRef} class="ck-cm" />`;
 }
 
 function KebabMenu({ items }) {
@@ -539,6 +335,8 @@ function ReadView({ page, path, pages, links, schemas, atlasMaps, campaignId, on
   const edited = meta?.modified ? new Date(meta.modified * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : null;
   const outline = useMemo(() => parseOutline(prose), [prose]);
   const scrollRef = useRef(null);
+  const [railTab, setRailTab] = useState('info');
+  const [railW, onRailResize] = useSidebarWidth('ck_page_rail_w', 300, { min: 240, max: 560, fromRight: true });
 
   return html`<div style=${{ flex: 1, display: 'flex', minWidth: 0, minHeight: 0 }}>
     <div ref=${scrollRef} style=${{ flex: 1, overflow: 'auto', background: 'var(--paper)', padding: '34px 0 64px', minWidth: 0 }}>
@@ -550,52 +348,44 @@ function ReadView({ page, path, pages, links, schemas, atlasMaps, campaignId, on
         <${PageBody} text=${prose} pages=${pages} onBroken=${onBroken} />
       </div>
     </div>
-    ${!railHidden && html`<aside class="ck-rail">
-      <${OutlineCard} outline=${outline} scrollRef=${scrollRef} />
-      <${InfoboxCard} fm=${fm} kind=${page.kind} schemas=${schemas} pages=${pages} />
-      <${SummaryCard} page=${page} onSave=${onSave} />
-      <${TagsCard} tags=${meta?.tags} />
-      <${OnMapCard} path=${path} maps=${atlasMaps} campaignId=${campaignId} />
-      <${BacklinksCard} path=${path} pages=${pages} links=${links} />
-      <div class="ck-rail-foot">${[edited && `Edited ${edited}`, `${words} words`].filter(Boolean).join(' · ')}</div>
+    ${!railHidden && html`<aside style=${{ width: railW, flex: `0 0 ${railW}px`, position: 'relative', borderLeft: '1px solid var(--rule-soft)', background: 'var(--paper)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <${ResizeHandle} side="left" onMouseDown=${onRailResize} />
+      <div style=${{ display: 'flex', padding: '0 8px', borderBottom: '1px solid var(--rule-soft)' }}>
+        <${RailTab} icon="book" label="Info" active=${railTab === 'info'} onClick=${() => setRailTab('info')} />
+        <${RailTab} icon="feather" label="Chat" active=${railTab === 'chat'} onClick=${() => setRailTab('chat')} />
+      </div>
+      ${railTab === 'info'
+        ? html`<div style=${{ flex: 1, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <${OutlineCard} outline=${outline} scrollRef=${scrollRef} />
+            <${InfoboxCard} fm=${fm} kind=${page.kind} schemas=${schemas} pages=${pages} />
+            <${SummaryCard} page=${page} onSave=${onSave} />
+            <${TagsCard} tags=${meta?.tags} />
+            <${OnMapCard} path=${path} maps=${atlasMaps} campaignId=${campaignId} />
+            <${BacklinksCard} path=${path} pages=${pages} links=${links} />
+            <div class="ck-rail-foot">${[edited && `Edited ${edited}`, `${words} words`].filter(Boolean).join(' · ')}</div>
+          </div>`
+        : html`<${RailChat} />`}
     </aside>`}
   </div>`;
 }
 
-// Plain-markdown editor (default): one textarea over the whole .md file, auto-saved.
-// Simpler + more robust than the block live-preview; the latter is opt-in (kebab menu).
-function SourceEditor({ content, onSave, onState }) {
-  const [text, setText] = useState(content);
-  const taRef = useRef(null);
-  const timer = useRef(null);
-  const pending = useRef({ dirty: false, doc: content });
-
-  useEffect(() => { if (taRef.current) autoGrow(taRef.current); }, []);
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-    if (pending.current.dirty) { try { onSave(pending.current.doc); } catch (_) { /* unmount */ } }
-  }, []);
-
-  function onInput(e) {
-    const v = e.target.value;
-    setText(v); autoGrow(e.target);
-    pending.current = { dirty: true, doc: v };
-    if (onState) onState('dirty');
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      if (onState) onState('saving');
-      Promise.resolve(onSave(v))
-        .then(() => { pending.current.dirty = false; if (onState) onState('saved'); })
-        .catch(() => { if (onState) onState('dirty'); });
-    }, 800);
-  }
-
-  return html`<textarea ref=${taRef} class="ck-source-edit" spellcheck="false" value=${text} onInput=${onInput} />`;
+function RailTab({ icon, label, active, onClick }) {
+  return html`<button onClick=${onClick} style=${{
+    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 8px', fontSize: 12.5,
+    fontWeight: active ? 600 : 500, background: 'none', border: 'none', marginBottom: -1,
+    borderBottom: `2px solid ${active ? 'var(--burgundy)' : 'transparent'}`,
+    color: active ? 'var(--ink)' : 'var(--ink-muted)', cursor: 'pointer',
+  }}>
+    <${Icon} name=${icon} size=${13} /> ${label}
+  </button>`;
 }
 
-const EDIT_STYLE_KEY = 'ck_edit_style';
-function loadEditStyle() {
-  try { return localStorage.getItem(EDIT_STYLE_KEY) === 'live' ? 'live' : 'source'; } catch (_) { return 'source'; }
+// The Keeper, docked in the page rail's Chat tab — opens (or creates) a chat for
+// this world on first view, then reuses the shared keeper conversation surface.
+function RailChat() {
+  const k = keeperState();
+  useEffect(() => { if (!k.chatId) openPanel(); }, []);
+  return html`<${Conversation} k=${k} />`;
 }
 
 export function PageScreen() {
@@ -606,7 +396,6 @@ export function PageScreen() {
   const [page, setPage] = useState(null);
   const [missing, setMissing] = useState(false);
   const [mode, setMode] = useState('read');
-  const [editStyle, setEditStyle] = useState(loadEditStyle);
   const [saveState, setSaveState] = useState('saved');
   const [railHidden, setRailHidden] = useState(() => loadFlag('ck_rail_hidden', false));
   const [rev, setRev] = useState(0); // bumped on external reload to re-key the editor
@@ -615,15 +404,6 @@ export function PageScreen() {
 
   const pageRef = useRef(null); pageRef.current = page;
   const saveRef = useRef(saveState); saveRef.current = saveState;
-
-  function toggleEditStyle() {
-    setEditStyle((s) => {
-      const n = s === 'live' ? 'source' : 'live';
-      try { localStorage.setItem(EDIT_STYLE_KEY, n); } catch (_) { /* private mode */ }
-      return n;
-    });
-    setMode('edit');
-  }
 
   useEffect(() => {
     if (!c) return;
@@ -709,7 +489,6 @@ export function PageScreen() {
       </button>`}
       <${ModeToggle} mode=${mode} onChange=${setMode} />
       ${pageLeaf && html`<${KebabMenu} items=${[
-        { icon: editStyle === 'live' ? 'check' : 'feather', label: editStyle === 'live' ? 'Live preview ✓' : 'Live preview', onClick: toggleEditStyle },
         { icon: 'edit', label: 'Rename', onClick: () => act.renamePage(pageLeaf) },
         { icon: 'folder', label: 'Move…', onClick: () => act.movePage(pageLeaf) },
         { icon: 'trash', label: 'Move to trash', danger: true, onClick: () => act.deletePage(pageLeaf) },
@@ -729,9 +508,8 @@ export function PageScreen() {
           : html`<div style=${{ flex: 1, overflow: 'auto', background: 'var(--paper)', padding: '34px 0 64px', minWidth: 0 }}>
               <div style=${{ maxWidth: 720, margin: '0 auto', padding: '0 52px' }}>
                 <${Provenance} path=${path} />
-                ${editStyle === 'live'
-                  ? html`<${LiveEditor} key=${'live:' + rev + ':' + path} content=${page.content} pages=${pages} schemas=${store.kindSchemas} onSave=${doSave} onState=${setSaveState} />`
-                  : html`<${SourceEditor} key=${'src:' + rev + ':' + path} content=${page.content} onSave=${doSave} onState=${setSaveState} />`}
+                <${CmEditor} key=${'cm:' + rev + ':' + path} content=${page.content} pages=${pages}
+                  onSave=${doSave} onCreate=${(name) => createVaultPage(name, 'lore', '')} onState=${setSaveState} />
               </div>
             </div>`}
     </div>

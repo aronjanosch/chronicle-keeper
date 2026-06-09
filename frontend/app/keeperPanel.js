@@ -7,6 +7,7 @@ import { html, useState, useEffect, useRef } from '../vendor/htm-preact-standalo
 import { apiFetch, apiJson, apiStream, setOp, setState, store } from './core.js';
 import { Icon, Spinner, renderBlockHtml, wikilinkClick } from './ui.js';
 import { caretCoords } from './screens/page.js';
+import { loadLlmProviders, fetchLlmModels } from './actions.js';
 
 // store.keeper = { open, chatId, campaignId, events[], attachments[],
 //                  live: {text, tools[], ask}|null, error, mode }
@@ -18,6 +19,7 @@ export const MODES = [
 ];
 
 const MAX_FILE_BYTES = 256 * 1024;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 export function keeperState() {
   const k = store.keeper || { open: false, chatId: null, events: [], live: null, error: null };
@@ -29,6 +31,18 @@ export function patchKeeper(patch) {
   setState({ keeper: { ...keeperState(), ...patch } });
 }
 
+// Providers usable right now: keyless (Ollama) or with a saved key.
+export function configuredProviders() {
+  return (store.llmProviders || []).filter((p) => !p.needs_key || p.has_key);
+}
+
+// The global default the summarizer uses — what a fresh chat starts on.
+export function defaultPick() {
+  const provider = (store.config?.summary_provider || 'ollama').toLowerCase();
+  const p = (store.llmProviders || []).find((x) => x.id === provider);
+  return { provider, model: (p && (p.saved_model || p.default_model)) || '' };
+}
+
 async function fetchChatInto(chatId) {
   const cid = store.campaign?.campaign_id;
   if (!cid || !chatId) return;
@@ -36,14 +50,15 @@ async function fetchChatInto(chatId) {
     apiFetch(`/campaigns/${cid}/agent/chats/${chatId}`),
     apiFetch(`/campaigns/${cid}/agent/chats/${chatId}/attachments`).catch(() => ({ attachments: [] })),
   ]);
-  patchKeeper({ chatId, events, attachments: att.attachments || [], live: null, error: null });
+  // Entering a chat resets the pick to the global default (per-chat choice).
+  patchKeeper({ chatId, events, attachments: att.attachments || [], live: null, error: null, ...defaultPick() });
 }
 
 export async function openChat(chatId) {
   try { await fetchChatInto(chatId); } catch (e) { patchKeeper({ error: String(e.message || e) }); }
 }
 
-async function openPanel() {
+export async function openPanel() {
   const cid = store.campaign?.campaign_id;
   if (!cid) return;
   // Chats are per-world — a stale chat id from another world must not leak.
@@ -51,6 +66,7 @@ async function openPanel() {
     patchKeeper({ campaignId: cid, chatId: null, events: [], attachments: [], live: null });
   }
   patchKeeper({ open: true, error: null });
+  loadLlmProviders();
   const k = keeperState();
   if (k.chatId) return;
   try {
@@ -67,21 +83,25 @@ export async function newChat() {
   if (!cid) return;
   try {
     const chat = await apiJson(`/campaigns/${cid}/agent/chats`, 'POST', {});
-    patchKeeper({ chatId: chat.id, events: [], attachments: [], live: null, error: null });
+    patchKeeper({ chatId: chat.id, events: [], attachments: [], live: null, error: null, ...defaultPick() });
     return chat.id;
   } catch (e) {
     patchKeeper({ error: String(e.message || e) });
   }
 }
 
-export async function sendMessage(text) {
+export async function sendMessage(text, images = []) {
   const cid = store.campaign?.campaign_id;
   const k = keeperState();
   if (!cid || !k.chatId || k.live) return;
-  const events = [...k.events, { type: 'user', text }];
+  const events = [...k.events, { type: 'user', text, images }];
   patchKeeper({ events, live: { text: '', tools: [] }, error: null });
   try {
-    await apiStream(`/campaigns/${cid}/agent/chats/${k.chatId}/messages`, { text, mode: k.mode }, (ev) => {
+    const body = { text, mode: k.mode };
+    if (images.length) body.images = images.map((i) => ({ media_type: i.media_type, data: i.data }));
+    if (k.provider) body.provider = k.provider;
+    if (k.model) body.model = k.model;
+    await apiStream(`/campaigns/${cid}/agent/chats/${k.chatId}/messages`, body, (ev) => {
       const cur = keeperState();
       const live = cur.live || { text: '', tools: [] };
       if (ev.type === 'text_delta') {
@@ -325,8 +345,15 @@ function ToolRow({ name, summary, isError, running, args, diff }) {
 
 function EventRow({ ev }) {
   if (ev.type === 'user') {
+    const imgs = ev.images || [];
     return html`<div style=${{ margin: '10px 0', display: 'flex', justifyContent: 'flex-end' }}>
-      <div style=${{ maxWidth: '85%', background: 'var(--burgundy-50)', border: '1px solid var(--rule-soft)', borderRadius: '10px 10px 2px 10px', padding: '8px 12px', fontSize: 13, whiteSpace: 'pre-wrap' }}>${ev.text}</div>
+      <div style=${{ maxWidth: '85%', background: 'var(--burgundy-50)', border: '1px solid var(--rule-soft)', borderRadius: '10px 10px 2px 10px', padding: '8px 12px', fontSize: 13, whiteSpace: 'pre-wrap' }}>
+        ${imgs.length > 0 && html`<div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: ev.text ? 6 : 0 }}>
+          ${imgs.map((img, i) => html`<img key=${i} src=${img.url || `data:${img.media_type};base64,${img.data}`} alt="pasted"
+            style=${{ maxWidth: 180, maxHeight: 180, borderRadius: 6, border: '1px solid var(--rule-soft)', display: 'block' }} />`)}
+        </div>`}
+        ${ev.text}
+      </div>
     </div>`;
   }
   if (ev.type === 'assistant' && (ev.text || '').trim()) {
@@ -350,8 +377,52 @@ function EventRow({ ev }) {
   return null;
 }
 
+const pickSelect = { fontSize: 11.5, padding: '3px 4px', borderRadius: 5, border: '1px solid var(--rule)', background: 'var(--surface)', color: 'var(--ink-muted)', maxWidth: 170, cursor: 'pointer' };
+
+// Provider + model for this chat. Resets to the global default on a new chat;
+// the choice rides along in the /messages body as provider/model overrides.
+export function PickerBar({ k }) {
+  const provs = configuredProviders();
+  const [models, setModels] = useState([]);
+
+  useEffect(() => {
+    if (!k.provider && provs.length) patchKeeper(defaultPick());
+  }, [provs.length, k.provider]);
+
+  useEffect(() => {
+    if (!k.provider) return;
+    let alive = true;
+    const p = provs.find((x) => x.id === k.provider);
+    fetchLlmModels(k.provider).then((live) => {
+      if (alive) setModels(live.length ? live : (p?.models || []));
+    });
+    return () => { alive = false; };
+  }, [k.provider]);
+
+  if (!provs.length) return null;
+  const provId = provs.some((p) => p.id === k.provider) ? k.provider : provs[0].id;
+  const list = k.model && !models.includes(k.model) ? [k.model, ...models] : models;
+  const onProvider = (id) => {
+    const p = provs.find((x) => x.id === id);
+    patchKeeper({ provider: id, model: (p?.saved_model || p?.default_model) || '' });
+  };
+
+  return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderTop: '1px solid var(--rule-soft)' }}>
+    <${Icon} name="cog" size=${12} />
+    <select value=${provId} onChange=${(e) => onProvider(e.target.value)} title="Provider" style=${pickSelect}>
+      ${provs.map((p) => html`<option key=${p.id} value=${p.id}>${p.name}</option>`)}
+    </select>
+    <select value=${k.model || ''} onChange=${(e) => patchKeeper({ model: e.target.value })} title="Model"
+      style=${{ ...pickSelect, flex: 1, minWidth: 0, maxWidth: 'none' }}>
+      ${!list.length && html`<option value=${k.model || ''}>${k.model || 'default'}</option>`}
+      ${list.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
+    </select>
+  </div>`;
+}
+
 export function Composer({ busy }) {
   const [text, setText] = useState('');
+  const [images, setImages] = useState([]);
   const [picker, setPicker] = useState(false);
   const [ac, setAc] = useState(null);
   const taRef = useRef(null);
@@ -359,10 +430,30 @@ export function Composer({ busy }) {
 
   const send = () => {
     const t = text.trim();
-    if (!t || busy) return;
-    setText(''); setAc(null);
-    sendMessage(t);
+    if ((!t && !images.length) || busy) return;
+    const imgs = images;
+    setText(''); setImages([]); setAc(null);
+    sendMessage(t, imgs);
   };
+
+  function onPaste(e) {
+    const items = [...(e.clipboardData?.items || [])].filter((it) => it.type.startsWith('image/'));
+    if (!items.length) return;
+    e.preventDefault();
+    items.forEach((it) => {
+      const file = it.getAsFile();
+      if (!file) return;
+      if (file.size > MAX_IMAGE_BYTES) { setOp('Image too large (max 8 MB).', 'error'); return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const url = String(reader.result);
+        const semi = url.indexOf(';'); const comma = url.indexOf(',');
+        if (semi < 0 || comma < 0) return;
+        setImages((prev) => [...prev, { media_type: url.slice(5, semi), data: url.slice(comma + 1), url }]);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
 
   function updateAc(ta) {
     try {
@@ -410,16 +501,24 @@ export function Composer({ busy }) {
         onMouseDown=${(e) => { e.preventDefault(); accept(it); }}><span class="ck-ac-name">${it.title}</span></div>`)}
       ${!ac.items.length && html`<div class="ck-ac-item" style=${{ color: 'var(--ink-faint)' }}>No match</div>`}
     </div>`}
+    ${images.length > 0 && html`<div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 10px 6px' }}>
+      ${images.map((img, i) => html`<div key=${i} style=${{ position: 'relative', width: 52, height: 52, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--rule)' }}>
+        <img src=${img.url} alt="pasted" style=${{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+        <span onClick=${() => setImages(images.filter((_, j) => j !== i))} title="Remove"
+          style=${{ position: 'absolute', top: 2, right: 2, width: 16, height: 16, borderRadius: 999, background: 'rgba(0,0,0,.6)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}><${Icon} name="x" size=${9} /></span>
+      </div>`)}
+    </div>`}
     <div style=${{ padding: 10, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
       <button class="ck-btn" title="Attach a page, session or file" onClick=${() => setPicker(!picker)}
         style=${{ padding: '7px 9px' }}><${Icon} name="plus" size=${14} /></button>
-      <textarea ref=${taRef} value=${text} placeholder="Ask the Keeper… ([[ to link, drop files to attach)" rows=${2}
+      <textarea ref=${taRef} value=${text} placeholder="Ask the Keeper… ([[ to link, paste images, drop files)" rows=${2}
         onInput=${(e) => { setText(e.target.value); updateAc(e.target); }}
         onKeyDown=${onKeyDown}
+        onPaste=${onPaste}
         style=${{ flex: 1, resize: 'none', fontSize: 13, padding: '8px 10px', borderRadius: 6, border: '1px solid var(--rule)', background: 'var(--surface)', color: 'var(--ink)', fontFamily: 'inherit' }} />
       ${busy
         ? html`<button class="ck-btn" onClick=${abortRun} title="Stop the Keeper">Stop</button>`
-        : html`<button class="ck-btn ck-btn--primary" onClick=${send} disabled=${!text.trim()}>Send</button>`}
+        : html`<button class="ck-btn ck-btn--primary" onClick=${send} disabled=${!text.trim() && !images.length}>Send</button>`}
     </div>
   </div>`;
 }
@@ -440,7 +539,7 @@ export function Transcript({ k, empty }) {
       ${k.live.text && html`<div class="ck-prose" style=${{ fontSize: 13, margin: '10px 0' }}
         dangerouslySetInnerHTML=${{ __html: renderBlockHtml(k.live.text, store.vaultPages) }} />`}
       ${k.live.ask && html`<${PermissionCard} ask=${k.live.ask} />`}
-      ${!k.live.text && !k.live.ask && !k.live.tools.some((t) => t.running) && html`<div style=${{ padding: '8px 0' }}><${Spinner} size=${14} /></div>`}
+      ${!k.live.text && !k.live.ask && !k.live.tools.length && html`<div style=${{ padding: '8px 0' }}><${Spinner} size=${14} /></div>`}
     `}
     ${k.error && html`<div style=${{ margin: '8px 0', fontSize: 12, color: 'var(--burgundy-700)' }}>⚠ ${k.error}</div>`}
   </div>`;
@@ -452,6 +551,7 @@ export function Conversation({ k, empty }) {
   return html`<div style=${{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }} ...${bind}>
     <${Transcript} k=${k} empty=${empty} />
     <${Composer} busy=${!!k.live} />
+    <${PickerBar} k=${k} />
     ${dragging && html`<div style=${{
       position: 'absolute', inset: 0, zIndex: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'rgba(122,46,31,.08)', border: '2px dashed var(--burgundy)', borderRadius: 8,
@@ -466,59 +566,4 @@ export function ModeSelect({ mode }) {
     style=${{ fontSize: 11.5, padding: '3px 4px', borderRadius: 5, border: '1px solid var(--rule)', background: 'var(--surface)', color: 'var(--ink-muted)' }}>
     ${MODES.map((m) => html`<option key=${m.id} value=${m.id}>${m.label}</option>`)}
   </select>`;
-}
-
-export function KeeperDock() {
-  const inWorld = !!store.campaign?.campaign_id
-    && !['library', 'settings', 'newWorld', 'keeper'].includes(store.route.name);
-  const k = keeperState();
-
-  useEffect(() => {
-    const onKey = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
-        e.preventDefault();
-        keeperState().open ? patchKeeper({ open: false }) : openPanel();
-      } else if (e.key === 'Escape' && keeperState().open) {
-        patchKeeper({ open: false });
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []);
-
-  if (!inWorld) return null;
-  if (!k.open) {
-    return html`<button onClick=${openPanel} title="Ask the Keeper (⌘J)" style=${{
-      position: 'fixed', right: 22, bottom: 22, zIndex: 60,
-      display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px',
-      background: 'var(--burgundy)', color: '#FBF7EF', border: 'none', borderRadius: 999,
-      fontSize: 13, fontWeight: 600, cursor: 'pointer', boxShadow: 'var(--shadow-raised)',
-    }}>
-      <${Icon} name="feather" size=${15} /> Ask the Keeper
-    </button>`;
-  }
-
-  return html`<div style=${{
-    position: 'fixed', top: 0, right: 0, bottom: 0, width: 420, zIndex: 60,
-    background: 'var(--paper)', borderLeft: '1px solid var(--rule)',
-    boxShadow: '-8px 0 24px rgba(60,40,20,.12)', display: 'flex', flexDirection: 'column',
-  }}>
-    <div style=${{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderBottom: '1px solid var(--rule)' }}>
-      <${Icon} name="feather" size=${15} />
-      <div style=${{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, flex: 1 }}>The Keeper</div>
-      <${ModeSelect} mode=${k.mode} />
-      <button class="ck-btn" title="Open full view" onClick=${() => { patchKeeper({ open: false }); navigateKeeper(); }}>↗</button>
-      <button class="ck-btn" title="New chat" onClick=${newChat}>New</button>
-      <button onClick=${() => patchKeeper({ open: false })} title="Close (Esc)"
-        style=${{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-muted)', display: 'flex' }}>
-        <${Icon} name="x" size=${15} />
-      </button>
-    </div>
-    <${Conversation} k=${k} />
-  </div>`;
-}
-
-function navigateKeeper() {
-  const cid = store.campaign?.campaign_id;
-  if (cid) setState({ route: { name: 'keeper', params: { id: cid } } });
 }

@@ -757,6 +757,72 @@ pub fn write_migrated_entry(
     std::fs::write(path, page_file_content(name, kind, summary, body))
 }
 
+// ── Assets (pasted/dropped editor media) ──────────────────────────
+
+/// Save pasted/dropped bytes under `Assets/`, de-duplicating the filename.
+/// Returns the saved file's vault-relative path.
+pub fn save_asset(vault: &Path, name: &str, bytes: &[u8]) -> AppResult<String> {
+    require_dir(vault)?;
+    let raw = Path::new(name.trim());
+    let ext = raw
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
+        .filter(|e| !e.is_empty() && e.chars().all(|c| c.is_ascii_alphanumeric()))
+        .ok_or_else(|| AppError::BadRequest("asset name needs a file extension".into()))?;
+    let stem = raw
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(safe_page_filename)
+        .unwrap_or_else(|| "Pasted".into());
+    let dir = vault.join("Assets");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("create Assets dir: {e}")))?;
+    let mut filename = format!("{stem}.{ext}");
+    let mut n = 1;
+    while dir.join(&filename).exists() {
+        n += 1;
+        filename = format!("{stem} {n}.{ext}");
+    }
+    std::fs::write(dir.join(&filename), bytes)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("write asset: {e}")))?;
+    Ok(format!("Assets/{filename}"))
+}
+
+/// Resolve a `![[target]]` embed like Obsidian (and the diagnostics scan):
+/// exact vault-relative path first, else filename match anywhere in the vault.
+pub fn find_asset(vault: &Path, target: &str) -> AppResult<PathBuf> {
+    use unicode_normalization::UnicodeNormalization;
+    let norm = |s: &str| -> String { s.to_lowercase().nfc().collect() };
+    if let Ok(abs) = resolve_rel(vault, target) {
+        if abs.is_file() {
+            return Ok(abs);
+        }
+    }
+    let want = norm(target.rsplit('/').next().unwrap_or(target));
+    fn walk(dir: &Path, want: &str, norm: &dyn Fn(&str) -> String) -> Option<PathBuf> {
+        for entry in std::fs::read_dir(dir).ok()?.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') {
+                continue;
+            }
+            if path.is_dir() {
+                if !is_reserved_dir(&name) {
+                    if let Some(hit) = walk(&path, want, norm) {
+                        return Some(hit);
+                    }
+                }
+            } else if norm(&name) == want {
+                return Some(path);
+            }
+        }
+        None
+    }
+    walk(vault, &want, &norm).ok_or_else(|| AppError::NotFound(format!("Asset not found: {target}")))
+}
+
 // Stub page for an auto-extracted name. No-op if a page of that title exists.
 pub fn create_stub(vault: &Path, name: &str, kind: &str) -> bool {
     let name = name.trim();
@@ -779,6 +845,21 @@ mod tests {
         assert!(resolve(v, "a/../../b.md").is_err());
         assert!(resolve(v, "notes.txt").is_err());
         assert_eq!(resolve(v, "Characters/Aragorn.md").unwrap(), v.join("Characters/Aragorn.md"));
+    }
+
+    #[test]
+    fn asset_save_and_find() {
+        let dir = std::env::temp_dir().join(format!("ck-vault-assets-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rel = save_asset(&dir, "shot.PNG", b"abc").unwrap();
+        assert_eq!(rel, "Assets/shot.png");
+        let rel2 = save_asset(&dir, "shot.png", b"def").unwrap();
+        assert_eq!(rel2, "Assets/shot 2.png");
+        assert!(save_asset(&dir, "noext", b"x").is_err());
+        assert!(find_asset(&dir, "Assets/shot.png").is_ok());
+        assert!(find_asset(&dir, "Shot 2.png").is_ok()); // bare name, case-insensitive
+        assert!(find_asset(&dir, "missing.png").is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

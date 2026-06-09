@@ -138,6 +138,135 @@ function tagSource(getPages) {
   };
 }
 
+// ── Paste & drop smarts (Phase 7.5 H) ────────────────────────────
+function insertAtSelection(view, text, userEvent = 'input.paste') {
+  const r = view.state.selection.main;
+  view.dispatch({
+    changes: { from: r.from, to: r.to, insert: text },
+    selection: { anchor: r.from + text.length },
+    userEvent,
+    scrollIntoView: true,
+  });
+}
+
+function tableToMarkdown(rows) {
+  const esc = (c) => String(c == null ? '' : c).trim().replace(/\s+/g, ' ').replace(/\|/g, '\\|');
+  const width = Math.max(...rows.map((r) => r.length));
+  const pad = (r) => { const o = r.map(esc); while (o.length < width) o.push(''); return o; };
+  const line = (r) => `| ${pad(r).join(' | ')} |`;
+  return [line(rows[0]), `| ${Array(width).fill('---').join(' | ')} |`, ...rows.slice(1).map(line)].join('\n');
+}
+
+function htmlTableRows(html) {
+  try {
+    const table = new DOMParser().parseFromString(html, 'text/html').querySelector('table');
+    if (!table) return null;
+    const rows = [...table.rows].map((tr) => [...tr.cells].map((td) => td.textContent));
+    return rows.length ? rows : null;
+  } catch (_) { return null; }
+}
+
+function tsvRows(text) {
+  const lines = (text || '').replace(/\r/g, '').split('\n').filter((l) => l.trim());
+  if (lines.length < 2 || !lines.every((l) => l.includes('\t'))) return null;
+  return lines.map((l) => l.split('\t'));
+}
+
+async function uploadImages(view, files, onUploadAsset) {
+  for (const f of files) {
+    const fromType = ((f.type || '').split('/')[1] || 'png').match(/^[a-z0-9]+/i);
+    const ext = (fromType ? fromType[0].toLowerCase() : 'png').replace(/^jpeg$/, 'jpg');
+    const name = f.name && /\.[A-Za-z0-9]+$/.test(f.name) ? f.name : `Pasted image.${ext}`;
+    try {
+      const saved = await onUploadAsset(name, f);
+      insertAtSelection(view, `![[${saved.name}]]`);
+    } catch (_) { /* upload failed — leave the doc untouched */ }
+  }
+}
+
+function pasteDrop(cm, opts) {
+  return cm.EditorView.domEventHandlers({
+    paste(e, view) {
+      const cd = e.clipboardData;
+      if (!cd) return false;
+      const imgs = [...cd.items]
+        .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+        .map((it) => it.getAsFile()).filter(Boolean);
+      if (imgs.length && opts.onUploadAsset) {
+        e.preventDefault();
+        uploadImages(view, imgs, opts.onUploadAsset);
+        return true;
+      }
+      const text = cd.getData('text/plain') || '';
+      const r = view.state.selection.main;
+      if (!r.empty && /^https?:\/\/\S+$/.test(text.trim())) {
+        e.preventDefault();
+        insertAtSelection(view, `[${view.state.sliceDoc(r.from, r.to)}](${text.trim()})`);
+        return true;
+      }
+      const html = cd.getData('text/html') || '';
+      const rows = (html.includes('<table') ? htmlTableRows(html) : null) || tsvRows(text);
+      if (rows) {
+        e.preventDefault();
+        insertAtSelection(view, tableToMarkdown(rows));
+        return true;
+      }
+      return false;
+    },
+    drop(e, view) {
+      const files = [...((e.dataTransfer && e.dataTransfer.files) || [])]
+        .filter((f) => f.type.startsWith('image/'));
+      if (!files.length || !opts.onUploadAsset) return false;
+      e.preventDefault();
+      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+      if (pos != null) view.dispatch({ selection: { anchor: pos } });
+      uploadImages(view, files, opts.onUploadAsset);
+      return true;
+    },
+  });
+}
+
+// ── Slash menu (Phase 7.5 I): block inserts on an empty line ─────
+const SLASH_ITEMS = [
+  { label: '/h1', detail: 'Heading 1', insert: '# ' },
+  { label: '/h2', detail: 'Heading 2', insert: '## ' },
+  { label: '/h3', detail: 'Heading 3', insert: '### ' },
+  { label: '/list', detail: 'Bullet list', insert: '- ' },
+  { label: '/numbered', detail: 'Numbered list', insert: '1. ' },
+  { label: '/task', detail: 'Task list', insert: '- [ ] ' },
+  { label: '/table', detail: 'Table', insert: '| Column | Column |\n| --- | --- |\n|  |  |', cursor: 2 },
+  { label: '/quote', detail: 'Quote', insert: '> ' },
+  { label: '/note', detail: 'Callout', insert: '> [!note] ' },
+  { label: '/secret', detail: 'GM secret callout', insert: '> [!secret] ' },
+  { label: '/warning', detail: 'Warning callout', insert: '> [!warning] ' },
+  { label: '/code', detail: 'Code block', insert: '```\n\n```', cursor: 4 },
+  { label: '/divider', detail: 'Horizontal rule', insert: '---\n' },
+];
+
+function slashSource() {
+  return (ctx) => {
+    const line = ctx.state.doc.lineAt(ctx.pos);
+    const before = ctx.state.sliceDoc(line.from, ctx.pos);
+    const m = /^\s*\/[\w-]*$/.exec(before);
+    if (!m) return null;
+    const from = line.from + before.indexOf('/');
+    return {
+      from,
+      options: SLASH_ITEMS.map((it) => ({
+        label: it.label, detail: it.detail, type: 'keyword',
+        apply: (view, _c, f, to) => {
+          view.dispatch({
+            changes: { from: f, to, insert: it.insert },
+            selection: { anchor: f + (it.cursor != null ? it.cursor : it.insert.length) },
+            userEvent: 'input.complete',
+          });
+        },
+      })),
+      validFor: /^\/[\w-]*$/,
+    };
+  };
+}
+
 // Build the editor. `host` = parent element. Returns { destroy, view }.
 export async function mountEditor(host, opts) {
   const cm = await loadCM();
@@ -191,7 +320,8 @@ export async function mountEditor(host, opts) {
         indentOnInput(), bracketMatching(), closeBrackets(),
         highlightActiveLine(), highlightSelectionMatches(),
         markdown({ base: markdownLanguage }),
-        autocompletion({ override: [wikilinkSource(cm, opts.getPages, opts.onCreatePage), tagSource(opts.getPages)], icons: false }),
+        autocompletion({ override: [wikilinkSource(cm, opts.getPages, opts.onCreatePage), tagSource(opts.getPages), slashSource()], icons: false }),
+        pasteDrop(cm, opts),
         search({ top: true }),
         buildTheme(cm),
         EditorView.lineWrapping,

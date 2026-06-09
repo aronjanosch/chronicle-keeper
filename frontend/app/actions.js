@@ -418,6 +418,12 @@ export async function saveVaultPage(path, content) {
   return page;
 }
 
+// Pasted/dropped editor media → <vault>/Assets/. Returns { path, name }.
+export function uploadVaultAsset(name, blob) {
+  const id = store.campaign.campaign_id;
+  return apiFetch(`/campaigns/${id}/vault/assets?name=${encodeURIComponent(name)}`, { method: 'POST', body: blob });
+}
+
 export async function createVaultPage(title, kind, folder) {
   const id = store.campaign.campaign_id;
   const page = await apiJson(`/campaigns/${id}/vault/pages`, 'POST', { title, kind, folder: folder || null });

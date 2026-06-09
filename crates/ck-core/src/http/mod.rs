@@ -83,6 +83,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/campaigns/:id/vault/move", post(vault::move_entry))
         .route("/campaigns/:id/vault/kinds", get(vault::kind_schemas))
+        .route("/campaigns/:id/vault/assets", post(vault::upload_asset))
+        .route("/campaigns/:id/vault/assets/*name", get(vault::asset_bytes))
         .route(
             "/campaigns/:id/vault/pages",
             get(vault::list_pages).post(vault::create_page),

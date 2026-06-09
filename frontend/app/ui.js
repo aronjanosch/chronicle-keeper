@@ -1,7 +1,7 @@
 // Shared atoms ported from the design's atoms.jsx + a few form/primitive helpers.
 import { html, useState, useEffect, useRef } from '../vendor/htm-preact-standalone.mjs';
 import { marked } from '../vendor/marked.esm.js';
-import { navigate } from './core.js';
+import { navigate, store, apiBlob } from './core.js';
 
 // ── Icon — monoline 16-grid SVGs ──────────────────────────────────
 const PATHS = {
@@ -432,18 +432,24 @@ export function resolveWikilinks(htmlStr, pages) {
       continue;
     }
     if (skip > 0 || !t.includes('[[')) continue;
-    tokens[i] = t.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (m, target, label) => {
+    tokens[i] = t.replace(/(!?)\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (m, bang, target, label) => {
       const raw = target.trim();
+      // `![[file.ext]]` media embeds → <img>; PageBody fills src via blob fetch
+      // (an <img src> can't carry the auth header). `![[Note]]` stays deferred.
+      if (bang && /\.(?!md$)[A-Za-z0-9]+$/i.test(raw)) {
+        const w = /^\d+$/.test((label || '').trim()) ? ` width="${(label || '').trim()}"` : '';
+        return `<img class="ck-embed-img" data-ck-asset="${escapeHtml(raw)}" alt="${escapeHtml(raw)}"${w} loading="lazy" />`;
+      }
       // Block refs ([[Page#^id]]) are a locked Drop — plain text.
-      if (raw.includes('#^')) return escapeHtml((label || raw).trim());
+      if (raw.includes('#^')) return bang + escapeHtml((label || raw).trim());
       const hash = raw.indexOf('#');
       const name = (hash < 0 ? raw : raw.slice(0, hash)).trim();
       const anchor = hash < 0 ? '' : raw.slice(hash + 1).trim();
       const text = escapeHtml((label || raw).trim());
       const path = byName.get(norm(name));
-      return path
+      return bang + (path
         ? `<a class="ck-wikilink" data-path="${escapeHtml(path)}"${anchor ? ` data-anchor="${escapeHtml(anchor)}"` : ''}>${text}</a>`
-        : `<a class="ck-wikilink ck-wikilink--broken" data-name="${escapeHtml(name)}">${text}</a>`;
+        : `<a class="ck-wikilink ck-wikilink--broken" data-name="${escapeHtml(name)}">${text}</a>`);
     });
   }
   return tokens.join('');
@@ -476,8 +482,30 @@ export function wikilinkClick(onBroken) {
 }
 
 export function PageBody({ text, pages, onBroken }) {
-  return html`<div class="ck-prose" onClick=${wikilinkClick(onBroken)}
-    dangerouslySetInnerHTML=${{ __html: renderPageHtml(text, pages) }} />`;
+  const ref = useRef(null);
+  const htmlStr = renderPageHtml(text, pages);
+  // ![[image]] embeds: fetch asset bytes with the auth header, swap in object URLs.
+  useEffect(() => {
+    const root = ref.current;
+    const id = store.campaign?.campaign_id;
+    const imgs = root ? [...root.querySelectorAll('img[data-ck-asset]')] : [];
+    if (!imgs.length || !id) return undefined;
+    let dead = false;
+    const urls = [];
+    for (const img of imgs) {
+      apiBlob(`/campaigns/${id}/vault/assets/${encodeURI(img.dataset.ckAsset)}`)
+        .then((b) => {
+          if (dead) return;
+          const u = URL.createObjectURL(b);
+          urls.push(u);
+          img.src = u;
+        })
+        .catch(() => { img.classList.add('ck-embed-img--missing'); });
+    }
+    return () => { dead = true; urls.forEach((u) => URL.revokeObjectURL(u)); };
+  }, [htmlStr]);
+  return html`<div ref=${ref} class="ck-prose" onClick=${wikilinkClick(onBroken)}
+    dangerouslySetInnerHTML=${{ __html: htmlStr }} />`;
 }
 
 // ── Frontmatter helpers (client-side; the .md file body is the source of truth) ──

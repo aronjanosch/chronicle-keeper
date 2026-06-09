@@ -7,7 +7,7 @@ import { html, useState, useEffect, useRef, useMemo } from '../../vendor/htm-pre
 import { navigate, useStore } from '../core.js';
 import { Shell, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
 import { Empty, Icon, PageBody, splitDoc, joinDoc, parseProps } from '../ui.js';
-import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault } from '../actions.js';
+import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault, uploadVaultAsset } from '../actions.js';
 import { mountEditor } from '../cm.js';
 import { FileTree, buildTree, makeVaultActions, iconForKind, KINDS } from './codex.js';
 import { keeperState, openPanel, Conversation } from '../keeperPanel.js';
@@ -276,6 +276,7 @@ function CmEditor({ content, pages, onSave, onCreate, onState }) {
       doc: content,
       getPages: () => pagesRef.current,
       onCreatePage: (name) => onCreate(name),
+      onUploadAsset: uploadVaultAsset,
       onSave,
       onState,
     }).then((c) => { if (dead) c.destroy(); else ctl = c; });
@@ -398,9 +399,11 @@ export function PageScreen() {
   const [mode, setMode] = useState('read');
   const [saveState, setSaveState] = useState('saved');
   const [railHidden, setRailHidden] = useState(() => loadFlag('ck_rail_hidden', false));
+  const [zen, setZen] = useState(() => loadFlag('ck_zen', false)); // edit mode: hide the file tree too
   const [rev, setRev] = useState(0); // bumped on external reload to re-key the editor
 
   const toggleRail = () => setRailHidden((h) => { saveFlag('ck_rail_hidden', !h); return !h; });
+  const toggleZen = () => setZen((z) => { saveFlag('ck_zen', !z); return !z; });
 
   const pageRef = useRef(null); pageRef.current = page;
   const saveRef = useRef(saveState); saveRef.current = saveState;
@@ -487,6 +490,10 @@ export function PageScreen() {
         style=${{ padding: '6px 8px', color: railHidden ? 'var(--ink-faint)' : 'var(--ink-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
         <${Icon} name=${railHidden ? 'chev-l' : 'chev-r'} size=${14} />
       </button>`}
+      ${mode === 'edit' && html`<button onClick=${toggleZen} title=${zen ? 'Leave zen mode' : 'Zen mode — hide the sidebar'}
+        style=${{ padding: '6px 8px', color: zen ? 'var(--burgundy)' : 'var(--ink-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
+        <${Icon} name="sun" size=${14} />
+      </button>`}
       <${ModeToggle} mode=${mode} onChange=${setMode} />
       ${pageLeaf && html`<${KebabMenu} items=${[
         { icon: 'edit', label: 'Rename', onClick: () => act.renamePage(pageLeaf) },
@@ -498,7 +505,8 @@ export function PageScreen() {
   const doSave = async (content) => { const updated = await saveVaultPage(path, content); setPage(updated); return updated; };
 
   return html`<${Shell}
-    sidebar=${html`<${FileTree} campaign=${c} tree=${tree} active=${(page && page.title) || null} onOpen=${(p) => navigate('page', { path: p.path })} act=${act} />`}
+    sidebar=${mode === 'edit' && zen ? null
+      : html`<${FileTree} campaign=${c} tree=${tree} active=${(page && page.title) || null} onOpen=${(p) => navigate('page', { path: p.path })} act=${act} />`}
     topbar=${topbar} bodyStyle=${{ padding: 0 }}>
     <div style=${{ display: 'flex', height: '100%', minHeight: 0 }}>
       ${page === null

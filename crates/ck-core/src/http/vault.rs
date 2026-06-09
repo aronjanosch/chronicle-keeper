@@ -2,7 +2,9 @@
 
 use std::path::PathBuf;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
+use axum::http::header;
+use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -289,6 +291,57 @@ pub async fn delete_folder(
         reindex_remove(&state, &root, &rel);
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct AssetQuery {
+    pub name: String,
+}
+
+// Pasted/dropped editor media: raw bytes in the body, filename in the query.
+pub async fn upload_asset(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Query(q): Query<AssetQuery>,
+    body: axum::body::Bytes,
+) -> AppResult<Json<Value>> {
+    if body.is_empty() {
+        return Err(AppError::BadRequest("empty asset body".into()));
+    }
+    let root = vault_root(&state, &campaign_id)?;
+    let rel = vault::save_asset(&root, &q.name, &body)?;
+    state.note_vault_write(&root, &rel);
+    let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+    Ok(Json(json!({ "path": rel, "name": name })))
+}
+
+/// Asset bytes for `![[name]]` embeds. Fetched with the auth header and
+/// rendered via an object URL (an <img src> can't carry `X-CK-Token`).
+pub async fn asset_bytes(
+    State(state): State<AppState>,
+    Path((campaign_id, name)): Path<(String, String)>,
+) -> AppResult<impl IntoResponse> {
+    let root = vault_root(&state, &campaign_id)?;
+    let path = vault::find_asset(&root, &name)?;
+    let bytes = std::fs::read(&path)
+        .map_err(|_| AppError::NotFound(format!("Asset not found: {name}")))?;
+    let mime = match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
+        .as_deref()
+        .unwrap_or("")
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "avif" => "image/avif",
+        _ => "application/octet-stream",
+    };
+    Ok(([(header::CONTENT_TYPE, mime)], bytes))
 }
 
 pub async fn read_page(

@@ -271,6 +271,8 @@ pub struct MessageRequest {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub images: Vec<crate::llm::agent::Image>,
 }
 
 /// Production gate: emit a `permission_request` SSE frame, park on a oneshot
@@ -324,7 +326,7 @@ pub async fn send_message(
     Path((campaign_id, chat_id)): Path<(String, String)>,
     Json(req): Json<MessageRequest>,
 ) -> AppResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
-    if req.text.trim().is_empty() {
+    if req.text.trim().is_empty() && req.images.is_empty() {
         return Err(AppError::BadRequest("Empty message.".into()));
     }
     let (root, cfg) = world_cfg(&state, &campaign_id)?;
@@ -366,6 +368,7 @@ pub async fn send_message(
         let result = agent::run_turn(
             &turn_ctx,
             &req.text,
+            &req.images,
             &llm,
             &gate,
             &cancel,

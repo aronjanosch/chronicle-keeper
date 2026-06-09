@@ -12,11 +12,21 @@ use serde_json::{json, Value};
 
 use super::{LlmError, Resolved, Transport};
 
+/// A pasted image, base64-encoded. `media_type` is an image MIME (e.g.
+/// "image/png") — the shape every vision transport wants.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Image {
+    pub media_type: String,
+    pub data: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "snake_case")]
 pub enum Msg {
     System(String),
     User(String),
+    /// User turn carrying pasted images alongside (optional) text.
+    UserImages { text: String, images: Vec<Image> },
     Assistant {
         text: String,
         tool_calls: Vec<ToolCall>,
@@ -91,6 +101,18 @@ fn anthropic_body(msgs: &[Msg], tools: &[ToolDef], model: &str, stream: bool) ->
                 system.push_str(s);
             }
             Msg::User(s) => push(&mut messages, "user", json!({ "type": "text", "text": s })),
+            Msg::UserImages { text, images } => {
+                if !text.is_empty() {
+                    push(&mut messages, "user", json!({ "type": "text", "text": text }));
+                }
+                for img in images {
+                    push(
+                        &mut messages,
+                        "user",
+                        json!({ "type": "image", "source": { "type": "base64", "media_type": img.media_type, "data": img.data } }),
+                    );
+                }
+            }
             Msg::Assistant { text, tool_calls } => {
                 if !text.is_empty() {
                     push(
@@ -152,6 +174,20 @@ fn openai_style_body(
         .map(|m| match m {
             Msg::System(s) => json!({ "role": "system", "content": s }),
             Msg::User(s) => json!({ "role": "user", "content": s }),
+            Msg::UserImages { text, images } => {
+                if ollama {
+                    // Ollama: raw base64 (no data: prefix) in a sibling `images` array.
+                    let imgs: Vec<Value> = images.iter().map(|i| json!(i.data)).collect();
+                    json!({ "role": "user", "content": text, "images": imgs })
+                } else {
+                    let mut parts = vec![json!({ "type": "text", "text": text })];
+                    for i in images {
+                        let url = format!("data:{};base64,{}", i.media_type, i.data);
+                        parts.push(json!({ "type": "image_url", "image_url": { "url": url } }));
+                    }
+                    json!({ "role": "user", "content": parts })
+                }
+            }
             Msg::Assistant { text, tool_calls } => {
                 let mut v = json!({ "role": "assistant", "content": text });
                 if !tool_calls.is_empty() {
@@ -256,11 +292,13 @@ impl StreamState {
                 arguments: parse_args(&t.args),
             })
             .collect();
-        let stop_reason = self.stop_reason.unwrap_or(if tool_calls.is_empty() {
-            StopReason::EndTurn
+        // Tool calls are authoritative: Ollama streams done_reason "stop" even
+        // with tool_calls attached, so trusting stop_reason would skip the loop.
+        let stop_reason = if tool_calls.is_empty() {
+            self.stop_reason.unwrap_or(StopReason::EndTurn)
         } else {
             StopReason::ToolUse
-        });
+        };
         AssistantTurn {
             text: self.text.trim().to_string(),
             tool_calls,
@@ -462,9 +500,8 @@ impl StreamState {
 // ---- the call ----
 
 /// One assistant turn with tools attached. Streams text via `on_delta`,
-/// buffers tool calls, returns the complete turn. Ollama can't reliably
-/// stream with tools attached, so that combination runs non-streaming and
-/// the text arrives as a single delta.
+/// buffers tool calls, returns the complete turn. All transports stream;
+/// Ollama assembles tool_calls from the streamed chunks via `ollama_line`.
 pub async fn agent_chat_stream<F: FnMut(AgentDelta)>(
     resolved: &Resolved,
     msgs: &[Msg],
@@ -478,8 +515,7 @@ pub async fn agent_chat_stream<F: FnMut(AgentDelta)>(
 
     let req = match resolved.transport {
         Transport::Ollama => {
-            let stream = tools.is_empty();
-            let mut body = openai_style_body(msgs, tools, &resolved.model, stream, true);
+            let mut body = openai_style_body(msgs, tools, &resolved.model, true, true);
             let is_local = !resolved.model.to_lowercase().contains("cloud");
             if is_local {
                 if let Some(max) = resolved.num_ctx_max {
@@ -491,29 +527,6 @@ pub async fn agent_chat_stream<F: FnMut(AgentDelta)>(
             let mut req = client.post(url).json(&body);
             if !resolved.api_key.is_empty() {
                 req = req.bearer_auth(&resolved.api_key);
-            }
-            if !stream {
-                let resp = req.send().await.map_err(|e| LlmError(e.to_string()))?;
-                let resp = super::error_for_status(resp).await?;
-                let v: Value = resp.json().await.map_err(|e| LlmError(e.to_string()))?;
-                let mut st = StreamState::default();
-                if let Some(s) = v.get("done_reason").and_then(Value::as_str) {
-                    st.stop_reason = Some(parse_stop(s));
-                }
-                st.absorb_ollama_tool_calls(&v);
-                let text = v
-                    .get("message")
-                    .and_then(|m| m.get("content"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                if !text.is_empty() {
-                    st.text.push_str(text);
-                    on_delta(AgentDelta::Text(text.to_string()));
-                }
-                if !st.tools.is_empty() {
-                    st.stop_reason = Some(StopReason::ToolUse);
-                }
-                return Ok(st.finish());
             }
             req
         }
@@ -586,6 +599,8 @@ pub async fn agent_chat_stream<F: FnMut(AgentDelta)>(
 fn msg_chars(m: &Msg) -> usize {
     match m {
         Msg::System(s) | Msg::User(s) => s.len(),
+        // Image bytes are not text budget — count only the prose.
+        Msg::UserImages { text, .. } => text.len(),
         Msg::Assistant { text, tool_calls } => {
             text.len()
                 + tool_calls
@@ -712,6 +727,30 @@ mod tests {
     }
 
     #[test]
+    fn images_shape_per_transport() {
+        let msgs = vec![Msg::UserImages {
+            text: "what is this".into(),
+            images: vec![Image { media_type: "image/png".into(), data: "QUJD".into() }],
+        }];
+
+        let a = anthropic_body(&msgs, &[], "claude", false);
+        let blocks = a["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[1]["type"], "image");
+        assert_eq!(blocks[1]["source"]["media_type"], "image/png");
+        assert_eq!(blocks[1]["source"]["data"], "QUJD");
+
+        let o = openai_style_body(&msgs, &[], "gpt", false, false);
+        let parts = o["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,QUJD");
+
+        let ol = openai_style_body(&msgs, &[], "llava", false, true);
+        assert_eq!(ol["messages"][0]["content"], "what is this");
+        assert_eq!(ol["messages"][0]["images"][0], "QUJD");
+    }
+
+    #[test]
     fn error_tool_result_prefixed_outside_anthropic() {
         let msgs = vec![Msg::ToolResult {
             call_id: "x".into(),
@@ -829,6 +868,23 @@ mod tests {
         assert!(st.done);
         assert_eq!(text, "Hallo");
         assert_eq!(st.finish().stop_reason, StopReason::EndTurn);
+    }
+
+    #[test]
+    fn ollama_stream_tool_calls_force_tool_use() {
+        // Ollama streams done_reason "stop" alongside tool_calls; the loop must
+        // still run, so finish() must report ToolUse.
+        let mut st = StreamState::default();
+        for l in [
+            r#"{"message":{"content":"Let me check."},"done":false}"#,
+            r#"{"message":{"content":"","tool_calls":[{"function":{"name":"search_pages","arguments":{"query":"Thornhold"}}}]},"done":true,"done_reason":"stop"}"#,
+        ] {
+            st.ollama_line(l).unwrap();
+        }
+        let turn = st.finish();
+        assert_eq!(turn.stop_reason, StopReason::ToolUse);
+        assert_eq!(turn.tool_calls.len(), 1);
+        assert_eq!(turn.tool_calls[0].id, "call_0");
     }
 
     #[test]

@@ -150,8 +150,12 @@ fn meta_of(id: &str, events: &[Value]) -> ChatMeta {
 
 // ── jsonl events ↔ LLM message history ───────────────────────────
 
-pub fn user_event(text: &str) -> Value {
-    json!({ "type": "user", "text": text, "at": crate::store::now() })
+pub fn user_event(text: &str, images: &[crate::llm::agent::Image]) -> Value {
+    let mut ev = json!({ "type": "user", "text": text, "at": crate::store::now() });
+    if !images.is_empty() {
+        ev["images"] = serde_json::to_value(images).unwrap_or(Value::Null);
+    }
+    ev
 }
 
 pub fn assistant_event(text: &str, tool_calls: &[ToolCall]) -> Value {
@@ -219,7 +223,16 @@ pub fn events_to_msgs(events: &[Value]) -> Vec<Msg> {
     events
         .iter()
         .filter_map(|e| match e["type"].as_str() {
-            Some("user") => Some(Msg::User(e["text"].as_str().unwrap_or("").to_string())),
+            Some("user") => {
+                let text = e["text"].as_str().unwrap_or("").to_string();
+                let images: Vec<crate::llm::agent::Image> =
+                    serde_json::from_value(e["images"].clone()).unwrap_or_default();
+                Some(if images.is_empty() {
+                    Msg::User(text)
+                } else {
+                    Msg::UserImages { text, images }
+                })
+            }
             Some("assistant") => Some(Msg::Assistant {
                 text: e["text"].as_str().unwrap_or("").to_string(),
                 tool_calls: serde_json::from_value(e["tool_calls"].clone()).unwrap_or_default(),
@@ -250,7 +263,7 @@ mod tests {
     fn chat_lifecycle() {
         let root = tmp_world("life");
         let chat = create_chat(&root).unwrap();
-        append(&root, &chat.id, &user_event("Who rules Thornhold and why does it matter for the party right now?")).unwrap();
+        append(&root, &chat.id, &user_event("Who rules Thornhold and why does it matter for the party right now?", &[])).unwrap();
         append(&root, &chat.id, &assistant_event("Baron Aldric.", &[])).unwrap();
 
         let list = list_chats(&root).unwrap();
@@ -279,7 +292,7 @@ mod tests {
             name: "search_pages".into(),
             arguments: json!({ "query": "x" }),
         };
-        append(&root, &chat.id, &user_event("q")).unwrap();
+        append(&root, &chat.id, &user_event("q", &[])).unwrap();
         append(&root, &chat.id, &assistant_event("", std::slice::from_ref(&call))).unwrap();
         append(&root, &chat.id, &tool_result_event("c1", "search_pages", "hit", false, None)).unwrap();
         append(&root, &chat.id, &error_event("boom")).unwrap();

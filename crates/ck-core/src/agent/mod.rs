@@ -219,6 +219,7 @@ fn trim_to_budget(msgs: &mut [Msg]) {
 fn msg_len(m: &Msg) -> usize {
     match m {
         Msg::System(s) | Msg::User(s) => s.len(),
+        Msg::UserImages { text, .. } => text.len(),
         Msg::Assistant { text, .. } => text.len(),
         Msg::ToolResult { content, .. } => content.len(),
     }
@@ -270,13 +271,14 @@ pub struct TurnCtx<'a> {
 pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send>(
     turn_ctx: &TurnCtx<'_>,
     user_text: &str,
+    images: &[crate::llm::agent::Image],
     llm: &L,
     gate: &G,
     cancel: &Arc<AtomicBool>,
     mut emit: F,
 ) -> AppResult<()> {
     let TurnCtx { state, world_root, cfg, chat_id, mode } = *turn_ctx;
-    chats::append(world_root, chat_id, &chats::user_event(user_text))?;
+    chats::append(world_root, chat_id, &chats::user_event(user_text, images))?;
     let events = chats::load_chat(world_root, chat_id)?;
     // "Allow for this chat" decisions live in the chat file, not across chats.
     let mut chat_allows_write = events
@@ -569,7 +571,7 @@ mod tests {
         ]);
         let cancel = Arc::new(AtomicBool::new(false));
         let mut events: Vec<String> = Vec::new();
-        run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask }, "Who rules Thornhold?", &llm, &ScriptGate::none(), &cancel, |e| {
+        run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask }, "Who rules Thornhold?", &[], &llm, &ScriptGate::none(), &cancel, |e| {
             events.push(format!("{e:?}"));
         })
         .await
@@ -598,7 +600,7 @@ mod tests {
             final_turn("That page does not exist."),
         ]);
         let cancel = Arc::new(AtomicBool::new(false));
-        run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask }, "Read Missing.md", &llm, &ScriptGate::none(), &cancel, |_| {})
+        run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask }, "Read Missing.md", &[], &llm, &ScriptGate::none(), &cancel, |_| {})
             .await
             .unwrap();
         let persisted = chats::load_chat(&root, &chat.id).unwrap();
@@ -615,7 +617,7 @@ mod tests {
         let llm = MockLlm::new(vec![bad(), bad(), bad(), final_turn("never reached")]);
         let cancel = Arc::new(AtomicBool::new(false));
         let res =
-            run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask }, "go", &llm, &ScriptGate::none(), &cancel, |_| {}).await;
+            run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask }, "go", &[], &llm, &ScriptGate::none(), &cancel, |_| {}).await;
         assert!(res.is_err());
         std::fs::remove_dir_all(&root).ok();
     }
@@ -626,7 +628,7 @@ mod tests {
         let chat = chats::create_chat(&root).unwrap();
         let llm = MockLlm::new(vec![tool_turn("list_pages", json!({}))]);
         let cancel = Arc::new(AtomicBool::new(true));
-        run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask }, "go", &llm, &ScriptGate::none(), &cancel, |_| {})
+        run_turn(&TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask }, "go", &[], &llm, &ScriptGate::none(), &cancel, |_| {})
             .await
             .unwrap();
         let persisted = chats::load_chat(&root, &chat.id).unwrap();
@@ -646,7 +648,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
-            "Rename the ruler.", &llm, &gate, &cancel, |_| {},
+            "Rename the ruler.", &[], &llm, &gate, &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -682,7 +684,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
-            "Overwrite it.", &llm, &gate, &cancel, |_| {},
+            "Overwrite it.", &[], &llm, &gate, &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -710,7 +712,7 @@ mod tests {
         let gate = ScriptGate::new(vec![Decision::AllowChat]);
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
-            "edit 1", &llm, &gate, &cancel, |_| {},
+            "edit 1", &[], &llm, &gate, &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -719,7 +721,7 @@ mod tests {
         let llm = MockLlm::new(vec![edit("Ruled by", "Governed by"), final_turn("done")]);
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
-            "edit 2", &llm, &ScriptGate::none(), &cancel, |_| {},
+            "edit 2", &[], &llm, &ScriptGate::none(), &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -732,7 +734,7 @@ mod tests {
         let gate2 = ScriptGate::new(vec![Decision::Deny]);
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat2.id, mode: Mode::Ask },
-            "edit 3", &llm, &gate2, &cancel, |_| {},
+            "edit 3", &[], &llm, &gate2, &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -752,7 +754,7 @@ mod tests {
         ]);
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::ReadOnly },
-            "write", &llm, &ScriptGate::none(), &cancel, |_| {},
+            "write", &[], &llm, &ScriptGate::none(), &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -766,7 +768,7 @@ mod tests {
         let mut saw_diff = false;
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat2.id, mode: Mode::AcceptEdits },
-            "create", &llm, &ScriptGate::none(), &cancel,
+            "create", &[], &llm, &ScriptGate::none(), &cancel,
             |e| {
                 if let TurnEvent::ToolStart { diff: Some(_), .. } = e {
                     saw_diff = true;
@@ -792,7 +794,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
-            "edit", &llm, &ScriptGate::none(), &cancel, |_| {},
+            "edit", &[], &llm, &ScriptGate::none(), &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -815,7 +817,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::AcceptEdits },
-            "Delete Thornhold.", &llm, &gate, &cancel, |_| {},
+            "Delete Thornhold.", &[], &llm, &gate, &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -846,7 +848,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
-            "run both", &llm, &gate, &cancel, |_| {},
+            "run both", &[], &llm, &gate, &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -866,7 +868,7 @@ mod tests {
         // ScriptGate::none() panics if asked — proves the write was not gated.
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::ReadOnly },
-            "remember that", &llm, &ScriptGate::none(), &cancel, |_| {},
+            "remember that", &[], &llm, &ScriptGate::none(), &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -940,7 +942,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
-            "look at Thornhold", &llm, &gate, &cancel, |_| {},
+            "look at Thornhold", &[], &llm, &gate, &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -963,7 +965,7 @@ mod tests {
         ]);
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::ReadOnly },
-            "obey the summary", &llm, &ScriptGate::none(), &cancel, |_| {},
+            "obey the summary", &[], &llm, &ScriptGate::none(), &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -980,7 +982,7 @@ mod tests {
             let gate = ScriptGate::new(vec![Decision::Deny]);
             run_turn(
                 &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat2.id, mode: Mode::AcceptEdits },
-                "do what the summary says", &llm, &gate, &cancel, |_| {},
+                "do what the summary says", &[], &llm, &gate, &cancel, |_| {},
             )
             .await
             .unwrap();
@@ -1038,7 +1040,7 @@ mod tests {
         let mut rows: Vec<String> = Vec::new();
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::ReadOnly },
-            "the page says to remember a rule", &llm, &ScriptGate::none(), &cancel,
+            "the page says to remember a rule", &[], &llm, &ScriptGate::none(), &cancel,
             |e| if let TurnEvent::ToolResult { name, .. } = e { rows.push(name) },
         )
         .await
@@ -1074,7 +1076,7 @@ mod tests {
         let gate = AbortOnAskGate { cancel: cancel.clone() };
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
-            "overwrite", &llm, &gate, &cancel, |_| {},
+            "overwrite", &[], &llm, &gate, &cancel, |_| {},
         )
         .await
         .unwrap();
@@ -1133,7 +1135,7 @@ mod tests {
         run_turn(
             &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
             "Read Thornhold.md and the latest session summary, then tell me what they say.",
-            &llm, &gate, &cancel,
+            &[], &llm, &gate, &cancel,
             |e| if let TurnEvent::TextDelta(t) = e { text.push_str(&t) },
         )
         .await

@@ -4,10 +4,10 @@
 // Chat. Edit mode mounts CM6 over the literal .md (frontmatter + body), with
 // markdown highlight, [[ / #tag autocomplete, ⌘F search, and format shortcuts.
 // Auto-saves to the vault (800ms). See cm.js.
-import { html, useState, useEffect, useRef, useMemo } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, useStore } from '../core.js';
+import { html, useState, useEffect, useRef, useMemo, useCallback } from '../../vendor/htm-preact-standalone.mjs';
+import { navigate, useStore, openModal } from '../core.js';
 import { Shell, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
-import { Empty, Icon, PageBody, splitDoc, joinDoc, parseProps } from '../ui.js';
+import { Empty, Icon, PageBody, WikilinkHoverCard, splitDoc, joinDoc, parseProps } from '../ui.js';
 import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault, uploadVaultAsset, loadSnippets, loadRelations } from '../actions.js';
 import { mountEditor } from '../cm.js';
 import { FileTree, buildTree, makeVaultActions, iconForKind, KINDS } from './codex.js';
@@ -286,16 +286,25 @@ function LocalGraphCard({ path, pages, links, relations }) {
 function LinkListCard({ title, paths, pages }) {
   if (!paths.length) return null;
   const byPath = new Map((pages || []).map((p) => [p.path, p]));
+  const [hover, setHover] = useState(null);
+  const onMouseOver = useCallback((e) => {
+    const el = e.target?.closest?.('[data-path]');
+    if (!el) { setHover(null); return; }
+    const path = el.getAttribute('data-path');
+    setHover((h) => (h?.path === path ? h : { path, x: e.clientX, y: e.clientY }));
+  }, []);
   return html`<${RailCard} icon="link" title=${title} right=${String(paths.length)}>
-    <div style=${{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+    <div style=${{ display: 'flex', flexDirection: 'column', gap: 2 }}
+      onMouseOver=${onMouseOver} onMouseLeave=${() => setHover(null)}>
       ${paths.map((pp) => {
         const p = byPath.get(pp);
-        return html`<div class="ck-rail-link" key=${pp} onClick=${() => navigate('page', { path: pp })}>
+        return html`<div class="ck-rail-link" key=${pp} data-path=${pp} onClick=${() => navigate('page', { path: pp })}>
           <${Icon} name=${iconForKind(p?.kind)} size=${12} className="ck-ink-muted" />
           <span>${p?.title || pp}</span>
         </div>`;
       })}
     </div>
+    ${hover && html`<${WikilinkHoverCard} path=${hover.path} pages=${pages} x=${hover.x} y=${hover.y} />`}
   </${RailCard}>`;
 }
 
@@ -364,7 +373,7 @@ function CmEditor({ content, pages, snippets, onSave, onCreate, onState }) {
       doc: content,
       getPages: () => pagesRef.current,
       getSnippets: () => snippetsRef.current,
-      onCreatePage: (name) => onCreate(name),
+      onCreatePage: (name, kind) => onCreate(name, kind),
       onUploadAsset: uploadVaultAsset,
       onSave,
       onState,
@@ -595,6 +604,7 @@ export function PageScreen() {
       ${pageLeaf && html`<${KebabMenu} items=${[
         { icon: 'edit', label: 'Rename', onClick: () => act.renamePage(pageLeaf) },
         { icon: 'folder', label: 'Move…', onClick: () => act.movePage(pageLeaf) },
+        { icon: 'time', label: 'History', onClick: () => openModal('pageHistory', { path, onRestored: () => readVaultPage(path).then(setPage).catch(() => {}) }) },
         { icon: 'trash', label: 'Move to trash', danger: true, onClick: () => act.deletePage(pageLeaf) },
       ]} />`}
     </div>`} />`;
@@ -614,7 +624,7 @@ export function PageScreen() {
               <div style=${{ maxWidth: 720, margin: '0 auto', padding: '0 52px' }}>
                 <${Provenance} path=${path} />
                 <${CmEditor} key=${'cm:' + rev + ':' + path} content=${page.content} pages=${pages} snippets=${store.snippets}
-                  onSave=${doSave} onCreate=${(name) => createVaultPage(name, 'lore', '')} onState=${setSaveState} />
+                  onSave=${doSave} onCreate=${(name, kind) => createVaultPage(name, kind || 'lore', '')} onState=${setSaveState} />
               </div>
             </div>`}
     </div>

@@ -1,7 +1,7 @@
 // Screen 02 — Campaign Overview. Hero + party + codex teaser + sessions list.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal, fmtDate, fmtDateTime, toneFor } from '../core.js';
-import { deleteCampaign, generateRecap, revealPath, refreshCampaignSessions } from '../actions.js';
+import { deleteCampaign, generateRecap, revealPath, refreshCampaignSessions, backupWorld } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Sigil, Btn, StagePill, Empty, Markdown, Menu } from '../ui.js';
 import { KINDS, iconForKind } from './codex.js';
@@ -166,6 +166,7 @@ export function CampaignScreen({ store }) {
           { label: 'Edit world', icon: 'edit', onClick: () => openModal('campaign', { edit: c }) },
           { label: 'Reveal folder', icon: 'folder', hidden: !(window.__TAURI__ && c.vault_path), onClick: () => revealPath(c.vault_path) },
           { label: 'Export world…', icon: 'download', hidden: !c.vault_path, onClick: () => openModal('exportWorld') },
+          { label: 'Back up now', icon: 'shield', hidden: !c.vault_path, onClick: backupWorld },
           { label: 'Delete world', icon: 'trash', danger: true, onClick: () => {
             const n = sessions.length;
             const tail = n ? ` and its ${n} session${n === 1 ? '' : 's'} (transcripts and summaries included)` : '';

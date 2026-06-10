@@ -213,6 +213,11 @@ pub fn error_event(message: &str) -> Value {
     json!({ "type": "error", "message": message, "at": crate::store::now() })
 }
 
+/// Mode-change marker (e.g. grounded fallback engaged). UI-only, skipped on replay.
+pub fn notice_event(message: &str) -> Value {
+    json!({ "type": "notice", "message": message, "at": crate::store::now() })
+}
+
 pub fn aborted_event() -> Value {
     json!({ "type": "aborted", "at": crate::store::now() })
 }

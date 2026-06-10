@@ -1,6 +1,6 @@
 // Overlay forms: campaign editor, session editor, transcribe, export, provider, viewer.
 import { html, useState, useEffect } from '../vendor/htm-preact-standalone.mjs';
-import { store, closeModal, navigate, setOp } from './core.js';
+import { store, closeModal, navigate, setOp, openModal, apiFetch, fmtDateTime } from './core.js';
 import { Icon, Btn, Field, Input, Textarea, Select, Spinner } from './ui.js';
 import { CommandPalette } from './screens/palette.js';
 import {
@@ -11,6 +11,8 @@ import {
   createPromptTemplate, updatePromptTemplate,
   enhanceVaultPages, loadVaultDiagnostics, exportWorld, revealPath,
   createVaultPage, saveVaultPage,
+  loadPageHistory, readPageVersion, restorePageVersion, loadWorldHistory,
+  loadTrash, restoreTrash, emptyTrash,
 } from './actions.js';
 
 const PRONOUNS = ['she/her', 'he/him', 'they/them'];
@@ -286,6 +288,110 @@ function QuickCaptureModal() {
   </${ModalShell}>`;
 }
 
+// ── New event (Phase 11.5): mint a thin dated beat from the timeline ──
+// Picker over existing pages; Enter accepts free text (broken wikilink
+// until the page exists — same contract as typing [[New Name]]).
+function PagePick({ pages, exclude = [], onPick, placeholder }) {
+  const [q, setQ] = useState('');
+  const needle = q.trim().toLowerCase();
+  const hits = needle
+    ? pages.filter((p) => p.title && p.title.toLowerCase().includes(needle) && !exclude.includes(p.title)).slice(0, 6)
+    : [];
+  const pick = (title) => { onPick(title); setQ(''); };
+  return html`<div style=${{ position: 'relative' }}>
+    <${Input} value=${q} onInput=${setQ} placeholder=${placeholder}
+      onKeydown=${(e) => { if (e.key === 'Enter' && q.trim()) { e.preventDefault(); pick(hits[0]?.title || q.trim()); } }} />
+    ${hits.length > 0 && html`<div style=${{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, marginTop: 2,
+      background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', borderRadius: 6, boxShadow: 'var(--shadow-raised)', overflow: 'hidden' }}>
+      ${hits.map((p) => html`<div key=${p.path} onClick=${() => pick(p.title)}
+        style=${{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', fontSize: 13, cursor: 'pointer' }}
+        onMouseEnter=${(e) => { e.currentTarget.style.background = 'var(--paper-deep)'; }}
+        onMouseLeave=${(e) => { e.currentTarget.style.background = 'transparent'; }}>
+        <${Icon} name="doc" size=${12} className="ck-ink-muted" /> ${p.title}
+        <span style=${{ fontSize: 11, color: 'var(--ink-faint)' }}>${p.kind || ''}</span>
+      </div>`)}
+    </div>`}
+  </div>`;
+}
+
+function PickedChip({ label, onRemove }) {
+  return html`<span style=${{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 999, fontSize: 12,
+    background: 'var(--burgundy-50)', border: '1px solid var(--burgundy-300)', color: 'var(--burgundy-700)' }}>
+    ${label}<span onClick=${onRemove} style=${{ cursor: 'pointer', fontWeight: 600 }}>×</span>
+  </span>`;
+}
+
+const yamlQuote = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+
+function NewEventModal({ date: presetDate = '', order: presetOrder = '', onCreated }) {
+  const [title, setTitle] = useState('');
+  const [date, setDate] = useState(presetDate);
+  const [order, setOrder] = useState(String(presetOrder));
+  const [location, setLocation] = useState('');
+  const [participants, setParticipants] = useState([]);
+  const [summary, setSummary] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const pages = store.vaultPages || [];
+
+  async function go() {
+    const t = title.trim();
+    if (!t) { setErr('Title is required'); return; }
+    if (!date.trim() && !String(order).trim()) { setErr('Give it a date or an order number'); return; }
+    setBusy(true); setErr(null);
+    const fm = ['---', 'kind: event'];
+    if (date.trim()) fm.push(`date: ${yamlQuote(date.trim())}`);
+    else fm.push(`order: ${parseInt(order, 10)}`);
+    if (location) fm.push(`location: ${yamlQuote(`[[${location}]]`)}`);
+    if (participants.length) {
+      fm.push('participants:');
+      for (const p of participants) fm.push(`  - ${yamlQuote(`[[${p}]]`)}`);
+    }
+    if (summary.trim()) fm.push(`summary: ${yamlQuote(summary.trim())}`);
+    fm.push('---');
+    try {
+      const page = await createVaultPage(t, 'event', 'Events');
+      await saveVaultPage(page.path, `${fm.join('\n')}\n\n# ${page.title}\n`);
+      setOp(`Event saved to ${page.path}`, 'done');
+      closeModal();
+      if (onCreated) onCreated(page);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+
+  return html`<${ModalShell} title="New event" footer=${html`
+    <span style=${{ flex: 1, fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>A thin dated node — details live on the linked pages</span>
+    <${Btn} kind="ghost" disabled=${busy} onClick=${closeModal}>Cancel</${Btn}>
+    <${Btn} kind="primary" disabled=${busy} onClick=${go}>${busy ? 'Saving…' : 'Create'}</${Btn}>`}>
+    ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
+    <${Field} label="Title">
+      <${Input} value=${title} onInput=${setTitle} placeholder="The Sack of Emberfall" autofocus
+        onKeydown=${(e) => { if (e.key === 'Enter') go(); }} />
+    </${Field}>
+    <div style=${{ display: 'flex', gap: 10 }}>
+      <div style=${{ flex: 1 }}><${Field} label="Date">
+        <${Input} value=${date} onInput=${setDate} placeholder="1374-08-12 DR · ~890 · -500" />
+      </${Field}></div>
+      <div style=${{ flex: '0 0 110px' }}><${Field} label="…or order">
+        <${Input} value=${order} onInput=${setOrder} placeholder="3" />
+      </${Field}></div>
+    </div>
+    <${Field} label="Location">
+      ${location
+        ? html`<div><${PickedChip} label=${location} onRemove=${() => setLocation('')} /></div>`
+        : html`<${PagePick} pages=${pages} onPick=${setLocation} placeholder="Link a place…" />`}
+    </${Field}>
+    <${Field} label="Participants">
+      ${participants.length > 0 && html`<div style=${{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 6 }}>
+        ${participants.map((p) => html`<${PickedChip} key=${p} label=${p} onRemove=${() => setParticipants(participants.filter((x) => x !== p))} />`)}
+      </div>`}
+      <${PagePick} pages=${pages} exclude=${participants} onPick=${(t) => setParticipants([...participants, t])} placeholder="Link people, factions…" />
+    </${Field}>
+    <${Field} label="Summary">
+      <${Input} value=${summary} onInput=${setSummary} placeholder="One line for the timeline rail" />
+    </${Field}>
+  </${ModalShell}>`;
+}
+
 // ── Move a page/folder into another folder ─────────────────────────
 function MovePageModal({ name, folders = [], current = '', onSubmit }) {
   const [dest, setDest] = useState(current);
@@ -304,9 +410,239 @@ function MovePageModal({ name, folders = [], current = '', onSubmit }) {
     <${Field} label="Destination folder">
       <${Select} value=${dest} onChange=${setDest} options=${options} />
     </${Field}>
-    <div style=${{ fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>
-      Links to this page aren't rewritten yet — that arrives with wikilinks in Phase 2.
+  </${ModalShell}>`;
+}
+
+// ── Page history (Phase 13A): versions → diff → restore ───────────
+
+// Line diff (LCS) for the history viewer. Inputs are wiki pages — small
+// enough for the quadratic table; degrade to whole-file replace beyond that.
+function diffLines(aText, bText) {
+  const a = (aText || '').split('\n');
+  const b = (bText || '').split('\n');
+  if (a.length * b.length > 500000) {
+    return [...a.map((t) => ({ op: '-', t })), ...b.map((t) => ({ op: '+', t }))];
+  }
+  const n = a.length, m = b.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { out.push({ op: ' ', t: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) out.push({ op: '-', t: a[i++] });
+    else out.push({ op: '+', t: b[j++] });
+  }
+  while (i < n) out.push({ op: '-', t: a[i++] });
+  while (j < m) out.push({ op: '+', t: b[j++] });
+  return out;
+}
+
+function DiffLinesView({ before, after }) {
+  const rows = diffLines(before, after);
+  // Collapse long unchanged runs so the change stays in view.
+  const out = [];
+  let run = [];
+  const flush = () => {
+    if (run.length > 7) {
+      out.push(run[0], run[1], { op: 'gap', n: run.length - 4 }, run[run.length - 2], run[run.length - 1]);
+    } else out.push(...run);
+    run = [];
+  };
+  for (const r of rows) {
+    if (r.op === ' ') run.push(r);
+    else { flush(); out.push(r); }
+  }
+  flush();
+  const colors = {
+    '+': { bg: 'var(--moss-50)', col: 'var(--moss)', sign: '+' },
+    '-': { bg: 'var(--burgundy-50)', col: 'var(--burgundy-700)', sign: '−' },
+    ' ': { bg: 'transparent', col: 'var(--ink-soft)', sign: ' ' },
+  };
+  return html`<pre style=${{ margin: 0, padding: '8px 0', background: 'var(--paper)', border: '1px solid var(--rule-soft)', borderRadius: 6, fontSize: 11.5, fontFamily: 'var(--font-mono)', lineHeight: 1.5, overflow: 'auto', maxHeight: '46vh' }}>
+    ${out.map((r, k) => r.op === 'gap'
+      ? html`<div key=${k} style=${{ padding: '0 10px', color: 'var(--ink-faint)', fontStyle: 'italic' }}>··· ${r.n} unchanged lines ···</div>`
+      : html`<div key=${k} style=${{ padding: '0 10px', whiteSpace: 'pre-wrap', background: colors[r.op].bg, color: colors[r.op].col }}>${colors[r.op].sign} ${r.t}</div>`)}
+  </pre>`;
+}
+
+function OriginChip({ origin }) {
+  const keeper = origin === 'keeper';
+  return html`<span style=${{
+    display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999,
+    fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
+    background: keeper ? 'var(--burgundy-50)' : 'var(--moss-50)',
+    color: keeper ? 'var(--burgundy)' : 'var(--moss)',
+    border: `1px solid ${keeper ? 'rgba(122,46,31,.22)' : 'rgba(74,93,58,.22)'}`,
+  }}>${keeper ? html`<${Icon} name="feather" size=${9} />` : null}${keeper ? 'Keeper' : 'You'}</span>`;
+}
+
+// Each version is the page as it was *before* that save — the diff of a row
+// is therefore "what that save changed". Restore writes the before-state back.
+function PageHistoryModal({ path, onRestored }) {
+  const id = store.campaign?.campaign_id;
+  const [versions, setVersions] = useState(null); // newest first
+  const [current, setCurrent] = useState(null);   // live file content
+  const [sel, setSel] = useState(null);           // selected ts
+  const [snaps, setSnaps] = useState({});         // ts → content (null = absent)
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const title = path.split('/').pop().replace(/\.md$/, '');
+
+  useEffect(() => {
+    loadPageHistory(path).then((v) => {
+      const list = [...v].reverse();
+      setVersions(list);
+      if (list.length) setSel(list[0].ts);
+    });
+    apiFetch(`/campaigns/${id}/vault/pages/${encodeURI(path)}`)
+      .then((p) => setCurrent(p.content))
+      .catch(() => setCurrent('')); // deleted/missing page still shows history
+  }, [path]);
+
+  // The selected version + the one after it (or the live file) make the diff.
+  useEffect(() => {
+    if (sel == null || !versions) return;
+    const k = versions.findIndex((v) => v.ts === sel);
+    const need = [versions[k], versions[k - 1]].filter(Boolean).filter((v) => !(v.ts in snaps));
+    need.forEach((v) => {
+      readPageVersion(path, v.ts)
+        .then((r) => setSnaps((s) => ({ ...s, [v.ts]: r.content })))
+        .catch(() => setSnaps((s) => ({ ...s, [v.ts]: '' })));
+    });
+  }, [sel, versions]);
+
+  async function restore() {
+    setBusy(true); setErr(null);
+    try {
+      const r = await restorePageVersion(path, sel);
+      closeModal();
+      setOp(r.deleted ? `${title} moved to trash (it didn't exist at that point)` : `${title} restored`, 'done');
+      if (onRestored) onRestored(r);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+
+  const k = versions ? versions.findIndex((v) => v.ts === sel) : -1;
+  const before = sel != null ? snaps[sel] : undefined;
+  const after = k > 0 ? snaps[versions[k - 1].ts] : current;
+  const ready = before !== undefined && after !== undefined && after !== null;
+
+  return html`<${ModalShell} wide title=${html`History — <em style=${{ fontStyle: 'italic' }}>${title}</em>`} footer=${html`
+    ${err && html`<span style=${{ color: 'var(--burgundy-700)', fontSize: 12.5, marginRight: 'auto' }}>${err}</span>`}
+    <${Btn} kind="ghost" disabled=${busy} onClick=${closeModal}>Close</${Btn}>
+    <${Btn} kind="primary" disabled=${busy || sel == null} onClick=${restore}>${busy ? 'Restoring…' : 'Restore this state'}</${Btn}>`}>
+    ${versions === null ? html`<${Spinner} />`
+      : versions.length === 0
+        ? html`<div style=${{ fontSize: 13, color: 'var(--ink-faint)', fontStyle: 'italic' }}>
+            No saved versions yet — a snapshot is taken on every save from now on.
+          </div>`
+        : html`<div style=${{ display: 'grid', gridTemplateColumns: '210px 1fr', gap: 14, minHeight: 0 }}>
+            <div style=${{ overflow: 'auto', maxHeight: '52vh', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              ${versions.map((v) => html`<div key=${v.ts} onClick=${() => setSel(v.ts)} style=${{
+                display: 'flex', alignItems: 'center', gap: 7, padding: '6px 8px', borderRadius: 5, cursor: 'pointer',
+                background: sel === v.ts ? 'var(--burgundy-50)' : 'transparent',
+                boxShadow: sel === v.ts ? 'inset 2px 0 0 var(--burgundy)' : 'none',
+              }}>
+                <${OriginChip} origin=${v.origin} />
+                <span style=${{ fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--ink-soft)' }}>${fmtDateTime(v.ts)}</span>
+              </div>`)}
+            </div>
+            <div style=${{ minWidth: 0 }}>
+              <div style=${{ fontSize: 11.5, color: 'var(--ink-muted)', marginBottom: 6 }}>
+                What this save changed${before === null ? ' (page created by it)' : ''} — restoring returns the page to the state <em>before</em> it.
+              </div>
+              ${ready ? html`<${DiffLinesView} before=${before || ''} after=${after || ''} />` : html`<${Spinner} />`}
+            </div>
+          </div>`}
+  </${ModalShell}>`;
+}
+
+// World-wide feed: every save, filterable to "everything the Keeper changed".
+function WorldHistoryModal() {
+  const [origin, setOrigin] = useState('keeper');
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    setRows(null);
+    loadWorldHistory(origin === 'all' ? null : origin, 150).then(setRows);
+  }, [origin]);
+  const tabs = [['keeper', 'The Keeper'], ['user', 'You'], ['all', 'All']];
+  return html`<${ModalShell} title="World history" footer=${html`<${Btn} kind="ghost" onClick=${closeModal}>Close</${Btn}>`}>
+    <div style=${{ display: 'flex', gap: 4, padding: 3, background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 5, alignSelf: 'flex-start' }}>
+      ${tabs.map(([v, label]) => html`<button key=${v} onClick=${() => setOrigin(v)} style=${{
+        padding: '4px 10px', borderRadius: 3, border: 'none', cursor: 'pointer', fontSize: 12,
+        background: origin === v ? 'var(--paper-deep)' : 'transparent',
+        color: origin === v ? 'var(--ink)' : 'var(--ink-muted)', fontWeight: origin === v ? 500 : 400,
+      }}>${label}</button>`)}
     </div>
+    ${rows === null ? html`<${Spinner} />`
+      : rows.length === 0
+        ? html`<div style=${{ fontSize: 13, color: 'var(--ink-faint)', fontStyle: 'italic' }}>
+            ${origin === 'keeper' ? 'The Keeper has not changed any pages yet.' : 'No saved versions yet.'}
+          </div>`
+        : html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 2, overflow: 'auto', maxHeight: '54vh' }}>
+            ${rows.map((r, i) => html`<div key=${i} onClick=${() => openModal('pageHistory', { path: r.path })}
+              style=${{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 5, cursor: 'pointer' }}
+              onMouseEnter=${(e) => { e.currentTarget.style.background = 'var(--paper-deep)'; }}
+              onMouseLeave=${(e) => { e.currentTarget.style.background = 'transparent'; }}>
+              <${OriginChip} origin=${r.origin} />
+              <span style=${{ flex: 1, fontSize: 12.5, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${r.path.replace(/\.md$/, '')}</span>
+              <span style=${{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-faint)' }}>${fmtDateTime(r.ts)}</span>
+            </div>`)}
+          </div>`}
+  </${ModalShell}>`;
+}
+
+// ── Trash (Phase 13D): list groups, restore, empty ─────────────────
+function TrashModal() {
+  const [groups, setGroups] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const reload = () => loadTrash().then(setGroups);
+  useEffect(() => { reload(); }, []);
+
+  async function run(fn, doneMsg) {
+    setBusy(true); setErr(null);
+    try { await fn(); await reload(); if (doneMsg) setOp(doneMsg, 'done'); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+
+  const itemLabel = (it) => {
+    const name = it.rel.split('/').pop().replace(/\.md$/, '');
+    if (it.kind === 'folder') return `${name}/ (${it.pages} page${it.pages === 1 ? '' : 's'})`;
+    return name;
+  };
+
+  return html`<${ModalShell} title="Trash" footer=${html`
+    ${err && html`<span style=${{ color: 'var(--burgundy-700)', fontSize: 12.5, marginRight: 'auto' }}>${err}</span>`}
+    ${groups && groups.length > 0 && html`<${Btn} kind="ghost" disabled=${busy}
+      onClick=${() => run(() => emptyTrash(), 'Trash emptied')}>Empty trash</${Btn}>`}
+    <${Btn} kind="primary" onClick=${closeModal}>Close</${Btn}>`}>
+    <div style=${{ fontSize: 12, color: 'var(--ink-muted)', lineHeight: 1.5 }}>
+      Deleted pages and folders live in the world's own trash (<code>.ck/trash</code>) for 30 days, then vanish.
+    </div>
+    ${groups === null ? html`<${Spinner} />`
+      : groups.length === 0
+        ? html`<div style=${{ fontSize: 13, color: 'var(--ink-faint)', fontStyle: 'italic' }}>The trash is empty.</div>`
+        : html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto', maxHeight: '50vh' }}>
+            ${groups.map((g) => html`<div key=${g.id} style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 6 }}>
+              <${Icon} name="trash" size=${13} className="ck-ink-faint" />
+              <div style=${{ flex: 1, minWidth: 0 }}>
+                <div style=${{ fontSize: 13, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  ${g.items.map(itemLabel).join(', ')}
+                </div>
+                <div style=${{ fontSize: 11, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>deleted ${fmtDateTime(g.deleted_at * 1000)}</div>
+              </div>
+              <${Btn} kind="secondary" size="sm" disabled=${busy}
+                onClick=${() => run(() => restoreTrash(g.id), 'Restored from trash')}>Restore</${Btn}>
+              <${Btn} kind="ghost" size="sm" icon="x" title="Delete forever" disabled=${busy}
+                onClick=${() => run(() => emptyTrash(g.id))} />
+            </div>`)}
+          </div>`}
   </${ModalShell}>`;
 }
 
@@ -668,8 +1004,12 @@ export function ModalHost({ modal }) {
     case 'movePage': return html`<${MovePageModal} ...${modal.props} />`;
     case 'enhanceFolder': return html`<${EnhanceFolderModal} />`;
     case 'vaultDiag': return html`<${VaultDiagnosticsModal} />`;
+    case 'pageHistory': return html`<${PageHistoryModal} ...${modal.props} />`;
+    case 'worldHistory': return html`<${WorldHistoryModal} />`;
+    case 'trash': return html`<${TrashModal} />`;
     case 'commandPalette': return html`<${CommandPalette} />`;
     case 'quickCapture': return html`<${QuickCaptureModal} />`;
+    case 'newEvent': return html`<${NewEventModal} ...${modal.props} />`;
     case 'exportWorld': return html`<${ExportWorldModal} />`;
     default: return null;
   }

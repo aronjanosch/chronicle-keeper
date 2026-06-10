@@ -120,6 +120,10 @@ export async function sendMessage(text, images = []) {
         if (live.text.trim()) {
           patchKeeper({ events: [...keeperState().events, { type: 'assistant', text: live.text }] });
         }
+      } else if (ev.type === 'notice') {
+        // Mode change (e.g. grounded fallback) — show it inline right away;
+        // the post-stream reload picks up the persisted event.
+        patchKeeper({ events: [...keeperState().events, { type: 'notice', message: ev.message }] });
       } else if (ev.type === 'error') {
         patchKeeper({ error: ev.message });
       }
@@ -367,6 +371,11 @@ function EventRow({ ev }) {
   }
   if (ev.type === 'permission' && ev.decision === 'deny') {
     return html`<div style=${{ margin: '8px 0', fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>${ev.diff?.summary ? `${ev.diff.summary}` : `Edit to ${ev.diff?.path || 'a page'}`} denied.</div>`;
+  }
+  if (ev.type === 'notice') {
+    return html`<div style=${{ margin: '8px 0', display: 'flex', alignItems: 'flex-start', gap: 7, padding: '7px 10px', fontSize: 12, color: 'var(--ochre)', background: 'var(--ochre-50)', border: '1px solid rgba(168,115,40,.24)', borderRadius: 6, lineHeight: 1.45 }}>
+      <${Icon} name="sparkle" size=${12} /> <span>${ev.message}</span>
+    </div>`;
   }
   if (ev.type === 'error') {
     return html`<div style=${{ margin: '8px 0', fontSize: 12, color: 'var(--burgundy-700)' }}>⚠ ${ev.message}</div>`;

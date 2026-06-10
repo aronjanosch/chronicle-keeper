@@ -37,6 +37,7 @@ pub fn run() {
 
     let token = random_token();
     state.auth_token = Some(token.clone());
+    let backup_state = state.clone();
     let base = format!("http://{bound}");
     tracing::info!("embedded ck-core on {base}");
 
@@ -64,8 +65,16 @@ pub fn run() {
                 .build()?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(move |_app, event| {
+            // On-close world backup (Phase 13E): zip every world opened this
+            // session before the process exits. Blocks exit briefly; audio and
+            // the index cache are excluded, so it's small and fast.
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                ck_core::backup::backup_open_worlds(&backup_state);
+            }
+        });
 }
 
 fn random_token() -> String {

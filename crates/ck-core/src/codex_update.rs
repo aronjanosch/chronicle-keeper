@@ -727,6 +727,7 @@ pub fn commit(
     vault_root: &Path,
     ids: &[String],
 ) -> AppResult<CommitReport> {
+    let world_root = vault::world_root_of(vault_root);
     let mut run = read_run(session_dir)?
         .ok_or_else(|| AppError::NotFound("No codex-update run for this session.".into()))?;
     let mut report = CommitReport { applied: 0, stale: Vec::new(), files: Vec::new() };
@@ -735,7 +736,7 @@ pub fn commit(
         let Some(p) = run.proposals.iter_mut().find(|x| &x.id == id) else {
             continue;
         };
-        match apply_proposal(vault_root, p) {
+        match apply_proposal(world_root.as_deref(), vault_root, p) {
             Ok(path) => {
                 report.applied += 1;
                 if !report.files.contains(&path) {
@@ -757,7 +758,7 @@ pub fn commit(
 }
 
 /// Apply one proposal file-first; returns the vault-relative path touched.
-fn apply_proposal(vault_root: &Path, p: &Proposal) -> AppResult<String> {
+fn apply_proposal(world_root: Option<&Path>, vault_root: &Path, p: &Proposal) -> AppResult<String> {
     match &p.page {
         None => {
             let stem = vault::safe_page_filename(&p.title);
@@ -782,6 +783,9 @@ fn apply_proposal(vault_root: &Path, p: &Proposal) -> AppResult<String> {
                     content = vault::fm_append_list_value(&content, field, add);
                 }
             }
+            if let Some(wr) = world_root {
+                let _ = crate::history::record_now(wr, vault_root, &rel, "keeper");
+            }
             vault::write_page(vault_root, &rel, &content)?;
             Ok(rel)
         }
@@ -801,6 +805,9 @@ fn apply_proposal(vault_root: &Path, p: &Proposal) -> AppResult<String> {
                     }
                     Change::New { .. } => {}
                 }
+            }
+            if let Some(wr) = world_root {
+                let _ = crate::history::record_now(wr, vault_root, rel, "keeper");
             }
             vault::write_page(vault_root, rel, &content)?;
             Ok(rel.clone())

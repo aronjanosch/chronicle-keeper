@@ -184,7 +184,7 @@ pub fn write_tools() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "create_page".into(),
-            description: "Create a new Codex page. Full file content including `---` frontmatter (kind, summary). Errors if the page already exists.".into(),
+            description: "Create a new Codex page. Full file content including `---` frontmatter (kind, summary). Timeline event pages (kind: event) go in Events/. Errors if the page already exists.".into(),
             schema: obj(
                 json!({
                     "path": { "type": "string", "description": "vault-relative, e.g. NPCs/Baron Aldric.md" },
@@ -951,12 +951,13 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
         "delete_page" => {
             let path = norm_md_path(&str_arg("path"));
             let vault_root = ctx.cfg.codex_dir(ctx.world_root);
-            vault::delete_page(&vault_root, &path).map_err(app_err)?;
+            crate::trash::trash_paths(ctx.world_root, &vault_root, &[(path.clone(), false)])
+                .map_err(app_err)?;
             ctx.state.note_vault_write(&vault_root, &path);
             let _ = ctx.state.with_index(&vault_root, |conn| {
                 let _ = index::remove_path(conn, &path);
             });
-            Ok(format!("Deleted {path}."))
+            Ok(format!("Moved {path} to the world trash (restorable from the Trash view)."))
         }
         "rename_page" => {
             let path = norm_md_path(&str_arg("path"));
@@ -995,6 +996,7 @@ fn move_with_links(ctx: &ToolCtx<'_>, from: &str, to: &str) -> Result<(), String
         .and_then(|r| r.ok())
         .unwrap_or_default();
     vault::move_entry(&vault_root, from, to).map_err(app_err)?;
+    crate::history::move_history(ctx.world_root, from, to);
 
     let (old_title, new_title) = (stem(from), stem(to));
     if !old_title.is_empty() && !old_title.eq_ignore_ascii_case(&new_title) {
@@ -1006,6 +1008,7 @@ fn move_with_links(ctx: &ToolCtx<'_>, from: &str, to: &str) -> Result<(), String
             }
             let Ok(page) = vault::read_page(&vault_root, &src) else { continue };
             if let Some(updated) = index::rewrite_link_names(&page.content, &old_title, &new_title) {
+                let _ = crate::history::record(ctx.world_root, &vault_root, &src, "keeper");
                 if vault::write_page(&vault_root, &src, &updated).is_ok() {
                     reindex(ctx, &vault_root, &src);
                 }

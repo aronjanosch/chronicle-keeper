@@ -134,16 +134,46 @@ pub async fn query(
     })?
 }
 
-/// World timeline (Phase 11): dated pages sorted on the world's calendar,
-/// plus the calendar itself so the frontend can group/label.
+/// World timeline (Phase 11 + 11.5): dated pages sorted on the world's
+/// calendar, plus the calendar itself so the frontend can group/label.
+/// Sessions with a `world_date` in session.toml join the lane as synthetic
+/// `session:<id>` entries (11.5G); each event carries its tags and its
+/// `participants`/`location` relations for filtering and chips (11.5E/F).
 pub async fn timeline(
     State(state): State<AppState>,
     Path(campaign_id): Path<String>,
 ) -> AppResult<Json<Value>> {
     let (_, cfg) = super::vault::world_cfg(&state, &campaign_id)?;
     let root = vault_root(&state, &campaign_id)?;
-    let rows = state.with_index(&root, index::all_frontmatter)??;
-    let events = crate::timeline::world_events(rows, &cfg.calendar);
+    let mut rows = state.with_index(&root, index::all_frontmatter)??;
+    rows.extend(state.with_db(|conn| {
+        crate::store::sessions::world_dated_session_rows(conn, &campaign_id)
+    })?);
+    let mut events = crate::timeline::world_events(rows, &cfg.calendar);
+    let (meta, relations) = state.with_index(&root, |conn| {
+        let meta = index::page_meta(conn)?;
+        let relations = index::all_relations(conn)?;
+        AppResult::Ok((meta, relations))
+    })??;
+    for ev in &mut events {
+        let Some(path) = ev["path"].as_str().map(str::to_string) else { continue };
+        if let Some((_, tags)) = meta.get(&path) {
+            ev["tags"] = json!(tags);
+        }
+        let links: Vec<Value> = relations
+            .iter()
+            .filter(|r| {
+                r.source_path == path
+                    && matches!(r.predicate.as_str(), "participants" | "participant" | "location")
+            })
+            .map(|r| {
+                json!({ "predicate": r.predicate, "label": r.link_text, "path": r.target_path })
+            })
+            .collect();
+        if !links.is_empty() {
+            ev["links"] = json!(links);
+        }
+    }
     Ok(Json(json!({
         "events": events,
         "calendar": { "months": cfg.calendar.months, "eras": cfg.calendar.eras },

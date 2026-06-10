@@ -262,3 +262,8 @@ span.ck-embed-src.ck-wikilink:hover { color: var(--burgundy); }
 
 /* utility used by some inline icon placements */
 .ck-inline-ic { display: inline; vertical-align: -2px; }
+
+/* Timeline (11.5): group-header add button, shown on hover */
+.ck-tl-add { opacity: 0; transition: opacity .14s; }
+.ck-tl-group:hover .ck-tl-add { opacity: 1; }
+.ck-tl-add:hover { color: var(--burgundy) !important; }

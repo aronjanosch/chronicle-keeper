@@ -418,6 +418,80 @@ export async function saveVaultPage(path, content) {
   return page;
 }
 
+// ── Trust & bulk (Phase 13): history, trash, bulk ops, backup ─────
+
+// Version list for one page: [{ ts, origin }] oldest-first.
+export async function loadPageHistory(path) {
+  const id = store.campaign?.campaign_id;
+  if (!id) return [];
+  const r = await apiFetch(`/campaigns/${id}/vault/history/${encodeURI(path)}`).catch(() => null);
+  return (r && r.versions) || [];
+}
+
+// One snapshot's content (null = the page did not exist before that save).
+export function readPageVersion(path, ts) {
+  const id = store.campaign.campaign_id;
+  return apiFetch(`/campaigns/${id}/vault/history/${encodeURI(path)}?ts=${ts}`);
+}
+
+export async function restorePageVersion(path, ts) {
+  const id = store.campaign.campaign_id;
+  const r = await apiJson(`/campaigns/${id}/vault/history-restore`, 'POST', { page: path, ts });
+  await loadVaultTree(id);
+  return r; // { ok, deleted }
+}
+
+// World-wide recent versions; origin 'keeper' = "everything the Keeper changed".
+export async function loadWorldHistory(origin, limit) {
+  const id = store.campaign?.campaign_id;
+  if (!id) return [];
+  const params = new URLSearchParams();
+  if (origin) params.set('origin', origin);
+  if (limit) params.set('limit', String(limit));
+  const r = await apiFetch(`/campaigns/${id}/vault/history?${params}`).catch(() => null);
+  return (r && r.versions) || [];
+}
+
+// Multi-select operations. extra: { tag } | { folder }. Returns { done, errors }.
+export async function bulkVault(action, pages, extra = {}) {
+  const id = store.campaign.campaign_id;
+  const r = await apiJson(`/campaigns/${id}/vault/bulk`, 'POST', { action, pages, ...extra });
+  await loadVaultTree(id);
+  return r;
+}
+
+export async function loadTrash() {
+  const id = store.campaign?.campaign_id;
+  if (!id) return [];
+  const r = await apiFetch(`/campaigns/${id}/vault/trash`).catch(() => null);
+  return (r && r.groups) || [];
+}
+
+export async function restoreTrash(groupId) {
+  const id = store.campaign.campaign_id;
+  const r = await apiJson(`/campaigns/${id}/vault/trash/restore`, 'POST', { id: groupId });
+  await loadVaultTree(id);
+  return r; // { restored: [paths] }
+}
+
+// Omit groupId to empty everything.
+export function emptyTrash(groupId) {
+  const id = store.campaign.campaign_id;
+  return apiJson(`/campaigns/${id}/vault/trash/empty`, 'POST', { id: groupId || null });
+}
+
+// One-click world zip → Backups/ (server prunes to the last 10).
+export async function backupWorld() {
+  const id = store.campaign?.campaign_id;
+  if (!id) return;
+  setOp('Backing up the world…');
+  try {
+    const r = await apiJson(`/campaigns/${id}/backup`, 'POST', {});
+    setOp(`World backed up to ${r.path}`, 'done');
+    return r;
+  } catch (e) { setOp(e.message, 'err'); }
+}
+
 // Typed relations (Phase 9A): frontmatter [[link]] values, predicate = key.
 export async function loadRelations(campaignId) {
   const id = campaignId || store.campaign?.campaign_id;

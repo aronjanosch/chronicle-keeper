@@ -75,6 +75,12 @@ pub struct SessionToml {
     pub number: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
+    /// In-world date (Phase 11.5G): plots the session on the World timeline
+    /// lane; same `year[-month[-day]] [ERA]` syntax as page `date:` frontmatter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_date_end: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -210,6 +216,8 @@ pub fn write_session_toml(
         st.metadata = existing.metadata;
         st.notes = existing.notes;
         st.transcript = existing.transcript;
+        st.world_date = existing.world_date;
+        st.world_date_end = existing.world_date_end;
     }
     write_session_toml_file(session_path, &st)
 }
@@ -359,6 +367,8 @@ mod tests {
             id: Some("sess-7".into()),
             number: Some(7),
             date: Some("2026-06-03".into()),
+            world_date: Some("1374-08 DR".into()),
+            world_date_end: None,
             title: Some("Tomb of \"Aldric\"".into()),
             language: "de".into(),
             notes: "line one\nline two\n".into(),

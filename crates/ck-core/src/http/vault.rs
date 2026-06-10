@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::store::campaigns;
-use crate::vault;
+use crate::{history, trash, vault};
 
 pub(super) fn vault_root(state: &AppState, campaign_id: &str) -> AppResult<PathBuf> {
     let path = state.with_db(|conn| campaigns::get_campaign(conn, campaign_id))?
@@ -207,6 +207,7 @@ pub async fn move_entry(
     Json(req): Json<MoveRequest>,
 ) -> AppResult<Json<Value>> {
     let root = vault_root(&state, &campaign_id)?;
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
     let is_page_move = req.from.ends_with(".md") && req.to.ends_with(".md");
     // Collect inbound links before the index forgets the old target.
     let sources = if is_page_move {
@@ -218,8 +219,9 @@ pub async fn move_entry(
         Vec::new()
     };
     vault::move_entry(&root, &req.from, &req.to)?;
+    history::move_history(&world_root, &req.from, &req.to);
     if is_page_move {
-        rewrite_links_after_rename(&state, &root, &req.from, &req.to, sources);
+        rewrite_links_after_rename(&state, &world_root, &root, &req.from, &req.to, sources);
         reindex_remove(&state, &root, &req.from);
         reindex_page(&state, &root, &req.to);
     } else {
@@ -233,6 +235,7 @@ pub async fn move_entry(
 // to the moved page (display labels + #headings preserved). Best-effort.
 fn rewrite_links_after_rename(
     state: &AppState,
+    world_root: &std::path::Path,
     root: &std::path::Path,
     from: &str,
     to: &str,
@@ -263,6 +266,7 @@ fn rewrite_links_after_rename(
         if let Some(updated) =
             crate::store::index::rewrite_link_names(&page.content, &old_title, &new_title)
         {
+            let _ = history::record(world_root, root, &src, "user");
             if vault::write_page(root, &src, &updated).is_ok() {
                 reindex_page(state, root, &src);
             }
@@ -275,7 +279,8 @@ pub async fn delete_page(
     Path((campaign_id, page)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
     let root = vault_root(&state, &campaign_id)?;
-    vault::delete_page(&root, &page)?;
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    trash::trash_paths(&world_root, &root, &[(page.clone(), false)])?;
     reindex_remove(&state, &root, &page);
     Ok(Json(json!({ "ok": true })))
 }
@@ -285,12 +290,238 @@ pub async fn delete_folder(
     Path((campaign_id, folder)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
     let root = vault_root(&state, &campaign_id)?;
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
     let pages = vault::page_paths_in_folder(&root, &folder)?;
-    vault::delete_folder(&root, &folder)?;
+    trash::trash_paths(&world_root, &root, &[(folder.clone(), true)])?;
     for rel in pages {
         reindex_remove(&state, &root, &rel);
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+// ── Trash (Phase 13D): list / restore / empty `.ck/trash` ─────────
+
+pub async fn trash_list(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    Ok(Json(json!({ "groups": trash::list(&world_root) })))
+}
+
+#[derive(Deserialize)]
+pub struct TrashIdRequest {
+    pub id: Option<String>,
+}
+
+pub async fn trash_restore(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<TrashIdRequest>,
+) -> AppResult<Json<Value>> {
+    let root = vault_root(&state, &campaign_id)?;
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    let id = req.id.as_deref().ok_or_else(|| AppError::BadRequest("id is required".into()))?;
+    let restored = trash::restore(&world_root, &root, id)?;
+    for rel in &restored {
+        reindex_page(&state, &root, rel);
+    }
+    Ok(Json(json!({ "restored": restored })))
+}
+
+pub async fn trash_empty(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<TrashIdRequest>,
+) -> AppResult<Json<Value>> {
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    Ok(Json(json!({ "removed": trash::empty(&world_root, req.id.as_deref()) })))
+}
+
+// ── Page history (Phase 13A): versions, snapshots, restore ────────
+
+#[derive(Deserialize)]
+pub struct HistoryQuery {
+    pub origin: Option<String>,
+    pub limit: Option<usize>,
+    pub ts: Option<u64>,
+}
+
+/// World-wide recent versions — the "everything the Keeper changed" feed.
+pub async fn history_recent(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Query(q): Query<HistoryQuery>,
+) -> AppResult<Json<Value>> {
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    let limit = q.limit.unwrap_or(100).clamp(1, 500);
+    let versions = history::recent(&world_root, q.origin.as_deref(), limit);
+    Ok(Json(json!({ "versions": versions })))
+}
+
+/// Without `ts`: the page's version list. With `ts`: that snapshot's content
+/// (`null` = the page did not exist before that save).
+pub async fn page_history(
+    State(state): State<AppState>,
+    Path((campaign_id, page)): Path<(String, String)>,
+    Query(q): Query<HistoryQuery>,
+) -> AppResult<Json<Value>> {
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    match q.ts {
+        Some(ts) => {
+            let (meta, content) = history::read_version(&world_root, &page, ts)?;
+            Ok(Json(json!({ "ts": meta.ts, "origin": meta.origin, "content": content })))
+        }
+        None => Ok(Json(json!({ "versions": history::list_page(&world_root, &page)? }))),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct HistoryRestoreRequest {
+    pub page: String,
+    pub ts: u64,
+}
+
+/// Put the page back to the state captured in a snapshot. The pre-restore
+/// state is snapshotted first, so a restore is itself undoable. Restoring a
+/// "did not exist" snapshot moves the page to the trash.
+pub async fn history_restore(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<HistoryRestoreRequest>,
+) -> AppResult<Json<Value>> {
+    let root = vault_root(&state, &campaign_id)?;
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    let (_, content) = history::read_version(&world_root, &req.page, req.ts)?;
+    let _ = history::record_now(&world_root, &root, &req.page, "user");
+    match content {
+        Some(c) => {
+            vault::write_page(&root, &req.page, &c)?;
+            reindex_page(&state, &root, &req.page);
+            Ok(Json(json!({ "ok": true, "deleted": false })))
+        }
+        None => {
+            trash::trash_paths(&world_root, &root, &[(req.page.clone(), false)])?;
+            reindex_remove(&state, &root, &req.page);
+            Ok(Json(json!({ "ok": true, "deleted": true })))
+        }
+    }
+}
+
+// ── Bulk operations (Phase 13B): tag / move / delete many pages ───
+
+#[derive(Deserialize)]
+pub struct BulkRequest {
+    /// "tag" | "move" | "delete"
+    pub action: String,
+    pub pages: Vec<String>,
+    pub tag: Option<String>,
+    /// Move target folder ("" = vault root).
+    pub folder: Option<String>,
+}
+
+pub async fn bulk(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<BulkRequest>,
+) -> AppResult<Json<Value>> {
+    let root = vault_root(&state, &campaign_id)?;
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    if req.pages.is_empty() {
+        return Err(AppError::BadRequest("no pages selected".into()));
+    }
+    let mut errors: Vec<Value> = Vec::new();
+    let mut done = 0usize;
+    let base = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
+
+    match req.action.as_str() {
+        "delete" => {
+            // One trash group for the whole selection → one-click restore.
+            let items: Vec<(String, bool)> = req
+                .pages
+                .iter()
+                .filter(|p| {
+                    let exists = root.join(p).is_file();
+                    if !exists {
+                        errors.push(json!({ "page": p, "error": "not found" }));
+                    }
+                    exists
+                })
+                .map(|p| (p.clone(), false))
+                .collect();
+            if !items.is_empty() {
+                trash::trash_paths(&world_root, &root, &items)?;
+                for (rel, _) in &items {
+                    reindex_remove(&state, &root, rel);
+                }
+                done = items.len();
+            }
+        }
+        "move" => {
+            let folder = req.folder.as_deref().unwrap_or("").trim().trim_matches('/');
+            for page in &req.pages {
+                let name = base(page);
+                let to = if folder.is_empty() { name } else { format!("{folder}/{name}") };
+                if to == *page {
+                    continue; // already there
+                }
+                // Same filename → same title: links resolve by name, no rewrite needed.
+                match vault::move_entry(&root, page, &to) {
+                    Ok(()) => {
+                        history::move_history(&world_root, page, &to);
+                        reindex_remove(&state, &root, page);
+                        reindex_page(&state, &root, &to);
+                        done += 1;
+                    }
+                    Err(e) => errors.push(json!({ "page": page, "error": e.to_string() })),
+                }
+            }
+        }
+        "tag" => {
+            let tag = req
+                .tag
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .ok_or_else(|| AppError::BadRequest("tag is required".into()))?
+                .trim_start_matches('#')
+                .to_string();
+            for page in &req.pages {
+                match vault::read_page(&root, page) {
+                    Ok(p) => {
+                        let updated = vault::fm_append_list_value(&p.content, "tags", &tag);
+                        if updated == p.content {
+                            continue; // already tagged
+                        }
+                        let _ = history::record_now(&world_root, &root, page, "user");
+                        match vault::write_page(&root, page, &updated) {
+                            Ok(_) => {
+                                reindex_page(&state, &root, page);
+                                done += 1;
+                            }
+                            Err(e) => {
+                                errors.push(json!({ "page": page, "error": e.to_string() }))
+                            }
+                        }
+                    }
+                    Err(e) => errors.push(json!({ "page": page, "error": e.to_string() })),
+                }
+            }
+        }
+        other => return Err(AppError::BadRequest(format!("Unknown bulk action: {other}"))),
+    }
+    Ok(Json(json!({ "done": done, "errors": errors })))
+}
+
+// ── World backup (Phase 13E) ──────────────────────────────────────
+
+pub async fn backup(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    let path = crate::backup::backup_world(&world_root)?;
+    Ok(Json(json!({ "path": path })))
 }
 
 // Caret-insert snippets for the editor's slash menu (Phase 8C).
@@ -376,6 +607,9 @@ pub async fn write_page(
     Json(req): Json<WriteRequest>,
 ) -> AppResult<Json<vault::Page>> {
     let root = vault_root(&state, &campaign_id)?;
+    if let Ok((world_root, _)) = world_cfg(&state, &campaign_id) {
+        let _ = history::record(&world_root, &root, &page, "user");
+    }
     let result = vault::write_page(&root, &page, &req.content)?;
     reindex_page(&state, &root, &page);
     Ok(Json(result))
@@ -550,6 +784,7 @@ pub async fn enhance_pages(
     Json(req): Json<EnhanceRequest>,
 ) -> AppResult<Json<Value>> {
     let root = vault_root(&state, &campaign_id)?;
+    let world_root = world_cfg(&state, &campaign_id).map(|(r, _)| r).ok();
     let (target, lang_name) = state.with_db(|conn| {
         let cfg = crate::config::get_config_map(conn)?;
         let target = crate::llm::resolve(conn, &cfg, None, None, None)?;
@@ -623,6 +858,9 @@ pub async fn enhance_pages(
                     result.or_else(|| folder_kind.map(|k| (k.to_string(), String::new())));
                 if let Some((kind, summary)) = outcome {
                     let updated = vault::set_frontmatter_fields(content, &kind, &summary);
+                    if let Some(wr) = &world_root {
+                        let _ = history::record(wr, &root, rel, "keeper");
+                    }
                     if vault::write_page(&root, rel, &updated).is_ok() {
                         reindex_page(&state, &root, rel);
                         enhanced += 1;
@@ -682,6 +920,8 @@ pub async fn create_page(
         .unwrap_or_default();
     let content = vault::new_page_content(&world_root, &req.kind, &req.title, &fields);
     let page = vault::create_page_with(&root, &req.title, req.folder.as_deref(), &content)?;
+    // First version = "did not exist": restoring it deletes the page again.
+    let _ = history::record_create(&world_root, &page.path, "user");
     reindex_page(&state, &root, &page.path);
     Ok(Json(page))
 }

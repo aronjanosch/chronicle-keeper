@@ -3,14 +3,15 @@
 // fed to the LLM as a one-liner; click through to the entry-detail inspector.
 // Keeps the Phase 1 freeform paste box (campaign-wide note, injected verbatim).
 import { html, useState, useEffect, useRef } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, openModal, useStore } from '../core.js';
+import { navigate, openModal, useStore, setOp } from '../core.js';
 import { Shell, Sidebar, Topbar, useSidebarWidth, ResizeHandle, WORLD_NAV, navToWorldDest } from '../shell.js';
 import { Btn, Empty, Icon, Markdown, Input, Textarea, Select, BrandMark } from '../ui.js';
 import { loadCodexEntries, createCodexEntry, openCampaign, updateCampaign,
   loadCampaignTags, renameCampaignTag, deleteCampaignTag,
   loadVaultTree, createVaultPage, createVaultFolder, moveVaultEntry,
   deleteVaultPage, deleteVaultFolder, attachVault, pickVaultFolder,
-  searchVault, loadVaultTags, loadVaultDiagnostics, sniffVault, importVaultFolder, enhanceVaultPages, watchVault } from '../actions.js';
+  searchVault, loadVaultTags, loadVaultDiagnostics, sniffVault, importVaultFolder, enhanceVaultPages, watchVault,
+  bulkVault } from '../actions.js';
 import { kindForFolder } from '../folderKinds.js';
 
 export const KINDS = [
@@ -569,6 +570,11 @@ function VaultPanel({ campaign, tree, active, onOpen, act }) {
       ${diag.orphans > 0 && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 4 }}><span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--rule-strong)' }} />${diag.orphans} orphan${diag.orphans === 1 ? '' : 's'}</span>`}
       ${diag.issues > 0 && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 4 }}><span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--burgundy)' }} />${diag.issues} file issue${diag.issues === 1 ? '' : 's'}</span>`}
     </div>`}
+    <div onClick=${() => openModal('trash')} title="Deleted pages and folders — restore or empty"
+      style=${{ margin: '0 -12px', borderTop: '1px solid var(--rule-soft)', padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--ink-faint)', cursor: 'pointer' }}>
+      <${Icon} name="trash" size=${11} />
+      <span style=${{ flex: 1 }}>Trash</span>
+    </div>
     <div onClick=${attachVaultFlow} title="Change vault folder (advanced)"
       style=${{ margin: '0 -12px', borderTop: '1px solid var(--rule-soft)', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', cursor: 'pointer' }}>
       <span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--moss)', flex: '0 0 auto' }} />
@@ -617,15 +623,23 @@ export function FileTree({ campaign, tree, active, onOpen, act }) {
   </aside>`;
 }
 
-function PageCard({ page, onOpen }) {
+function PageCard({ page, onOpen, picked }) {
   const tone = toneForKind(page.kind);
   const folder = dirOf(page.path);
+  const border = picked ? 'var(--burgundy)' : 'var(--rule)';
   return html`<div onClick=${onOpen} style=${{
-    background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8,
+    background: picked ? 'var(--burgundy-50)' : 'var(--surface)', border: `1px solid ${border}`, borderRadius: 8,
     padding: 14, display: 'flex', flexDirection: 'column', gap: 9, cursor: 'pointer', boxShadow: 'var(--shadow-soft)',
+    position: 'relative',
   }}
-    onMouseEnter=${(e) => { e.currentTarget.style.borderColor = 'var(--rule-strong)'; }}
-    onMouseLeave=${(e) => { e.currentTarget.style.borderColor = 'var(--rule)'; }}>
+    onMouseEnter=${(e) => { if (!picked) e.currentTarget.style.borderColor = 'var(--rule-strong)'; }}
+    onMouseLeave=${(e) => { e.currentTarget.style.borderColor = border; }}>
+    ${picked != null && html`<span style=${{
+      position: 'absolute', top: 8, right: 8, width: 18, height: 18, borderRadius: '50%',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: picked ? 'var(--burgundy)' : 'var(--surface)', color: 'var(--paper)',
+      border: `1.5px solid ${picked ? 'var(--burgundy)' : 'var(--rule-strong)'}`,
+    }}>${picked && html`<${Icon} name="check" size=${10} />`}</span>`}
     <div style=${{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
       ${glyphFor(page.kind, 34)}
       <div style=${{ flex: 1, minWidth: 0 }}>
@@ -681,7 +695,7 @@ export function makeVaultActions(campaign, folders, opts = {}) {
       onSubmit: (dest) => moveVaultEntry(p.path, dest ? `${dest}/${baseName(p.path)}` : baseName(p.path)),
     }),
     deletePage: (p) => openModal('confirm', {
-      title: 'Move page to trash', message: html`Move ${html`<strong>${p.title}</strong>`} to the system trash? You can restore it from Finder or your file manager.`,
+      title: 'Move page to trash', message: html`Move ${html`<strong>${p.title}</strong>`} to the world's trash? Restore it any time from the Trash view (kept 30 days).`,
       confirmLabel: 'Move to trash', onConfirm: async () => { await deleteVaultPage(p.path); if (opts.afterDelete) opts.afterDelete(p.path); },
     }),
     renameFolder: (n) => openModal('textPrompt', {
@@ -691,11 +705,11 @@ export function makeVaultActions(campaign, folders, opts = {}) {
     deleteFolder: (n) => {
       const nPages = countPages(n);
       const detail = nPages
-        ? html` This moves the folder, its ${nPages} page${nPages === 1 ? '' : 's'}, and any subfolders to the system trash.`
-        : html` This moves the empty folder to the system trash.`;
+        ? html` This moves the folder, its ${nPages} page${nPages === 1 ? '' : 's'}, and any subfolders to the world's trash.`
+        : html` This moves the empty folder to the world's trash.`;
       openModal('confirm', {
         title: 'Move folder to trash',
-        message: html`Move ${html`<strong>${n.name}</strong>`} to the system trash?${detail} You can restore from Finder or your file manager.`,
+        message: html`Move ${html`<strong>${n.name}</strong>`} to the world's trash?${detail} Restore any time from the Trash view (kept 30 days).`,
         confirmLabel: 'Move to trash',
         onConfirm: async () => {
           await deleteVaultFolder(n.path);
@@ -711,6 +725,9 @@ function VaultView({ campaign }) {
   const [sel, setSel] = useState('');           // current folder path ('' = vault root)
   const [view, setView] = useState('folders');  // 'folders' | 'all' | 'tags'
   const [selTag, setSelTag] = useState(null);
+  // Multi-select (Phase 13B): card clicks toggle instead of navigating.
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState(() => new Set());
 
   useEffect(() => { loadVaultTree(campaign.campaign_id); loadVaultDiagnostics(campaign.campaign_id); }, [campaign.campaign_id]);
   useEffect(() => { if (view === 'tags') loadVaultTags(campaign.campaign_id); }, [view, campaign.campaign_id]);
@@ -731,6 +748,43 @@ function VaultView({ campaign }) {
   async function openPage(p) { navigate('page', { path: p.path }); }
   const act = makeVaultActions(campaign, folders);
 
+  const togglePick = (path) => setPicked((s) => {
+    const n = new Set(s);
+    if (n.has(path)) n.delete(path); else n.add(path);
+    return n;
+  });
+  const clearPick = () => { setPicked(new Set()); setPicking(false); };
+  // Card props in one place — the three grids (folder, all, tag) share them.
+  const cardProps = (p) => ({
+    page: p,
+    onOpen: () => (picking ? togglePick(p.path) : openPage(p)),
+    picked: picking ? picked.has(p.path) : null,
+  });
+  const reportBulk = (r, verb) =>
+    setOp(`${r.done} page${r.done === 1 ? '' : 's'} ${verb}${r.errors.length ? ` · ${r.errors.length} failed` : ''}`,
+      r.errors.length ? 'err' : 'done');
+  const bulkTag = () => openModal('textPrompt', {
+    title: 'Tag pages', label: `Add a tag to ${picked.size} page${picked.size === 1 ? '' : 's'}`,
+    placeholder: 'faction/harpers', confirmLabel: 'Add tag',
+    onSubmit: async (t) => reportBulk(await bulkVault('tag', [...picked], { tag: t }), 'tagged'),
+  });
+  const bulkMove = () => openModal('movePage', {
+    name: `${picked.size} page${picked.size === 1 ? '' : 's'}`, folders, current: '',
+    onSubmit: async (dest) => {
+      reportBulk(await bulkVault('move', [...picked], { folder: dest }), 'moved');
+      clearPick();
+    },
+  });
+  const bulkDelete = () => openModal('confirm', {
+    title: 'Move pages to trash',
+    message: `Move ${picked.size} page${picked.size === 1 ? '' : 's'} to the world's trash? They restore together as one group from the Trash view.`,
+    confirmLabel: 'Move to trash',
+    onConfirm: async () => {
+      reportBulk(await bulkVault('delete', [...picked]), 'moved to trash');
+      clearPick();
+    },
+  });
+
   const total = pages.length;
   const subFolders = [...cur.folders.values()].sort((a, b) => a.name.localeCompare(b.name));
   const recent = [...pages].sort((a, b) => (b.modified || 0) - (a.modified || 0));
@@ -740,6 +794,9 @@ function VaultView({ campaign }) {
     right=${html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <${Btn} kind="secondary" size="sm" icon="download" onClick=${importNotesFlow}>Import notes</${Btn}>
       <${Btn} kind="secondary" size="sm" icon="sparkle" onClick=${enhanceFlow}>Enhance with AI</${Btn}>
+      <${Btn} kind="secondary" size="sm" icon="time" onClick=${() => openModal('worldHistory')}>History</${Btn}>
+      <${Btn} kind=${picking ? 'primary' : 'secondary'} size="sm" icon=${picking ? 'x' : 'check'}
+        onClick=${() => (picking ? clearPick() : setPicking(true))}>${picking ? 'Done' : 'Select'}</${Btn}>
     </div>`} />`;
   return html`<${Shell}
     sidebar=${html`<${FileTree} campaign=${campaign} tree=${tree} active=${null} onOpen=${openPage} act=${act} />`}
@@ -779,13 +836,13 @@ function VaultView({ campaign }) {
                     </div>
                     ${selTag && html`<div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
                       ${pages.filter((p) => (p.tags || []).some((tg) => tg === selTag || tg.startsWith(selTag + '/')))
-                        .map((p) => html`<${PageCard} key=${p.path} page=${p} onOpen=${() => openPage(p)} />`)}
+                        .map((p) => html`<${PageCard} key=${p.path} ...${cardProps(p)} />`)}
                     </div>`}
                   </div>`}
             </div>`
         : view === 'all'
           ? html`<div style=${{ marginTop: 18, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
-              ${recent.map((p) => html`<${PageCard} key=${p.path} page=${p} onOpen=${() => openPage(p)} />`)}
+              ${recent.map((p) => html`<${PageCard} key=${p.path} ...${cardProps(p)} />`)}
             </div>`
           : html`<div>
               <div style=${{ display: 'flex', alignItems: 'center', gap: 6, margin: '20px 0 10px', fontSize: 12.5, color: 'var(--ink-muted)' }}>
@@ -804,10 +861,23 @@ function VaultView({ campaign }) {
               ${cur.pages.length > 0 && html`<div>
                 <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', margin: '24px 0 10px' }}>${sel ? 'Pages here' : 'Pages at the root'}</div>
                 <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
-                  ${cur.pages.map((p) => html`<${PageCard} key=${p.path} page=${p} onOpen=${() => openPage(p)} />`)}
+                  ${cur.pages.map((p) => html`<${PageCard} key=${p.path} ...${cardProps(p)} />`)}
                 </div>
               </div>`}
             </div>`}
+      ${picking && html`<div style=${{
+        position: 'sticky', bottom: 14, marginTop: 20, display: 'flex', alignItems: 'center', gap: 8,
+        padding: '10px 14px', background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)',
+        borderRadius: 8, boxShadow: 'var(--shadow-raised)', maxWidth: 560,
+      }}>
+        <span style=${{ fontSize: 12.5, color: 'var(--ink)', fontWeight: 500, flex: 1 }}>
+          ${picked.size} selected
+        </span>
+        <${Btn} kind="secondary" size="sm" icon="tag" disabled=${!picked.size} onClick=${bulkTag}>Tag…</${Btn}>
+        <${Btn} kind="secondary" size="sm" icon="folder" disabled=${!picked.size} onClick=${bulkMove}>Move…</${Btn}>
+        <${Btn} kind="secondary" size="sm" icon="trash" disabled=${!picked.size} onClick=${bulkDelete}>Delete</${Btn}>
+        <${Btn} kind="ghost" size="sm" onClick=${clearPick}>Cancel</${Btn}>
+      </div>`}
     </div>
   </${Shell}>`;
 }

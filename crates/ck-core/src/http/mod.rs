@@ -82,6 +82,18 @@ pub fn router(state: AppState) -> Router {
             axum::routing::delete(vault::delete_folder),
         )
         .route("/campaigns/:id/vault/move", post(vault::move_entry))
+        .route("/campaigns/:id/vault/bulk", post(vault::bulk))
+        // trash (Phase 13D) + page history (13A) + world backup (13E)
+        .route("/campaigns/:id/vault/trash", get(vault::trash_list))
+        .route("/campaigns/:id/vault/trash/restore", post(vault::trash_restore))
+        .route("/campaigns/:id/vault/trash/empty", post(vault::trash_empty))
+        .route("/campaigns/:id/vault/history", get(vault::history_recent))
+        .route("/campaigns/:id/vault/history/*page", get(vault::page_history))
+        .route(
+            "/campaigns/:id/vault/history-restore",
+            post(vault::history_restore),
+        )
+        .route("/campaigns/:id/backup", post(vault::backup))
         .route("/campaigns/:id/vault/kinds", get(vault::kind_schemas))
         .route("/campaigns/:id/vault/snippets", get(vault::list_snippets))
         .route("/campaigns/:id/vault/assets", post(vault::upload_asset))

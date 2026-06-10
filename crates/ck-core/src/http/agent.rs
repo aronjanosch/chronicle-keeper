@@ -249,6 +249,7 @@ pub async fn run_brief(
             TurnEvent::ToolResult { name, summary, is_error } => {
                 send(json!({ "type": "tool_result", "name": name, "summary": summary, "is_error": is_error }))
             }
+            TurnEvent::Notice(message) => send(json!({ "type": "notice", "message": message })),
         })
         .await;
         release_run(&st, &campaign_id);
@@ -380,6 +381,7 @@ pub async fn send_message(
                 TurnEvent::ToolResult { name, summary, is_error } => send(json!({
                     "type": "tool_result", "name": name, "summary": summary, "is_error": is_error
                 })),
+                TurnEvent::Notice(message) => send(json!({ "type": "notice", "message": message })),
             },
         )
         .await;

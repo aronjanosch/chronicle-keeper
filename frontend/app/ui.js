@@ -1,5 +1,5 @@
 // Shared atoms ported from the design's atoms.jsx + a few form/primitive helpers.
-import { html, useState, useEffect, useRef } from '../vendor/htm-preact-standalone.mjs';
+import { html, useState, useEffect, useRef, useCallback } from '../vendor/htm-preact-standalone.mjs';
 import { marked } from '../vendor/marked.esm.js';
 import { navigate, store, apiBlob, apiFetch } from './core.js';
 
@@ -626,8 +626,29 @@ function fillAssetImgs(scope, campaignId, urls, isDead) {
   }
 }
 
+const KIND_ICONS = { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', lore: 'scroll' };
+
+export function WikilinkHoverCard({ path, pages, x, y }) {
+  const p = (pages || []).find((pg) => pg.path === path);
+  if (!p) return null;
+  const left = Math.min(x + 14, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 280);
+  const top = y + 18;
+  return html`<div style=${{
+    position: 'fixed', left, top, zIndex: 300, width: 260, pointerEvents: 'none',
+    background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6,
+    padding: '9px 12px', boxShadow: '0 4px 20px rgba(0,0,0,0.13)',
+  }}>
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: p.summary ? 5 : 0 }}>
+      <${Icon} name=${KIND_ICONS[p.kind] || 'doc'} size=${12} className="ck-ink-muted" />
+      <span style=${{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 13, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>${p.title}</span>
+    </div>
+    ${p.summary && html`<div style=${{ fontSize: 11.5, color: 'var(--ink-soft)', lineHeight: 1.45, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>${p.summary}</div>`}
+  </div>`;
+}
+
 export function PageBody({ text, pages, onBroken }) {
   const ref = useRef(null);
+  const [hover, setHover] = useState(null);
   const htmlStr = renderPageHtml(text, pages);
   useEffect(() => {
     const root = ref.current;
@@ -646,8 +667,18 @@ export function PageBody({ text, pages, onBroken }) {
     }).catch(() => {});
     return () => { dead = true; urls.forEach((u) => URL.revokeObjectURL(u)); };
   }, [htmlStr]);
-  return html`<div ref=${ref} class="ck-prose" onClick=${wikilinkClick(onBroken)}
-    dangerouslySetInnerHTML=${{ __html: htmlStr }} />`;
+  const onMouseOver = useCallback((e) => {
+    const a = e.target?.closest?.('.ck-wikilink[data-path]');
+    if (!a) { setHover(null); return; }
+    const path = a.getAttribute('data-path');
+    setHover((h) => (h?.path === path ? h : { path, x: e.clientX, y: e.clientY }));
+  }, []);
+  return html`<div style=${{ position: 'relative' }}>
+    <div ref=${ref} class="ck-prose" onClick=${wikilinkClick(onBroken)}
+      onMouseOver=${onMouseOver} onMouseLeave=${() => setHover(null)}
+      dangerouslySetInnerHTML=${{ __html: htmlStr }} />
+    ${hover && html`<${WikilinkHoverCard} path=${hover.path} pages=${pages} x=${hover.x} y=${hover.y} />`}
+  </div>`;
 }
 
 // ── Frontmatter helpers (client-side; the .md file body is the source of truth) ──

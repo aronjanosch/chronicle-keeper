@@ -236,6 +236,37 @@ pub fn list_campaign_sessions(
     Ok(out)
 }
 
+/// Sessions carrying an in-world `world_date` (Phase 11.5G), shaped as
+/// synthetic timeline rows: (`session:<id>` path, title, "session" kind,
+/// frontmatter json with date/end_date).
+pub fn world_dated_session_rows(
+    conn: &Connection,
+    campaign_id: &str,
+) -> AppResult<Vec<crate::store::index::PageFrontmatter>> {
+    let Some(root) = campaigns::world_root_for_id(conn, campaign_id)? else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for dir in session_dirs(&root) {
+        let mut st = toml_of(&dir);
+        let Some(wd) = st.world_date.clone().filter(|s| !s.trim().is_empty()) else {
+            continue;
+        };
+        ensure_id(&dir, &mut st);
+        let title = st.title.clone().unwrap_or_else(|| {
+            format!("Session {:02}", st.number.unwrap_or(0))
+        });
+        let fm = serde_json::json!({ "date": wd, "end_date": st.world_date_end });
+        out.push((
+            format!("session:{}", st.id.clone().unwrap_or_default()),
+            title,
+            Some("session".to_string()),
+            fm.to_string(),
+        ));
+    }
+    Ok(out)
+}
+
 pub fn list_sessions(conn: &Connection) -> AppResult<Vec<SessionInfo>> {
     let mut out = Vec::new();
     let mut push = |dir: &Path, st: &SessionToml| {

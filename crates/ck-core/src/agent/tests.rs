@@ -643,6 +643,89 @@ async fn abort_while_parked_on_ask_stops_without_writing() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// First call: rejects the tool registry like a no-tools model. Second call
+/// (the grounded fallback) must arrive without tools and with the gathered
+/// excerpts in the last message.
+struct NoToolsLlm {
+    calls: Mutex<usize>,
+}
+impl AgentLlm for NoToolsLlm {
+    async fn turn(
+        &self,
+        msgs: &[Msg],
+        tools: &[ToolDef],
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<AssistantTurn, LlmError> {
+        let mut n = self.calls.lock().unwrap();
+        *n += 1;
+        if *n == 1 {
+            assert!(!tools.is_empty());
+            return Err(LlmError("model 'tiny' does not support tools".into()));
+        }
+        assert!(tools.is_empty());
+        let Some(Msg::User(last)) = msgs.last() else {
+            panic!("fallback must end with the excerpts message");
+        };
+        assert!(last.contains("World excerpts"));
+        assert!(last.contains("Thornhold"), "search grounding missing:\n{last}");
+        on_delta("Grounded answer.".into());
+        Ok(AssistantTurn {
+            text: "Grounded answer: [[Thornhold]] is ruled by Baron Aldric.".into(),
+            tool_calls: vec![],
+            stop_reason: StopReason::EndTurn,
+        })
+    }
+}
+
+#[tokio::test]
+async fn no_tools_model_falls_back_to_grounded_single_shot() {
+    let (state, root, cfg) = fixture_world("fallback");
+    let chat = chats::create_chat(&root).unwrap();
+    let llm = NoToolsLlm { calls: Mutex::new(0) };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut notices = 0;
+    run_turn(
+        &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
+        "Who rules Thornhold?", &[], &llm, &ScriptGate::none(), &cancel,
+        |e| if matches!(e, TurnEvent::Notice(_)) { notices += 1 },
+    )
+    .await
+    .unwrap();
+    assert_eq!(notices, 1);
+    let persisted = chats::load_chat(&root, &chat.id).unwrap();
+    let types: Vec<&str> = persisted.iter().filter_map(|e| e["type"].as_str()).collect();
+    assert_eq!(types, ["user", "notice", "assistant"]);
+    assert!(persisted[2]["text"].as_str().unwrap().contains("Baron Aldric"));
+    // The notice is UI-only: replay drops it.
+    assert_eq!(chats::events_to_msgs(&persisted).len(), 2);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn transient_llm_error_does_not_trigger_fallback() {
+    struct FlakyLlm;
+    impl AgentLlm for FlakyLlm {
+        async fn turn(
+            &self,
+            _msgs: &[Msg],
+            _tools: &[ToolDef],
+            _on_delta: &mut (dyn FnMut(String) + Send),
+        ) -> Result<AssistantTurn, LlmError> {
+            Err(LlmError("connection refused".into()))
+        }
+    }
+    let (state, root, cfg) = fixture_world("flaky");
+    let chat = chats::create_chat(&root).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let res = run_turn(
+        &TurnCtx { state: &state, world_root: &root, cfg: &cfg, chat_id: &chat.id, mode: Mode::Ask },
+        "hi", &[], &FlakyLlm, &ScriptGate::none(), &cancel, |_| {},
+    )
+    .await;
+    assert!(res.is_err()); // surfaced as an error, not silently degraded
+    std::fs::remove_dir_all(&root).ok();
+}
+
 #[test]
 fn trim_never_stubs_the_system_message() {
     let big = "x".repeat(400_000);

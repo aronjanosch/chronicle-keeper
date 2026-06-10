@@ -7,7 +7,7 @@ use rusqlite::Connection;
 // campaigns/sessions/artifacts/codex_entries tables below are kept physically
 // for upstream merge-compat; nothing reads or writes them anymore (campaigns
 // has an inert FK-shim row per world). Files are truth — see
-// docs/internal/vault-and-session-storage-spec.md. Legacy 0.X codex/notes
+// docs/internal/archive/specs/vault-and-session-storage-spec.md. Legacy 0.X codex/notes
 // content survives in the untouched 0.X DB for Phase 5 import.
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS config (
@@ -120,7 +120,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         // "Story so far" recap: an LLM-generated narrative rollup of every session
         // summary, regenerated on demand. Read-only for the GM. NOT fed back into
         // per-session summaries (codex covers that; a recursive recap would
-        // compound drift — see ROADMAP).
+        // compound drift).
         "ALTER TABLE campaigns ADD COLUMN recap TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE campaigns ADD COLUMN recap_updated_at TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE campaigns ADD COLUMN gm_pronouns TEXT NOT NULL DEFAULT ''",

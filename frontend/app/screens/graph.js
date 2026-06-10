@@ -26,7 +26,7 @@ function Legend({ hiddenKinds, onToggleKind, hideOrphans, onToggleOrphans }) {
       </span>`;
     })}
     <span style=${{ display: 'flex', alignItems: 'center', gap: 5 }}>
-      <span style=${{ width: 14, height: 2, background: 'rgba(122,46,31,.55)' }} />typed relation
+      <span style=${{ width: 14, height: 2, background: 'rgba(90,72,65,.45)' }} />typed relation
     </span>
     <span onClick=${onToggleOrphans} title="Pages without any links"
       style=${{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', borderLeft: '1px solid var(--rule-soft)', paddingLeft: 12, color: hideOrphans ? 'var(--burgundy)' : 'inherit' }}>

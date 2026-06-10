@@ -179,10 +179,14 @@ function wikilinkSource(cm, getPages, onCreatePage) {
       const exact = pages.some((p) => p.title.toLowerCase() === q);
       if (!exact) {
         const name = ctx.state.sliceDoc(from, ctx.pos).trim();
-        options.push({
-          label: `Create “${name}”`, type: 'keyword',
-          apply: (view) => { onCreatePage && onCreatePage(name); applyLink(cm, name)(view, null, from, view.state.selection.main.head); },
-        });
+        const create = (kind) => (view) => {
+          if (onCreatePage) onCreatePage(name, kind);
+          applyLink(cm, name)(view, null, from, view.state.selection.main.head);
+        };
+        options.push(
+          { label: `Create “${name}”`, type: 'keyword', apply: create(undefined) },
+          { label: `Create event “${name}”`, detail: 'dated page', type: 'keyword', apply: create('event') },
+        );
       }
     }
     return { from, options, validFor: /^[^\]\n|#]*$/ };
@@ -321,7 +325,7 @@ const SLASH_ITEMS = [
   { label: '/divider', detail: 'Horizontal rule', insert: '---\n' },
 ];
 
-function slashSource(getSnippets) {
+function slashSource(cm, getSnippets) {
   return (ctx) => {
     const line = ctx.state.doc.lineAt(ctx.pos);
     const before = ctx.state.sliceDoc(line.from, ctx.pos);
@@ -330,6 +334,9 @@ function slashSource(getSnippets) {
     const from = line.from + before.indexOf('/');
     const items = [
       ...SLASH_ITEMS,
+      // 11.5H: link-or-create an event page via the [[ completion's
+      // "Create event" option.
+      { label: '/event', detail: 'Link an event page', insert: '[[', complete: true },
       ...((getSnippets && getSnippets()) || []).map((s) => ({
         label: '/' + s.name.toLowerCase().replace(/\s+/g, '-'),
         detail: 'snippet',
@@ -346,6 +353,7 @@ function slashSource(getSnippets) {
             selection: { anchor: f + (it.cursor != null ? it.cursor : it.insert.length) },
             userEvent: 'input.complete',
           });
+          if (it.complete) cm.startCompletion(view);
         },
       })),
       validFor: /^\/[\w-]*$/,
@@ -406,7 +414,7 @@ export async function mountEditor(host, opts) {
         indentOnInput(), bracketMatching(), closeBrackets(),
         highlightActiveLine(), highlightSelectionMatches(),
         markdown({ base: markdownLanguage }),
-        autocompletion({ override: [wikilinkSource(cm, opts.getPages, opts.onCreatePage), tagSource(opts.getPages), slashSource(opts.getSnippets)], icons: false }),
+        autocompletion({ override: [wikilinkSource(cm, opts.getPages, opts.onCreatePage), tagSource(opts.getPages), slashSource(cm, opts.getSnippets)], icons: false }),
         pasteDrop(cm, opts),
         search({ top: true }),
         buildTheme(cm),

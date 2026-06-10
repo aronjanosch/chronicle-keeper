@@ -93,7 +93,8 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
     host.appendChild(canvas);
     const ctx = canvas.getContext('2d');
     const st = { tx: 0, ty: 0, scale: 1, hover: null, sel: null, alpha: 1, raf: 0,
-      cooling: false, hidden: new Set(), hideOrphans: false, matches: null };
+      cooling: false, hidden: new Set(), hideOrphans: false, matches: null,
+      dimT: 0, warmup: 0 };
     stateRef.current = st;
 
     const adj = new Map();
@@ -123,6 +124,9 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
       ctx.fillText(e.predicate, mx + 3, my - 3);
     };
 
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const ease = (t) => t * t * (3 - 2 * t); // smoothstep
+
     const draw = () => {
       ctx.clearRect(0, 0, rect.width, rect.height);
       ctx.save();
@@ -133,9 +137,9 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
       for (const e of edges) {
         if (!vis(e.a) || !vis(e.b)) continue;
         const lit = !focus || e.a === focus || e.b === focus;
-        ctx.globalAlpha = lit ? 1 : 0.07;
-        ctx.strokeStyle = e.predicate ? 'rgba(122,46,31,.45)' : 'rgba(31,24,19,.14)';
-        ctx.lineWidth = e.predicate ? 1.4 : 1;
+        ctx.globalAlpha = lit ? 1 : lerp(1, 0.07, ease(st.dimT));
+        ctx.strokeStyle = e.predicate ? 'rgba(90,72,65,.28)' : 'rgba(31,24,19,.10)';
+        ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(e.a.x, e.a.y);
         ctx.lineTo(e.b.x, e.b.y);
@@ -146,7 +150,7 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
         if (!vis(n)) continue;
         const lit = !focus || n === focus || (nbrs && nbrs.has(n));
         const match = st.matches && st.matches.has(n.path);
-        ctx.globalAlpha = lit ? 1 : 0.12;
+        ctx.globalAlpha = lit ? 1 : lerp(1, 0.12, ease(st.dimT));
         const r = nodeRadius(n);
         ctx.fillStyle = colorForKind(n.kind);
         ctx.beginPath();
@@ -168,7 +172,7 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
           : focus ? (lit ? 0.9 : 0)
           : Math.min(1, (st.scale - 0.55) * 2 + Math.sqrt(n.degree) * 0.3);
         if (la > 0.02) {
-          ctx.globalAlpha = (lit ? 1 : 0.12) * la;
+          ctx.globalAlpha = (lit ? 1 : lerp(1, 0.12, ease(st.dimT))) * la;
           ctx.font = `${active ? 600 : 400} 9px ui-monospace, monospace`;
           ctx.textAlign = 'center';
           ctx.strokeStyle = 'rgba(243,238,229,.85)';
@@ -184,18 +188,31 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
       ctx.restore();
     };
 
+    let focusRaf = 0;
+    const animFocus = () => {
+      const target = (st.sel || st.hover) ? 1 : 0;
+      const diff = target - st.dimT;
+      if (Math.abs(diff) > 0.004) {
+        st.dimT += diff * 0.14;
+        draw();
+        focusRaf = requestAnimationFrame(animFocus);
+      } else {
+        st.dimT = target;
+        draw();
+      }
+    };
+
     const cool = () => {
       if (st.alpha > 0.02) {
+        st.warmup = Math.min(1, st.warmup + 1 / 35);
         const an = nodes.filter(vis);
         const ae = edges.filter((e) => vis(e.a) && vis(e.b));
-        for (let k = 0; k < 3; k++) tick(an, ae, rect.width / (2 * st.scale), rect.height / (2 * st.scale), st.alpha);
-        st.alpha *= 0.97;
+        for (let k = 0; k < 3; k++) tick(an, ae, rect.width / (2 * st.scale), rect.height / (2 * st.scale), st.alpha * st.warmup);
+        st.alpha *= 0.985;
         draw();
         st.raf = requestAnimationFrame(cool);
       } else {
         st.cooling = false;
-        // settle → frame the whole graph once, unless the user already moved
-        if (!st.fitted) { st.fitted = true; if (!st.interacted && st.api) { st.api.fit(); return; } }
         draw();
       }
     };
@@ -248,7 +265,7 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
         draw();
       },
       relayout() {
-        st.fitted = false; st.interacted = false;
+        st.warmup = 0;
         const ring = Math.max(260, nodes.length * 4);
         nodes.forEach((n, i) => {
           n.x = rect.width / 2 + ring * Math.cos((i / Math.max(1, nodes.length)) * 2 * Math.PI);
@@ -264,7 +281,8 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
         st.sel = n;
         st.tx = rect.width / 2 - st.scale * n.x;
         st.ty = rect.height / 2 - st.scale * n.y;
-        draw();
+        cancelAnimationFrame(focusRaf);
+        focusRaf = requestAnimationFrame(animFocus);
       },
     };
     if (apiRef) apiRef.current = st.api;
@@ -293,13 +311,18 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
         return;
       }
       const h = nodeAt(toWorld(e));
-      if (h !== st.hover) { st.hover = h; canvas.style.cursor = h ? 'pointer' : 'grab'; draw(); }
+      if (h !== st.hover) {
+        st.hover = h; canvas.style.cursor = h ? 'pointer' : 'grab';
+        cancelAnimationFrame(focusRaf);
+        focusRaf = requestAnimationFrame(animFocus);
+      }
     };
     const onUp = () => {
       if (!drag) return;
       if (!drag.moved) {
         st.sel = drag.node && drag.node !== st.sel ? drag.node : null;
-        draw();
+        cancelAnimationFrame(focusRaf);
+        focusRaf = requestAnimationFrame(animFocus);
       }
       drag = null;
       canvas.style.cursor = 'grab';
@@ -330,6 +353,7 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
     window.addEventListener('resize', onResize);
     return () => {
       cancelAnimationFrame(st.raf);
+      cancelAnimationFrame(focusRaf);
       canvas.removeEventListener('mousedown', onDown);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);

@@ -110,6 +110,12 @@ function CommandPalette() {
       onSubmit: async (title) => { const p = await createVaultPage(title, 'npc', ''); navigate('page', { path: p.path }); },
     });
   }
+  function newEvent() {
+    openModal('textPrompt', {
+      title: 'New event page', label: 'Event title', confirmLabel: 'Create',
+      onSubmit: async (title) => { const p = await createVaultPage(title, 'event', 'Events'); navigate('page', { path: p.path }); },
+    });
+  }
   function newFolder() {
     openModal('textPrompt', {
       title: 'New folder', label: 'Folder name', confirmLabel: 'Create',
@@ -147,6 +153,7 @@ function CommandPalette() {
 
   const actionDefs = cid ? [
     { icon: 'plus', label: 'New page', run: () => { closeModal(); newPage(); } },
+    { icon: 'cal', label: 'New event page', run: () => { closeModal(); newEvent(); } },
     { icon: 'folder', label: 'New folder', run: () => { closeModal(); newFolder(); } },
     { icon: 'search', label: query ? `Search the world for “${q.trim()}”` : 'Search the world', run: () => { closeModal(); navigate('search', { id: cid, q: q.trim() }); } },
     { icon: 'book', label: 'Go to Codex', run: go('codex', { id: cid }) },

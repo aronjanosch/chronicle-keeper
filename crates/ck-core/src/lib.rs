@@ -1,11 +1,13 @@
 pub mod agent;
 pub mod atlas;
+pub mod backup;
 pub mod codex_import;
 pub mod codex_update;
 pub mod config;
 pub mod db;
 pub mod error;
 pub mod export;
+pub mod history;
 pub mod http;
 pub mod index_watch;
 pub mod llm;
@@ -23,6 +25,7 @@ pub mod timeline;
 pub mod transcript_format;
 #[cfg(feature = "transcription")]
 pub mod transcription;
+pub mod trash;
 pub mod vault;
 pub mod world_config;
 

@@ -291,6 +291,18 @@ pub fn delete_folder(vault: &Path, rel: &str) -> AppResult<()> {
         .map_err(|e| AppError::Internal(anyhow::anyhow!("move folder to trash: {e}")))
 }
 
+/// World root for a vault (codex) dir: `.ck/` marks it — either the vault
+/// itself (`codex_root = "."`) or its parent (canonical `Codex/` layout).
+pub fn world_root_of(vault: &Path) -> Option<PathBuf> {
+    if vault.join(".ck").is_dir() {
+        return Some(vault.to_path_buf());
+    }
+    match vault.parent() {
+        Some(p) if p.join(".ck").is_dir() => Some(p.to_path_buf()),
+        _ => None,
+    }
+}
+
 pub fn ensure_ck_dir(vault: &Path) -> AppResult<()> {
     require_dir(vault)?;
     let ck = vault.join(".ck");

@@ -4,7 +4,7 @@
 import { html, useEffect, useMemo, useRef, useState } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, useStore } from '../core.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
-import { Empty } from '../ui.js';
+import { Empty, openContextMenu } from '../ui.js';
 import { loadVaultTree, loadVaultLinks, loadRelations } from '../actions.js';
 import { buildGraph, GraphCanvas, colorForKind } from '../graph.js';
 import { KINDS } from './codex.js';
@@ -58,6 +58,7 @@ export function GraphScreen() {
   const c = store.campaign;
   const apiRef = useRef(null);
   const [hiddenKinds, setHiddenKinds] = useState(() => new Set());
+  const [hiddenNodes, setHiddenNodes] = useState(() => new Set());
   const [hideOrphans, setHideOrphans] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -90,8 +91,15 @@ export function GraphScreen() {
     return next;
   });
 
-  const visible = graph.nodes.filter((n) => !hiddenKinds.has(n.kind) && !(hideOrphans && n.degree === 0));
+  const visible = graph.nodes.filter((n) => !hiddenKinds.has(n.kind) && !hiddenNodes.has(n.path) && !(hideOrphans && n.degree === 0));
   const filtered = visible.length !== graph.nodes.length;
+
+  const nodeMenu = (n, e) => openContextMenu(e, [
+    { label: 'Open', icon: 'book', onClick: () => navigate('page', { path: n.path }) },
+    { label: 'Focus', icon: 'search', onClick: () => apiRef.current?.focus(n.path) },
+    '-',
+    { label: 'Hide from graph', icon: 'eye', onClick: () => setHiddenNodes((prev) => new Set(prev).add(n.path)) },
+  ]);
 
   const topbar = html`<${Topbar} crumbs=${[
     { label: 'Worlds', onClick: () => navigate('library') },
@@ -106,8 +114,12 @@ export function GraphScreen() {
     <div style=${{ position: 'relative', height: '100%', background: 'var(--paper)' }}>
       ${graph.nodes.length
         ? html`<${GraphCanvas} nodes=${graph.nodes} edges=${graph.edges}
-            hiddenKinds=${hiddenKinds} hideOrphans=${hideOrphans} matches=${matches} apiRef=${apiRef}
-            onOpen=${(path) => navigate('page', { path })} />
+            hiddenKinds=${hiddenKinds} hiddenPaths=${hiddenNodes} hideOrphans=${hideOrphans} matches=${matches} apiRef=${apiRef}
+            onOpen=${(path) => navigate('page', { path })} onNodeMenu=${nodeMenu} />
+          ${hiddenNodes.size > 0 && html`<div style=${{ ...overlayBox, right: 14, top: 50, padding: '5px 10px', cursor: 'pointer' }}
+            title="Show the individually hidden pages again" onClick=${() => setHiddenNodes(new Set())}>
+            ${hiddenNodes.size} hidden · show
+          </div>`}
           <div style=${{ ...overlayBox, left: 14, top: 12, padding: '5px 10px' }}>
             <input value=${query} placeholder="Find page…"
               onInput=${(e) => setQuery(e.target.value)}

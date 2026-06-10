@@ -5,12 +5,12 @@
 // markdown highlight, [[ / #tag autocomplete, ⌘F search, and format shortcuts.
 // Auto-saves to the vault (800ms). See cm.js.
 import { html, useState, useEffect, useRef, useMemo, useCallback } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, useStore, openModal } from '../core.js';
+import { navigate, useStore, openModal, setState } from '../core.js';
 import { Shell, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
-import { Empty, Icon, PageBody, WikilinkHoverCard, splitDoc, joinDoc, parseProps } from '../ui.js';
-import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault, uploadVaultAsset, loadSnippets, loadRelations } from '../actions.js';
+import { Empty, Icon, PageBody, WikilinkHoverCard, splitDoc, joinDoc, parseProps, openContextMenu, useAsset, bannerAsset } from '../ui.js';
+import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault, uploadVaultAsset, loadSnippets, loadRelations, copyText } from '../actions.js';
 import { mountEditor } from '../cm.js';
-import { FileTree, buildTree, makeVaultActions, iconForKind, KINDS } from './codex.js';
+import { FileTree, buildTree, makeVaultActions, iconForKind, KINDS, dirOf } from './codex.js';
 import { colorForKind } from '../graph.js';
 import { keeperState, openPanel, Conversation } from '../keeperPanel.js';
 
@@ -19,7 +19,7 @@ function kindLabel(k) {
 }
 
 // Frontmatter keys that never render as infobox fields (page-data-model-spec).
-const RESERVED_KEYS = new Set(['kind', 'aliases', 'tags', 'summary', 'cssclasses', 'publish', 'permalink']);
+const RESERVED_KEYS = new Set(['kind', 'aliases', 'tags', 'summary', 'cssclasses', 'publish', 'permalink', 'image', 'cover']);
 
 function schemaFor(schemas, kind) {
   return ((schemas || []).find((s) => s.kind === kind) || {}).fields || [];
@@ -148,7 +148,15 @@ function TagsCard({ tags }) {
   if (!tags || !tags.length) return null;
   return html`<${RailCard} icon="tag" title="Tags">
     <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-      ${tags.map((t, i) => html`<span class="ck-prop-tag mono" key=${i}>#${String(t).replace(/^#/, '')}</span>`)}
+      ${tags.map((t, i) => {
+        const tag = String(t).replace(/^#/, '');
+        const menu = (e) => openContextMenu(e, [
+          { label: 'Show tagged pages', icon: 'tag', onClick: () => navigate('codex', { tag }) },
+          { label: 'Copy #tag', icon: 'copy', onClick: () => copyText(`#${tag}`, 'Tag copied') },
+        ]);
+        return html`<span class="ck-prop-tag mono" key=${i} style=${{ cursor: 'pointer' }}
+          onClick=${() => navigate('codex', { tag })} onContextMenu=${menu}>#${tag}</span>`;
+      })}
     </div>
   </${RailCard}>`;
 }
@@ -363,7 +371,7 @@ export function caretCoords(ta) {
 
 // CodeMirror 6 source editor — edits the whole .md (frontmatter + body) as literal
 // text. Lazy-mounts the vendored bundle into a div; re-keyed on path/reload by parent.
-function CmEditor({ content, pages, snippets, onSave, onCreate, onState }) {
+function CmEditor({ content, pages, snippets, onSave, onCreate, onState, onExtract, onQuote }) {
   const hostRef = useRef(null);
   const pagesRef = useRef(pages); pagesRef.current = pages;
   const snippetsRef = useRef(snippets); snippetsRef.current = snippets;
@@ -377,6 +385,8 @@ function CmEditor({ content, pages, snippets, onSave, onCreate, onState }) {
       onUploadAsset: uploadVaultAsset,
       onSave,
       onState,
+      onExtract,
+      onQuote,
     }).then((c) => { if (dead) c.destroy(); else ctl = c; });
     return () => { dead = true; if (ctl) ctl.destroy(); };
   }, []);
@@ -434,12 +444,19 @@ function ReadView({ page, path, pages, links, relations, schemas, atlasMaps, cam
   const edited = meta?.modified ? new Date(meta.modified * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : null;
   const outline = useMemo(() => parseOutline(prose), [prose]);
   const scrollRef = useRef(null);
-  const [railTab, setRailTab] = useState('info');
+  // navigate('page', { path, rail: 'chat' }) (e.g. "Ask Keeper" in the
+  // Explorer) lands with the requested rail tab open.
+  const routeRail = useStore().route.params?.rail;
+  const [railTab, setRailTab] = useState(routeRail || 'info');
+  useEffect(() => { if (routeRail) setRailTab(routeRail); }, [routeRail]);
   const [railW, onRailResize] = useSidebarWidth('ck_page_rail_w', 300, { min: 240, max: 560, fromRight: true });
 
+  const bannerUrl = useAsset(campaignId, bannerAsset(props));
+
   return html`<div style=${{ flex: 1, display: 'flex', minWidth: 0, minHeight: 0 }}>
-    <div ref=${scrollRef} style=${{ flex: 1, overflow: 'auto', background: 'var(--paper)', padding: '34px 0 64px', minWidth: 0 }}>
-      <div style=${{ maxWidth: 680, margin: '0 auto', padding: '0 52px' }}>
+    <div ref=${scrollRef} style=${{ flex: 1, overflow: 'auto', background: 'var(--paper)', padding: '0 0 64px', minWidth: 0 }}>
+      ${bannerUrl && html`<img class="ck-page-banner" src=${bannerUrl} alt="" />`}
+      <div style=${{ maxWidth: 680, margin: '0 auto', padding: `${bannerUrl ? 24 : 34}px 52px 0` }}>
         <${Provenance} path=${path} />
         <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--burgundy)', marginTop: 16 }}>${eyebrow}</div>
         <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 38, fontWeight: 500, letterSpacing: '-0.02em', lineHeight: 1.08, color: 'var(--ink)', marginTop: 6 }}>${page.title}</h1>
@@ -611,6 +628,32 @@ export function PageScreen() {
 
   const doSave = async (content) => { const updated = await saveVaultPage(path, content); setPage(updated); return updated; };
 
+  // 14B: selection → its own page next to this one; resolves on create so the
+  // editor can drop a [[link]] in place (never resolves on cancel).
+  const extractToPage = (text) => new Promise((resolve) => {
+    openModal('textPrompt', {
+      title: 'Extract to new page', label: 'New page title',
+      initial: (text.trim().split('\n')[0] || '').replace(/^[#>*\-\s[\]!]+/, '').slice(0, 60),
+      confirmLabel: 'Create page',
+      onSubmit: async (title) => {
+        const created = await createVaultPage(title, page?.kind || 'lore', dirOf(path));
+        const body = `${created.content.replace(/\n+$/, '')}\n\n${text.trim()}\n`;
+        resolve(await saveVaultPage(created.path, body));
+      },
+    });
+  });
+
+  // 14B: selection → Keeper composer as a quote (read mode, Chat rail tab).
+  const quoteToKeeper = (text) => {
+    const draft = `${text.trim().split('\n').map((l) => `> ${l}`).join('\n')}\n\n`;
+    setState({ keeper: {
+      chatId: null, events: [], attachments: [], live: null, error: null,
+      ...(store.keeper || {}), open: true, draft,
+    } });
+    navigate('page', { path, rail: 'chat' });
+    setMode('read');
+  };
+
   return html`<${Shell}
     sidebar=${mode === 'edit' && zen ? null
       : html`<${FileTree} campaign=${c} tree=${tree} active=${(page && page.title) || null} onOpen=${(p) => navigate('page', { path: p.path })} act=${act} />`}
@@ -624,7 +667,8 @@ export function PageScreen() {
               <div style=${{ maxWidth: 720, margin: '0 auto', padding: '0 52px' }}>
                 <${Provenance} path=${path} />
                 <${CmEditor} key=${'cm:' + rev + ':' + path} content=${page.content} pages=${pages} snippets=${store.snippets}
-                  onSave=${doSave} onCreate=${(name, kind) => createVaultPage(name, kind || 'lore', '')} onState=${setSaveState} />
+                  onSave=${doSave} onCreate=${(name, kind) => createVaultPage(name, kind || 'lore', '')} onState=${setSaveState}
+                  onExtract=${extractToPage} onQuote=${quoteToKeeper} />
               </div>
             </div>`}
     </div>

@@ -5,9 +5,9 @@
 // [[ autocomplete in the composer.
 import { html, useState, useEffect, useRef } from '../vendor/htm-preact-standalone.mjs';
 import { apiFetch, apiJson, apiStream, setOp, setState, store } from './core.js';
-import { Icon, Spinner, renderBlockHtml, wikilinkClick } from './ui.js';
+import { Icon, Spinner, renderBlockHtml, wikilinkClick, openContextMenu } from './ui.js';
 import { caretCoords } from './screens/page.js';
-import { loadLlmProviders, fetchLlmModels } from './actions.js';
+import { loadLlmProviders, fetchLlmModels, copyText } from './actions.js';
 
 // store.keeper = { open, chatId, campaignId, events[], attachments[],
 //                  live: {text, tools[], ask}|null, error, mode }
@@ -350,8 +350,13 @@ function ToolRow({ name, summary, isError, running, args, diff }) {
 function EventRow({ ev }) {
   if (ev.type === 'user') {
     const imgs = ev.images || [];
+    const menu = (e) => openContextMenu(e, [
+      ev.text && { label: 'Copy', icon: 'copy', onClick: () => copyText(ev.text, 'Message copied') },
+      { label: 'Retry', icon: 'arrow-r', disabled: !!keeperState().live,
+        onClick: () => sendMessage(ev.text, ev.images || []) },
+    ]);
     return html`<div style=${{ margin: '10px 0', display: 'flex', justifyContent: 'flex-end' }}>
-      <div style=${{ maxWidth: '85%', background: 'var(--burgundy-50)', border: '1px solid var(--rule-soft)', borderRadius: '10px 10px 2px 10px', padding: '8px 12px', fontSize: 13, whiteSpace: 'pre-wrap' }}>
+      <div onContextMenu=${menu} style=${{ maxWidth: '85%', background: 'var(--burgundy-50)', border: '1px solid var(--rule-soft)', borderRadius: '10px 10px 2px 10px', padding: '8px 12px', fontSize: 13, whiteSpace: 'pre-wrap' }}>
         ${imgs.length > 0 && html`<div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: ev.text ? 6 : 0 }}>
           ${imgs.map((img, i) => html`<img key=${i} src=${img.url || `data:${img.media_type};base64,${img.data}`} alt="pasted"
             style=${{ maxWidth: 180, maxHeight: 180, borderRadius: 6, border: '1px solid var(--rule-soft)', display: 'block' }} />`)}
@@ -363,6 +368,9 @@ function EventRow({ ev }) {
   if (ev.type === 'assistant' && (ev.text || '').trim()) {
     return html`<div class="ck-prose" style=${{ fontSize: 13, margin: '10px 0' }}
       onClick=${wikilinkClick()}
+      onContextMenu=${(e) => openContextMenu(e, [
+        { label: 'Copy', icon: 'copy', onClick: () => copyText(ev.text, 'Message copied') },
+      ])}
       dangerouslySetInnerHTML=${{ __html: renderBlockHtml(ev.text, store.vaultPages) }} />`;
   }
   if (ev.type === 'tool_result') {
@@ -436,6 +444,15 @@ export function Composer({ busy }) {
   const [ac, setAc] = useState(null);
   const taRef = useRef(null);
   const k = keeperState();
+
+  // One-shot prefill (e.g. "Ask Keeper about this" in the Explorer): consume
+  // store.keeper.draft into the local text, never overwriting typed input.
+  useEffect(() => {
+    if (!k.draft) return;
+    setText((t) => t || k.draft);
+    patchKeeper({ draft: null });
+    taRef.current?.focus();
+  }, [k.draft]);
 
   const send = () => {
     const t = text.trim();

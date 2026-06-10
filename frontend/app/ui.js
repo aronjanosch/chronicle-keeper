@@ -1,5 +1,5 @@
 // Shared atoms ported from the design's atoms.jsx + a few form/primitive helpers.
-import { html, useState, useEffect, useRef, useCallback } from '../vendor/htm-preact-standalone.mjs';
+import { html, useState, useEffect, useLayoutEffect, useRef, useCallback } from '../vendor/htm-preact-standalone.mjs';
 import { marked } from '../vendor/marked.esm.js';
 import { navigate, store, apiBlob, apiFetch } from './core.js';
 
@@ -31,6 +31,7 @@ const PATHS = {
   filter:   'M2 3h12L9 9v4l-2 1V9L2 3Z',
   dots:     null,
   edit:     'm3 13 1-3 7-7 2 2-7 7-3 1ZM10 4l2 2',
+  copy:     'M5.5 5h7a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5v-7A.5.5 0 0 1 5.5 5ZM3 10.5v-7A.5.5 0 0 1 3.5 3h7',
   link:     'M6.5 9.5 9.5 6.5M6 4l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M10 12l-1 1A2.5 2.5 0 0 1 5.5 9.5l1-1',
   time:     null,
   cal:      null,
@@ -236,6 +237,134 @@ export function Menu({ items, align = 'right', title = 'More actions', label }) 
   </div>`;
 }
 
+// ── Context menu (Phase 14A) ──────────────────────────────────────
+// One app-wide right-click menu: call openContextMenu(e, items) from any
+// onContextMenu handler; ContextMenuHost (mounted once in main.js) renders it
+// fixed-position so overflow:auto containers can't clip it. Items use the same
+// shape as Menu ({label, icon, onClick, danger, disabled, hidden}); the string
+// '-' is a separator. Calling it again replaces the open menu.
+let cmShow = null;
+
+export function openContextMenu(e, items) {
+  e.preventDefault();
+  e.stopPropagation();
+  const list = (items || []).filter((it) => it && (it === '-' || !it.hidden));
+  while (list[0] === '-') list.shift();
+  while (list[list.length - 1] === '-') list.pop();
+  if (list.length && cmShow) cmShow({ x: e.clientX, y: e.clientY, items: list });
+}
+
+// One menu row (top level or submenu child). Plain div, not <button> — a
+// top-level row may contain its absolutely-positioned submenu.
+function MenuItem({ it, active, onHover, onRun, children }) {
+  return html`<div
+    onClick=${(e) => { e.stopPropagation(); if (!it.disabled) onRun(); }}
+    onMouseEnter=${onHover}
+    style=${{
+      position: 'relative', display: 'flex', alignItems: 'center', gap: 9,
+      padding: '6px 9px', borderRadius: 5, cursor: it.disabled ? 'default' : 'pointer',
+      background: active && !it.disabled ? (it.danger ? 'var(--burgundy-50)' : 'var(--paper-deep)') : 'transparent',
+      fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap',
+      color: it.danger ? 'var(--burgundy-700)' : 'var(--ink)', opacity: it.disabled ? 0.45 : 1,
+    }}>
+    ${it.icon && html`<${Icon} name=${it.icon} size=${13} />`}
+    <span style=${{ flex: 1 }}>${it.label}</span>
+    ${it.children && html`<${Icon} name="chev-r" size=${11} className="ck-ink-faint" />`}
+    ${children}
+  </div>`;
+}
+
+export function ContextMenuHost() {
+  const [menu, setMenu] = useState(null);
+  const [idx, setIdx] = useState(-1);
+  const [sub, setSub] = useState(null);      // top-level index whose submenu is open
+  const [subIdx, setSubIdx] = useState(-1);  // highlighted child in the open submenu
+  const ref = useRef(null);
+  useEffect(() => {
+    cmShow = (m) => { setMenu(m); setIdx(-1); setSub(null); setSubIdx(-1); };
+    return () => { cmShow = null; };
+  }, []);
+  // Clamp into the viewport once the rendered size is known.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !menu) return;
+    const r = el.getBoundingClientRect();
+    const x = Math.max(8, Math.min(menu.x, window.innerWidth - r.width - 8));
+    const y = Math.max(8, Math.min(menu.y, window.innerHeight - r.height - 8));
+    if (x !== menu.x || y !== menu.y) setMenu({ ...menu, x, y });
+  }, [menu]);
+  useEffect(() => {
+    if (!menu) return undefined;
+    const close = () => setMenu(null);
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) close(); };
+    const enabledOf = (items) => items.map((it, i) => (it !== '-' && !it.disabled ? i : -1)).filter((i) => i >= 0);
+    const step = (items, dir) => (prev) => {
+      const en = enabledOf(items);
+      if (!en.length) return prev;
+      const pos = en.indexOf(prev);
+      return en[((pos < 0 ? (dir > 0 ? -1 : 0) : pos) + dir + en.length) % en.length];
+    };
+    const onKey = (e) => {
+      const subItems = sub != null ? menu.items[sub].children : null;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (subItems) { setSub(null); setSubIdx(-1); } else close();
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const dir = e.key === 'ArrowDown' ? 1 : -1;
+        if (subItems) setSubIdx(step(subItems, dir)); else setIdx(step(menu.items, dir));
+      } else if (e.key === 'ArrowRight' && !subItems && idx >= 0 && menu.items[idx].children) {
+        e.preventDefault();
+        setSub(idx); setSubIdx(0);
+      } else if (e.key === 'ArrowLeft' && subItems) {
+        e.preventDefault();
+        setSub(null); setSubIdx(-1);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (subItems && subIdx >= 0) { close(); subItems[subIdx].onClick?.(); }
+        else if (idx >= 0 && menu.items[idx].children) { setSub(idx); setSubIdx(0); }
+        else if (idx >= 0) { close(); menu.items[idx].onClick?.(); }
+      }
+    };
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('scroll', close, true);
+    window.addEventListener('blur', close);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('scroll', close, true);
+      window.removeEventListener('blur', close);
+      window.removeEventListener('resize', close);
+    };
+  }, [menu, idx, sub, subIdx]);
+  if (!menu) return null;
+  // Submenu flips to the left edge when the parent sits near the right border.
+  const subSide = menu.x + 380 > window.innerWidth ? { right: 'calc(100% + 2px)' } : { left: 'calc(100% + 2px)' };
+  const panelStyle = {
+    background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', borderRadius: 8,
+    boxShadow: 'var(--shadow-raised)', padding: 4,
+  };
+  return html`<div ref=${ref} onContextMenu=${(e) => e.preventDefault()}
+    style=${{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 1000, minWidth: 196, ...panelStyle }}>
+    ${menu.items.map((it, i) => it === '-'
+      ? html`<div key=${i} style=${{ height: 1, background: 'var(--rule-soft)', margin: '4px 6px' }} />`
+      : html`<${MenuItem} key=${i} it=${it} active=${i === idx}
+          onHover=${() => { setIdx(it.disabled ? -1 : i); setSub(it.children && !it.disabled ? i : null); setSubIdx(-1); }}
+          onRun=${() => {
+            if (it.children) { setSub(i); setSubIdx(-1); return; }
+            setMenu(null); it.onClick?.();
+          }}>
+          ${it.children && sub === i && html`<div style=${{ position: 'absolute', top: -5, zIndex: 1, minWidth: 168, ...subSide, ...panelStyle }}>
+            ${it.children.map((c, j) => html`<${MenuItem} key=${j} it=${c} active=${j === subIdx}
+              onHover=${() => setSubIdx(c.disabled ? -1 : j)}
+              onRun=${() => { setMenu(null); c.onClick?.(); }} />`)}
+          </div>`}
+        </${MenuItem}>`)}
+  </div>`;
+}
+
 // ── Field / Input / Textarea / Select ─────────────────────────────
 const fieldBox = {
   width: '100%', background: 'var(--surface-raised)', border: '1px solid var(--rule)',
@@ -402,6 +531,25 @@ function ckPostprocess(htmlStr) {
     });
 }
 
+// `==text==` → <mark> (Obsidian highlight). Token walk so <code>/<pre>/<a>
+// content and tag attributes are never rewritten.
+function markHighlights(htmlStr) {
+  if (!htmlStr.includes('==')) return htmlStr;
+  const tokens = htmlStr.split(/(<[^>]+>)/);
+  let skip = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.startsWith('<')) {
+      if (/^<(a|code|pre)[\s>]/i.test(t)) skip++;
+      else if (/^<\/(a|code|pre)>/i.test(t)) skip = Math.max(0, skip - 1);
+      continue;
+    }
+    if (skip > 0) continue;
+    tokens[i] = t.replace(/==([^=\n]+)==/g, '<mark>$1</mark>');
+  }
+  return tokens.join('');
+}
+
 // Resolve [[Name]] / [[Name|Label]] / [[Name#Heading]] against the vault page
 // list — by title or alias, case-insensitive; collisions pick the shortest
 // path. Resolved links carry data-path (navigable); unresolved ones get
@@ -465,12 +613,12 @@ export function resolveWikilinks(htmlStr, pages) {
 }
 
 export function renderPageHtml(text, pages) {
-  return resolveWikilinks(ckPostprocess(marked.parse(stripFrontmatter(text), { gfm: true })), pages);
+  return resolveWikilinks(markHighlights(ckPostprocess(marked.parse(stripFrontmatter(text), { gfm: true }))), pages);
 }
 
 // Render a single markdown block (no frontmatter); used by the live-preview editor.
 export function renderBlockHtml(text, pages) {
-  return resolveWikilinks(ckPostprocess(marked.parse(text || '', { gfm: true })), pages);
+  return resolveWikilinks(markHighlights(ckPostprocess(marked.parse(text || '', { gfm: true }))), pages);
 }
 
 // Click handler shared by reading view + live preview: navigate resolved wikilinks,
@@ -627,6 +775,33 @@ function fillAssetImgs(scope, campaignId, urls, isDead) {
 }
 
 const KIND_ICONS = { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', lore: 'scroll' };
+
+// Asset name (from `image:` frontmatter) → authenticated blob URL, revoked on unmount.
+export function useAsset(cid, name) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    setUrl(null);
+    if (!name) return undefined;
+    let dead = false;
+    let u = null;
+    apiBlob(`/campaigns/${cid}/vault/assets/${encodeURI(name)}`)
+      .then((b) => {
+        if (dead) return;
+        u = URL.createObjectURL(b);
+        setUrl(u);
+      })
+      .catch(() => {});
+    return () => { dead = true; if (u) URL.revokeObjectURL(u); };
+  }, [cid, name]);
+  return url;
+}
+
+// `image:`/`cover:` frontmatter value → bare asset name (strips ![[ ]] embeds).
+export function bannerAsset(props) {
+  const p = (props || []).find((x) => x.key === 'image' || x.key === 'cover');
+  const v = p?.values?.[0];
+  return v ? v.replace(/^!?\[\[/, '').replace(/\]\]$/, '').trim() || null : null;
+}
 
 export function WikilinkHoverCard({ path, pages, x, y }) {
   const p = (pages || []).find((pg) => pg.path === path);

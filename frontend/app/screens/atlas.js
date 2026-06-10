@@ -10,7 +10,7 @@ import { html, useState, useEffect, useRef, useMemo, useCallback } from '../../v
 import { navigate, apiFetch, apiBlob, store, setState } from '../core.js';
 import { loadAtlasMaps, createAtlasMap, saveAtlasMap, replaceAtlasMapArt, deleteAtlasMap, pickMapImage, loadVaultTree, loadVaultLinks, createVaultPage, openCampaign } from '../actions.js';
 import { Shell, Sidebar, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
-import { Icon, Btn, Empty, Spinner, PageBody, Input, Select, splitDoc, parseProps } from '../ui.js';
+import { Icon, Btn, Empty, Spinner, PageBody, Input, Select, splitDoc, parseProps, openContextMenu } from '../ui.js';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
@@ -58,12 +58,12 @@ export function SealHead({ kind, size = 38, selected }) {
 
 // full map marker: ground shadow + seal + tip + label.
 // Counter-scales by 1/zoom so pins stay legible at any zoom.
-function PinMarker({ pin, invZoom, selected, hasMap, onHover, onLeave, onClick, onDoubleClick, onMouseDown }) {
+function PinMarker({ pin, invZoom, selected, hasMap, onHover, onLeave, onClick, onDoubleClick, onMouseDown, onMenu }) {
   const size = pin.kind === 'pc' ? 32 : 38;
   const k = PIN_KINDS[pin.kind] || PIN_KINDS.npc;
   const s = SEAL[k.tone] || SEAL.burgundy;
   return html`<div style=${{ position: 'absolute', left: `${pin.x * 100}%`, top: `${pin.y * 100}%`, zIndex: selected ? 40 : (hasMap ? 30 : 20) }}>
-    <div onMouseEnter=${onHover} onMouseLeave=${onLeave} onClick=${onClick} onDblClick=${onDoubleClick} onMouseDown=${onMouseDown}
+    <div onMouseEnter=${onHover} onMouseLeave=${onLeave} onClick=${onClick} onDblClick=${onDoubleClick} onMouseDown=${onMouseDown} onContextMenu=${onMenu}
       style=${{
         position: 'absolute', left: 0, bottom: 0,
         transform: `translateX(-50%) scale(${invZoom})`, transformOrigin: 'bottom center',
@@ -807,7 +807,14 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
           hasMap=${!!pin.to}
           onHover=${() => !placing && setHover(pin.id)} onLeave=${() => setHover(null)}
           onClick=${() => openPin(pin)} onDoubleClick=${() => pin.to && goToMap(pin.to)}
-          onMouseDown=${onPinDown(pin)} />`)}
+          onMouseDown=${onPinDown(pin)}
+          onMenu=${(e) => openContextMenu(e, [
+            pin.page && { label: 'Open page', icon: 'book', onClick: () => navigate('page', { path: pin.page }) },
+            pin.page && { label: 'Read here', icon: 'doc', onClick: () => openPin(pin) },
+            pin.to && { label: 'Enter the map', icon: 'map', onClick: () => goToMap(pin.to) },
+            '-',
+            { label: 'Remove pin', icon: 'trash', danger: true, onClick: () => removePin(pin.id) },
+          ])} />`)}
 
         ${hoverPin && hoverPin.page && html`<${HoverCard} pin=${hoverPin} invZoom=${invZoom} summary=${summaryOf(hoverPin.page)} />`}
       </div>`}

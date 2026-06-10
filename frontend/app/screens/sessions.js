@@ -1,10 +1,25 @@
 // Sessions — the recording pipeline that feeds the world. Split out of the
 // Overview per the worldbuilding IA. A lean list; each row links to its session.
 import { html, useEffect } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, fmtDate } from '../core.js';
-import { loadSession, refreshCampaignSessions } from '../actions.js';
+import { navigate, fmtDate, openModal } from '../core.js';
+import { loadSession, refreshCampaignSessions, deleteSession } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
-import { Icon, Btn, StagePill, Empty } from '../ui.js';
+import { Icon, Btn, StagePill, Empty, openContextMenu } from '../ui.js';
+
+function sessionRowMenu(s, onOpen) {
+  return (e) => openContextMenu(e, [
+    { label: 'Open', icon: 'book', onClick: onOpen },
+    { label: 'Export…', icon: 'export', disabled: !s.has_summary,
+      onClick: async () => { await loadSession(s.session_id); openModal('export', {}); } },
+    '-',
+    { label: 'Delete session', icon: 'trash', danger: true, onClick: () => openModal('confirm', {
+      title: 'Delete session',
+      message: html`Delete ${html`<strong>session ${String(s.session_number || 0).padStart(2, '0')}</strong>`}${s.title ? ` (“${s.title}”)` : ''} with its audio, transcript, and summary? This cannot be undone.`,
+      confirmLabel: 'Delete session',
+      onConfirm: () => deleteSession(s.session_id),
+    }) },
+  ]);
+}
 
 function SessionRow({ s, onClick }) {
   // `complete` marks a finished stage (green); `current` marks the single next
@@ -15,7 +30,8 @@ function SessionRow({ s, onClick }) {
     { stage: 'transcribe', complete: t, current: up && !t },
     { stage: 'summarize', complete: sm, current: t && !sm },
   ];
-  return html`<div onClick=${onClick} style=${{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 18px', borderBottom: '1px solid var(--rule-soft)', cursor: 'pointer' }}
+  return html`<div onClick=${onClick} onContextMenu=${sessionRowMenu(s, onClick)}
+    style=${{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 18px', borderBottom: '1px solid var(--rule-soft)', cursor: 'pointer' }}
     onMouseEnter=${(e) => { e.currentTarget.style.background = 'var(--paper)'; }}
     onMouseLeave=${(e) => { e.currentTarget.style.background = 'transparent'; }}>
     <div style=${{ width: 38, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-faint)' }}>

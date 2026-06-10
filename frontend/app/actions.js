@@ -523,6 +523,26 @@ export async function createVaultPage(title, kind, folder) {
   return page;
 }
 
+// Copy of a page next to the original, first free "Title (copy [n])" name.
+export async function duplicateVaultPage(path) {
+  const id = store.campaign.campaign_id;
+  const src = await apiFetch(`/campaigns/${id}/vault/pages/${encodeURI(path)}`);
+  const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+  const base = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '');
+  const taken = new Set((store.vaultPages || []).map((p) => p.path));
+  let name = `${base} (copy)`;
+  for (let n = 2; taken.has(dir ? `${dir}/${name}.md` : `${name}.md`); n++) name = `${base} (copy ${n})`;
+  const dest = dir ? `${dir}/${name}.md` : `${name}.md`;
+  const page = await apiJson(`/campaigns/${id}/vault/pages/${encodeURI(dest)}`, 'PUT', { content: src.content });
+  await loadVaultTree(id);
+  return page;
+}
+
+export function copyText(text, label = 'Copied') {
+  return navigator.clipboard.writeText(text)
+    .then(() => setOp(label, 'done'), (e) => setOp(`Copy failed: ${e.message}`, 'err'));
+}
+
 // ── Atlas maps (files-as-truth: <world>/Atlas/<id>.json) ──────────
 export async function loadAtlasMaps(campaignId) {
   const id = campaignId || store.campaign?.campaign_id;

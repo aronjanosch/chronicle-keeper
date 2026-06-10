@@ -2,7 +2,7 @@
 import { html, render, useEffect } from '../vendor/htm-preact-standalone.mjs';
 import { useStore, loadApiBase, setOp, setState } from './core.js';
 import { loadCampaigns, loadConfig, refreshProviderStatus, checkMigration } from './actions.js';
-import { Icon, Spinner } from './ui.js';
+import { Icon, Spinner, ContextMenuHost } from './ui.js';
 import { ModalHost } from './modals.js';
 import { useGlobalHotkeys } from './screens/palette.js';
 import { LibraryScreen } from './screens/library.js';
@@ -84,6 +84,7 @@ function App() {
     ${screen}
     <${OpBanner} op=${store.op} />
     <${ModalHost} modal=${store.modal} />
+    <${ContextMenuHost} />
     ${store.error && store.route.name === 'library' && !store.campaigns.length && html`
       <div class="ck-toast" style=${{ background: '#FBEDE9', border: '1px solid rgba(122,46,31,.25)', color: 'var(--burgundy-700)', padding: '12px 16px', borderRadius: 10, fontSize: 13 }}>
         Can't reach the backend at ${store.apiBase}. Check it's running, then set the URL in Settings.

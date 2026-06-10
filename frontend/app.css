@@ -90,6 +90,7 @@ button { font-family: inherit; }
   border-left: 3px solid var(--rule-strong); margin: 0 0 12px; padding: 2px 0 2px 14px;
   color: var(--ink-muted); font-style: italic;
 }
+.ck-prose mark { background: var(--gilt-50); color: var(--ink); padding: 0 2px; border-radius: 2px; }
 .ck-prose hr { border: 0; height: 1px; background: var(--rule); margin: 20px 0; }
 .ck-prose a { color: var(--burgundy); text-decoration: underline; text-underline-offset: 2px; }
 /* Codex name-links inside summaries: subtle dotted burgundy, not loud like real links. */
@@ -266,4 +267,40 @@ span.ck-embed-src.ck-wikilink:hover { color: var(--burgundy); }
 /* Timeline (11.5): group-header add button, shown on hover */
 .ck-tl-add { opacity: 0; transition: opacity .14s; }
 .ck-tl-group:hover .ck-tl-add { opacity: 1; }
+
+/* Timeline event cards (11.6): kind-toned border, optional banner art */
+.ck-tl-card {
+  border: 1px solid var(--rule); border-left: 3px solid var(--tone, var(--burgundy));
+  border-radius: 8px; background: var(--surface); overflow: hidden; cursor: pointer;
+  transition: box-shadow .15s ease, transform .15s ease;
+}
+.ck-tl-card:hover { box-shadow: 0 3px 14px rgba(0, 0, 0, .10); transform: translateY(-1px); }
+.ck-tl-banner {
+  display: block; width: 100%; height: 96px; object-fit: cover;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* Page hero banner: image:/cover: frontmatter, Notion-style full-bleed header */
+.ck-page-banner {
+  display: block; width: 100%; height: 220px; object-fit: cover;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* Editor bubble toolbar (14B): floats above a non-empty selection */
+.ck-bubble {
+  position: fixed; z-index: 900; display: flex; gap: 2px; padding: 3px;
+  background: var(--surface-raised); border: 1px solid var(--rule-strong);
+  border-radius: 8px; box-shadow: var(--shadow-raised);
+}
+.ck-bubble button {
+  border: none; background: transparent; cursor: pointer; border-radius: 5px;
+  min-width: 26px; height: 24px; padding: 0 6px; color: var(--ink-soft);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.ck-bubble button:hover { background: var(--paper-deep); color: var(--ink); }
+.ck-bubble .ck-bb-b { font-weight: 700; font-family: var(--font-display); }
+.ck-bubble .ck-bb-i { font-style: italic; font-family: var(--font-display); }
+.ck-bubble .ck-bb-hl { background: var(--gilt-50); }
+.ck-bubble .ck-bb-hl:hover { background: var(--gilt-50); color: var(--ink); }
 .ck-tl-add:hover { color: var(--burgundy) !important; }

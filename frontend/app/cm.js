@@ -1,6 +1,8 @@
 // CodeMirror 6 page editor (Phase 7.5). Edits the literal .md string — frontmatter
 // and body together — so files stay truth (no document-model round-trip mangle).
 // The vendored bundle is a single pre-built ESM file, lazy-loaded on first use.
+import { openContextMenu } from './ui.js';
+import { setOp } from './core.js';
 
 let _cm = null;
 export function loadCM() {
@@ -160,6 +162,179 @@ function wrapLink(cm) {
       return true;
     }
     return wrapWith(cm, '[[', ']]')(view);
+  };
+}
+
+// [text](url): wrap the selection as a markdown link, caret inside the parens.
+function mdLink() {
+  return (view) => {
+    const r = view.state.selection.main;
+    const text = view.state.sliceDoc(r.from, r.to);
+    const insert = `[${text}]()`;
+    view.dispatch({
+      changes: { from: r.from, to: r.to, insert },
+      selection: { anchor: r.from + insert.length - 1 },
+      userEvent: 'input.format',
+    });
+    return true;
+  };
+}
+
+// ── "Turn into" line transforms (14B) ────────────────────────────
+// Existing block prefix (heading / quote / callout head / list / task) that a
+// transform replaces; group 1 keeps the indent.
+const LINE_PREFIX = /^(\s*)(?:#{1,6}\s+|>\s?(?:\[!\w+\][+-]?\s?)?|(?:[-*+]|\d+\.)\s+(?:\[[ xX]\]\s+)?)?/;
+
+function turnInto(kind) {
+  return (view) => {
+    const { state } = view;
+    const r = state.selection.main;
+    const fromLine = state.doc.lineAt(r.from), toLine = state.doc.lineAt(r.to);
+    const changes = [];
+    let n = 1;
+    for (let i = fromLine.number; i <= toLine.number; i++) {
+      const line = state.doc.line(i);
+      if (!line.text.trim() && kind !== 'callout') continue;
+      const prefix = { h1: '# ', h2: '## ', h3: '### ', list: '- ', task: '- [ ] ', quote: '> ', callout: '> ' }[kind]
+        || (kind === 'numbered' ? `${n++}. ` : '');
+      const m = LINE_PREFIX.exec(line.text);
+      changes.push({ from: line.from + m[1].length, to: line.from + m[0].length, insert: prefix });
+    }
+    if (kind === 'callout') changes.push({ from: fromLine.from, insert: '> [!note]\n' });
+    if (changes.length) view.dispatch({ changes, userEvent: 'input.format', scrollIntoView: true });
+    return true;
+  };
+}
+
+// ── Selection context menu + bubble toolbar (14B) ─────────────────
+function cutCopy(view, cut) {
+  const r = view.state.selection.main;
+  const text = view.state.sliceDoc(r.from, r.to);
+  navigator.clipboard.writeText(text).then(() => {
+    if (cut) view.dispatch({ changes: { from: r.from, to: r.to }, userEvent: 'delete.cut' });
+  }, (e) => setOp(`Copy failed: ${e.message}`, 'err'));
+}
+
+function pasteClipboard(view) {
+  navigator.clipboard.readText().then(
+    (t) => { if (t) insertAtSelection(view, t); },
+    (e) => setOp(`Paste failed: ${e.message}`, 'err'),
+  );
+}
+
+// Selection → new page via opts.onExtract(text) (resolves with the created
+// page, or never on cancel); a [[link]] replaces the selection.
+function extractSelection(view, opts) {
+  const r = view.state.selection.main;
+  const text = view.state.sliceDoc(r.from, r.to);
+  Promise.resolve(opts.onExtract(text)).then((page) => {
+    if (!page) return;
+    if (view.state.sliceDoc(r.from, r.to) !== text) {
+      setOp(`Created “${page.title}” — text changed, link it yourself`, 'err');
+      return;
+    }
+    view.dispatch({
+      changes: { from: r.from, to: r.to, insert: `[[${page.title}]]` },
+      userEvent: 'input.format', scrollIntoView: true,
+    });
+  }).catch(() => {});
+}
+
+function selectionItems(cm, view, opts) {
+  const run = (f) => () => { f(view); view.focus(); };
+  return [
+    { label: 'Format', icon: 'edit', children: [
+      { label: 'Bold', onClick: run(wrapWith(cm, '**', '**')) },
+      { label: 'Italic', onClick: run(wrapWith(cm, '*', '*')) },
+      { label: 'Code', onClick: run(wrapWith(cm, '`', '`')) },
+      { label: 'Highlight', onClick: run(wrapWith(cm, '==', '==')) },
+      { label: 'Link', onClick: run(mdLink()) },
+    ] },
+    { label: 'Turn into', icon: 'doc', children: [
+      { label: 'Heading 1', onClick: run(turnInto('h1')) },
+      { label: 'Heading 2', onClick: run(turnInto('h2')) },
+      { label: 'Heading 3', onClick: run(turnInto('h3')) },
+      { label: 'Bullet list', onClick: run(turnInto('list')) },
+      { label: 'Numbered list', onClick: run(turnInto('numbered')) },
+      { label: 'Task list', onClick: run(turnInto('task')) },
+      { label: 'Quote', onClick: run(turnInto('quote')) },
+      { label: 'Callout', onClick: run(turnInto('callout')) },
+    ] },
+    '-',
+    { label: 'Wrap as [[wikilink]]', icon: 'link', onClick: run(wrapLink(cm)) },
+    opts.onExtract && { label: 'Extract to new page', icon: 'export', onClick: () => extractSelection(view, opts) },
+    opts.onQuote && { label: 'Send to Keeper as quote', icon: 'feather', onClick: () => opts.onQuote(view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to)) },
+    '-',
+    { label: 'Cut', onClick: () => cutCopy(view, true) },
+    { label: 'Copy', onClick: () => cutCopy(view, false) },
+    { label: 'Paste', onClick: () => pasteClipboard(view) },
+  ];
+}
+
+function selectionMenu(cm, opts) {
+  return cm.EditorView.domEventHandlers({
+    contextmenu(e, view) {
+      if (view.state.selection.main.empty) return false; // default webview menu
+      openContextMenu(e, selectionItems(cm, view, opts));
+      return true;
+    },
+  });
+}
+
+// Floating mini-toolbar above the selection. Hand-rolled DOM (no Preact, no CM
+// tooltip dependency); shown on mouseup/keyup once a selection exists.
+function bubbleToolbar(cm, view, opts) {
+  const el = document.createElement('div');
+  el.className = 'ck-bubble';
+  el.style.display = 'none';
+  const add = (label, title, fn, cls) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.title = title;
+    if (cls) b.className = cls;
+    b.addEventListener('mousedown', (e) => e.preventDefault()); // keep editor selection
+    b.addEventListener('click', () => { fn(view); hide(); view.focus(); });
+    el.appendChild(b);
+  };
+  add('B', 'Bold', wrapWith(cm, '**', '**'), 'ck-bb-b');
+  add('I', 'Italic', wrapWith(cm, '*', '*'), 'ck-bb-i');
+  add('<>', 'Code', wrapWith(cm, '`', '`'));
+  add('==', 'Highlight', wrapWith(cm, '==', '=='), 'ck-bb-hl');
+  add('[[ ]]', 'Wrap as wikilink', wrapLink(cm));
+  if (opts.onExtract) add('→□', 'Extract to new page', (v) => extractSelection(v, opts));
+  document.body.appendChild(el);
+
+  const hide = () => { el.style.display = 'none'; };
+  const place = () => {
+    const r = view.state.selection.main;
+    // activeElement check, not view.hasFocus — the latter is false whenever the
+    // window itself is unfocused (background window, headless), hiding the bar.
+    if (r.empty || !view.dom.contains(document.activeElement)) { hide(); return; }
+    const head = view.coordsAtPos(r.from);
+    if (!head) { hide(); return; }
+    el.style.display = 'flex';
+    const w = el.offsetWidth;
+    el.style.left = `${Math.max(8, Math.min(head.left, window.innerWidth - w - 8))}px`;
+    el.style.top = `${Math.max(8, head.top - el.offsetHeight - 8)}px`;
+  };
+  let timer = null;
+  const schedule = () => { if (timer) clearTimeout(timer); timer = setTimeout(place, 180); };
+  const onScroll = () => hide();
+  const onBlur = () => setTimeout(() => { if (!view.hasFocus) hide(); }, 120);
+  view.dom.addEventListener('mouseup', schedule);
+  view.dom.addEventListener('keyup', schedule);
+  view.dom.addEventListener('blur', onBlur, true);
+  document.addEventListener('scroll', onScroll, true);
+  return {
+    destroy() {
+      if (timer) clearTimeout(timer);
+      view.dom.removeEventListener('mouseup', schedule);
+      view.dom.removeEventListener('keyup', schedule);
+      view.dom.removeEventListener('blur', onBlur, true);
+      document.removeEventListener('scroll', onScroll, true);
+      el.remove();
+    },
   };
 }
 
@@ -416,6 +591,7 @@ export async function mountEditor(host, opts) {
         markdown({ base: markdownLanguage }),
         autocompletion({ override: [wikilinkSource(cm, opts.getPages, opts.onCreatePage), tagSource(opts.getPages), slashSource(cm, opts.getSnippets)], icons: false }),
         pasteDrop(cm, opts),
+        selectionMenu(cm, opts),
         search({ top: true }),
         buildTheme(cm),
         inkDecorations(cm),
@@ -427,8 +603,9 @@ export async function mountEditor(host, opts) {
     }),
   });
   view.focus();
+  const bubble = bubbleToolbar(cm, view, opts);
   return {
     view,
-    destroy() { flush(); view.destroy(); },
+    destroy() { flush(); bubble.destroy(); view.destroy(); },
   };
 }

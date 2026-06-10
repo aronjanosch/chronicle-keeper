@@ -81,7 +81,7 @@ const nodeRadius = (n) => 2.5 + Math.min(6, Math.sqrt(n.degree) * 1.3);
 // zoom (wheel), click → select + spotlight neighbors, double-click →
 // onOpen(path). Kind/orphan filters and search matches arrive as props;
 // apiRef exposes { zoom, fit, relayout, focus } for external controls.
-export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hideOrphans, matches, apiRef }) {
+export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hiddenKinds, hiddenPaths, hideOrphans, matches, apiRef }) {
   const hostRef = useRef(null);
   const stateRef = useRef(null);
 
@@ -93,7 +93,7 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
     host.appendChild(canvas);
     const ctx = canvas.getContext('2d');
     const st = { tx: 0, ty: 0, scale: 1, hover: null, sel: null, alpha: 1, raf: 0,
-      cooling: false, hidden: new Set(), hideOrphans: false, matches: null,
+      cooling: false, hidden: new Set(), hiddenPaths: new Set(), hideOrphans: false, matches: null,
       dimT: 0, warmup: 0 };
     stateRef.current = st;
 
@@ -102,7 +102,7 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
       (adj.get(e.a) || adj.set(e.a, new Set()).get(e.a)).add(e.b);
       (adj.get(e.b) || adj.set(e.b, new Set()).get(e.b)).add(e.a);
     }
-    const vis = (n) => !st.hidden.has(n.kind) && !(st.hideOrphans && n.degree === 0);
+    const vis = (n) => !st.hidden.has(n.kind) && !st.hiddenPaths.has(n.path) && !(st.hideOrphans && n.degree === 0);
 
     const size = () => {
       const r = host.getBoundingClientRect();
@@ -331,6 +331,10 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
       const n = nodeAt(toWorld(e));
       if (n && onOpen) onOpen(n.path);
     };
+    const onCtx = (e) => {
+      const n = nodeAt(toWorld(e));
+      if (n && onNodeMenu) onNodeMenu(n, e);
+    };
     const onWheel = (e) => {
       e.preventDefault();
       st.interacted = true;
@@ -349,6 +353,7 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     canvas.addEventListener('dblclick', onDbl);
+    canvas.addEventListener('contextmenu', onCtx);
     canvas.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('resize', onResize);
     return () => {
@@ -358,6 +363,7 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       canvas.removeEventListener('dblclick', onDbl);
+      canvas.removeEventListener('contextmenu', onCtx);
       canvas.removeEventListener('wheel', onWheel);
       window.removeEventListener('resize', onResize);
       canvas.remove();
@@ -369,10 +375,12 @@ export function GraphCanvas({ nodes, edges, onOpen, focusPath, hiddenKinds, hide
     const st = stateRef.current;
     if (!st) return;
     st.hidden = hiddenKinds || new Set();
+    st.hiddenPaths = hiddenPaths || new Set();
     st.hideOrphans = !!hideOrphans;
-    if (st.sel && st.hidden.has(st.sel.kind)) st.sel = null;
+    if (st.sel && (st.hidden.has(st.sel.kind) || st.hiddenPaths.has(st.sel.path))) st.sel = null;
+    if (st.hover && st.hiddenPaths.has(st.hover.path)) st.hover = null;
     st.heat(0.3);
-  }, [hiddenKinds, hideOrphans, nodes, edges]);
+  }, [hiddenKinds, hiddenPaths, hideOrphans, nodes, edges]);
   useEffect(() => {
     const st = stateRef.current;
     if (!st) return;

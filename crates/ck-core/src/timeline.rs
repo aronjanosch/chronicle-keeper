@@ -153,18 +153,35 @@ pub fn world_events(
                 "summary": fm["summary"].as_str().unwrap_or(""),
                 "gm_only": gm_only,
             });
+            // `image:`/`cover:` → banner asset; accept bare names or [[embed]] syntax.
+            if let Some(img) = fm_str(&fm, "image").or_else(|| fm_str(&fm, "cover")) {
+                let img = img
+                    .trim()
+                    .trim_start_matches('!')
+                    .trim_start_matches("[[")
+                    .trim_end_matches("]]")
+                    .trim();
+                if !img.is_empty() {
+                    entry["image"] = json!(img);
+                }
+            }
             let key: SortKey = match (&d, order) {
                 (Some(d), o) => {
                     entry["date"] = json!(raw);
                     entry["display"] = json!(display(d, &cal.months));
                     entry["era"] = json!(d.era);
                     entry["year"] = json!(d.year);
+                    entry["month"] = json!(d.month);
+                    entry["day"] = json!(d.day);
                     if let Some(end_raw) =
                         fm_str(&fm, "end_date").or_else(|| fm_str(&fm, "until"))
                     {
                         if let Some(ed) = parse_world_date(&end_raw, &cal.eras) {
                             entry["end"] = json!(end_raw);
                             entry["end_display"] = json!(display(&ed, &cal.months));
+                            entry["end_year"] = json!(ed.year);
+                            entry["end_month"] = json!(ed.month);
+                            entry["end_day"] = json!(ed.day);
                         }
                     }
                     (d.era_idx, 1, d.year.unwrap_or(i64::MIN), d.month, d.day, o.unwrap_or(0))
@@ -254,13 +271,17 @@ mod tests {
             // the index stores frontmatter scalars as strings; raw bools work too
             ("f.md".into(), "Secret".into(), None, r#"{"date":"1380 DR","gm_only":"true"}"#.into()),
             ("g.md".into(), "Hidden".into(), None, r#"{"date":"1381 DR","publish":false}"#.into()),
+            ("h.md".into(), "Pictured".into(), None, r#"{"date":"1390-02-05 DR","image":"![[banner.png]]"}"#.into()),
         ];
         let ev = world_events(rows, &c);
         let titles: Vec<&str> = ev.iter().map(|e| e["title"].as_str().unwrap()).collect();
-        assert_eq!(titles, ["Beat 1", "Beat 2", "Ancient", "War", "Dated", "Secret", "Hidden"]);
+        assert_eq!(titles, ["Beat 1", "Beat 2", "Ancient", "War", "Dated", "Secret", "Hidden", "Pictured"]);
         assert_eq!(ev[0]["order"], 1);
         assert!(ev[0]["year"].is_null());
         assert_eq!(ev[3]["end_display"], "1310 DR");
+        assert_eq!(ev[3]["end_year"], 1310);
+        assert_eq!(ev[7]["image"], "banner.png");
+        assert_eq!((ev[7]["month"].as_u64(), ev[7]["day"].as_u64()), (Some(2), Some(5)));
         assert_eq!(ev[5]["gm_only"], true);
         assert_eq!(ev[6]["gm_only"], true);
         assert_eq!(ev[4]["gm_only"], false);

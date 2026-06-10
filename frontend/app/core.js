@@ -45,6 +45,8 @@ export const store = {
   modal: null,            // { kind, props } overlay
   loading: false,
   error: null,
+  canNavBack: false,
+  canNavFwd: false,
 };
 
 const listeners = new Set();
@@ -63,9 +65,35 @@ export function useStore() {
 }
 
 // ── Navigation ────────────────────────────────────────────────────
+const navStack = { back: [], fwd: [] };
+const NAV_CAP = 50;
+
 export function navigate(name, params = {}) {
+  const cur = store.route;
+  const same = cur.name === name && JSON.stringify(cur.params) === JSON.stringify(params);
+  if (!same) {
+    navStack.back.push({ name: cur.name, params: cur.params });
+    if (navStack.back.length > NAV_CAP) navStack.back.shift();
+    navStack.fwd = [];
+  }
   if (name === 'page' && params.path) recordRecentPage(params.path);
-  setState({ route: { name, params } });
+  setState({ route: { name, params }, canNavBack: navStack.back.length > 0, canNavFwd: false });
+}
+
+export function navigateBack() {
+  const entry = navStack.back.pop();
+  if (!entry) return;
+  navStack.fwd.push({ name: store.route.name, params: store.route.params });
+  if (entry.name === 'page' && entry.params.path) recordRecentPage(entry.params.path);
+  setState({ route: entry, canNavBack: navStack.back.length > 0, canNavFwd: navStack.fwd.length > 0 });
+}
+
+export function navigateForward() {
+  const entry = navStack.fwd.pop();
+  if (!entry) return;
+  navStack.back.push({ name: store.route.name, params: store.route.params });
+  if (entry.name === 'page' && entry.params.path) recordRecentPage(entry.params.path);
+  setState({ route: entry, canNavBack: navStack.back.length > 0, canNavFwd: navStack.fwd.length > 0 });
 }
 
 // ── Recent pages (MRU, per-world, localStorage) ───────────────────

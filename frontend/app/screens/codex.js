@@ -3,13 +3,13 @@
 // fed to the LLM as a one-liner; click through to the entry-detail inspector.
 // Keeps the Phase 1 freeform paste box (campaign-wide note, injected verbatim).
 import { html, useState, useEffect, useRef } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, openModal, useStore, setOp } from '../core.js';
+import { navigate, openModal, useStore, setOp, store, setState } from '../core.js';
 import { Shell, Sidebar, Topbar, useSidebarWidth, ResizeHandle, WORLD_NAV, navToWorldDest } from '../shell.js';
-import { Btn, Empty, Icon, Markdown, Input, Textarea, Select, BrandMark } from '../ui.js';
+import { Btn, Empty, Icon, Markdown, Input, Textarea, Select, BrandMark, openContextMenu } from '../ui.js';
 import { loadCodexEntries, createCodexEntry, openCampaign, updateCampaign,
   loadCampaignTags, renameCampaignTag, deleteCampaignTag,
   loadVaultTree, createVaultPage, createVaultFolder, moveVaultEntry,
-  deleteVaultPage, deleteVaultFolder, attachVault, pickVaultFolder,
+  deleteVaultPage, deleteVaultFolder, duplicateVaultPage, copyText, attachVault, pickVaultFolder,
   searchVault, loadVaultTags, loadVaultDiagnostics, sniffVault, importVaultFolder, enhanceVaultPages, watchVault,
   bulkVault } from '../actions.js';
 import { kindForFolder } from '../folderKinds.js';
@@ -27,7 +27,7 @@ export const KINDS = [
 export function iconForKind(k) {
   return { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', lore: 'scroll' }[k] || 'doc';
 }
-function toneForKind(k) {
+export function toneForKind(k) {
   return (KINDS.find((x) => x.value === k) || {}).tone || 'burgundy';
 }
 
@@ -182,7 +182,11 @@ function TagRow({ t, onRename, onDelete }) {
     setBusy(false); setEditing(false);
   }
 
-  return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 6 }}>
+  return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 6 }}
+    onContextMenu=${editing ? null : (e) => openContextMenu(e, [
+      { label: 'Rename', icon: 'edit', onClick: () => setEditing(true) },
+      { label: 'Delete everywhere', icon: 'trash', danger: true, onClick: () => onDelete(t.tag) },
+    ])}>
     <${Icon} name="tag" size=${12} className="ck-ink-faint" />
     ${editing
       ? html`<${Input} value=${val} onInput=${setVal} style=${{ flex: 1 }}
@@ -359,11 +363,41 @@ function RenameInput({ initial, onCommit, onCancel }) {
       color: 'var(--ink)', outline: 'none' }} />`;
 }
 
+function pageMenu(page, { onOpen, act, ren }) {
+  return (e) => openContextMenu(e, [
+    { label: 'Open', icon: 'book', onClick: onOpen },
+    '-',
+    { label: 'Rename', icon: 'edit', onClick: () => (ren ? ren.start(page.path) : act.renamePage(page)) },
+    { label: 'Move to folder…', icon: 'arrow-r', onClick: () => act.movePage(page) },
+    { label: 'Duplicate', icon: 'copy', onClick: () => act.duplicatePage(page) },
+    '-',
+    { label: 'Copy [[wikilink]]', icon: 'link', onClick: () => copyText(`[[${page.title}]]`, 'Wikilink copied') },
+    { label: 'Copy path', icon: 'doc', onClick: () => copyText(page.path, 'Path copied') },
+    '-',
+    { label: 'New page in folder', icon: 'plus', onClick: () => act.newPage(dirOf(page.path)) },
+    { label: 'Ask Keeper about this', icon: 'feather', onClick: () => act.askKeeper(page) },
+    '-',
+    { label: 'Move to trash', icon: 'trash', danger: true, onClick: () => act.deletePage(page) },
+  ]);
+}
+
+function folderMenu(node, { act, ren }) {
+  return (e) => openContextMenu(e, [
+    { label: 'New page here', icon: 'plus', onClick: () => act.newPage(node.path) },
+    { label: 'New subfolder', icon: 'folder', onClick: () => act.newFolder(node.path) },
+    '-',
+    { label: 'Rename', icon: 'edit', onClick: () => (ren ? ren.start(node.path) : act.renameFolder(node)) },
+    '-',
+    { label: 'Move to trash', icon: 'trash', danger: true, onClick: () => act.deleteFolder(node) },
+  ]);
+}
+
 function PageLeaf({ page, depth, active, onOpen, act, ren, dnd }) {
   const isActive = page.path === active;
   const renaming = ren && ren.path === page.path;
   const dragging = dnd && dnd.draggingPath === page.path;
   return html`<div onClick=${renaming ? null : onOpen} onMouseEnter=${rowHover(true)} onMouseLeave=${rowHover(false)}
+    onContextMenu=${renaming ? null : pageMenu(page, { onOpen, act, ren })}
     draggable=${dnd && !renaming ? true : undefined}
     onDragStart=${dnd ? dnd.startPage(page) : undefined}
     onDragEnd=${dnd ? dnd.end : undefined}
@@ -395,6 +429,7 @@ function FolderNode({ node, depth, openSet, toggle, active, onOpen, act, ren, dn
   const dropOver = dnd && dnd.over === node.path;
   return html`<div>
     <div onClick=${renaming ? null : () => toggle(node.path)} onMouseEnter=${rowHover(true)} onMouseLeave=${rowHover(false)}
+      onContextMenu=${renaming ? null : folderMenu(node, { act, ren })}
       draggable=${dnd && !renaming ? true : undefined}
       onDragStart=${dnd ? dnd.startFolder(node) : undefined}
       onDragEnd=${dnd ? dnd.end : undefined}
@@ -558,6 +593,10 @@ function VaultPanel({ campaign, tree, active, onOpen, act }) {
             ${matches.length === 0 && bodyHits.length === 0 && html`<div style=${{ fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic', padding: '6px 12px' }}>No matches.</div>`}
           </div>`
         : html`<div onDragOver=${dnd.overFolder('')} onDragLeave=${dnd.leave('')} onDrop=${dnd.dropFolder('')}
+            onContextMenu=${(e) => openContextMenu(e, [
+              { label: 'New page', icon: 'plus', onClick: () => act.newPage('') },
+              { label: 'New folder', icon: 'folder', onClick: () => act.newFolder('') },
+            ])}
             style=${{ minHeight: 40, borderRadius: 5, boxShadow: dnd.over === '' && dnd.draggingPath ? 'inset 0 0 0 1px var(--burgundy-300)' : 'none' }}>
             ${rootFolders.map((c) => html`<${FolderNode} key=${c.path} node=${c} depth=${0} openSet=${openSet} toggle=${toggle} active=${active} onOpen=${onOpen} act=${act} ren=${ren} dnd=${dnd} />`)}
             ${tree.pages.map((p) => html`<${PageLeaf} key=${p.path} page=${p} depth=${0} active=${active} onOpen=${() => onOpen(p)} act=${act} ren=${ren} dnd=${dnd} />`)}
@@ -694,6 +733,21 @@ export function makeVaultActions(campaign, folders, opts = {}) {
       name: p.title, folders, current: dirOf(p.path),
       onSubmit: (dest) => moveVaultEntry(p.path, dest ? `${dest}/${baseName(p.path)}` : baseName(p.path)),
     }),
+    duplicatePage: async (p) => {
+      try { const copy = await duplicateVaultPage(p.path); setOp(`Duplicated to “${copy.title}”`, 'done'); }
+      catch (e) { setOp(`Duplicate failed: ${e.message}`, 'err'); }
+    },
+    // Open the page with the rail on the Chat tab and a question pre-filled
+    // in the composer (the user edits/sends it — nothing fires automatically).
+    askKeeper: (p) => {
+      // Full default shape: keeperState() only fills defaults when store.keeper
+      // is absent entirely, and Transcript renders before openPanel() runs.
+      setState({ keeper: {
+        chatId: null, events: [], attachments: [], live: null, error: null,
+        ...(store.keeper || {}), open: true, draft: `What do we know about [[${p.title}]]?`,
+      } });
+      navigate('page', { path: p.path, rail: 'chat' });
+    },
     deletePage: (p) => openModal('confirm', {
       title: 'Move page to trash', message: html`Move ${html`<strong>${p.title}</strong>`} to the world's trash? Restore it any time from the Trash view (kept 30 days).`,
       confirmLabel: 'Move to trash', onConfirm: async () => { await deleteVaultPage(p.path); if (opts.afterDelete) opts.afterDelete(p.path); },
@@ -828,6 +882,10 @@ function VaultView({ campaign }) {
                 : html`<div>
                     <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 18 }}>
                       ${(store.vaultTags || []).map((t) => html`<span key=${t.tag} onClick=${() => setSelTag(selTag === t.tag ? null : t.tag)}
+                        onContextMenu=${(e) => openContextMenu(e, [
+                          { label: 'Show tagged pages', icon: 'tag', onClick: () => setSelTag(t.tag) },
+                          { label: 'Copy #tag', icon: 'copy', onClick: () => copyText(`#${t.tag}`, 'Tag copied') },
+                        ])}
                         style=${{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 999, fontSize: 12, fontFamily: 'var(--font-mono)', cursor: 'pointer',
                           background: selTag === t.tag ? 'var(--burgundy-50)' : 'var(--surface)', border: `1px solid ${selTag === t.tag ? 'var(--burgundy-300)' : 'var(--rule)'}`,
                           color: selTag === t.tag ? 'var(--burgundy-700)' : 'var(--ink-soft)' }}>

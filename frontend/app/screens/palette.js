@@ -2,7 +2,7 @@
 // Pure frontend over shipped endpoints: fuzzy page jump (name + alias),
 // full-text hits, tag jump, recent pages, and a handful of nav/create actions.
 import { html, useState, useEffect, useRef } from '../../vendor/htm-preact-standalone.mjs';
-import { store, navigate, openModal, closeModal, recentPages } from '../core.js';
+import { store, navigate, navigateBack, navigateForward, openModal, closeModal, recentPages } from '../core.js';
 import { Icon } from '../ui.js';
 import { searchVault, loadVaultTags, createVaultPage, createVaultFolder } from '../actions.js';
 
@@ -31,6 +31,15 @@ export function useGlobalHotkeys() {
         if (!store.campaign?.campaign_id || store.modal) return;
         e.preventDefault();
         openModal('quickCapture');
+      }
+      // ⌘[ / ⌘] — navigate back / forward (Phase 14E).
+      else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === '[') {
+        e.preventDefault();
+        navigateBack();
+      }
+      else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === ']') {
+        e.preventDefault();
+        navigateForward();
       }
     };
     window.addEventListener('keydown', onKey);

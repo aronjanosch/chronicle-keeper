@@ -1,7 +1,7 @@
 // App shell: sidebar + topbar + body slot. Ported from the design's shell.jsx,
 // wired to the store's router.
 import { html, useState } from '../vendor/htm-preact-standalone.mjs';
-import { navigate, store } from './core.js';
+import { navigate, navigateBack, navigateForward, store, useStore } from './core.js';
 import { Icon, Sigil, BrandMark } from './ui.js';
 
 // Drag-resizable sidebar width, persisted per key. Returns [width, onMouseDown].
@@ -169,12 +169,28 @@ export function Sidebar({ variant = 'library', active, campaign }) {
   </aside>`;
 }
 
+function NavBtn({ icon, onClick, disabled, title }) {
+  return html`<button onClick=${onClick} disabled=${disabled} title=${title}
+    style=${{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26,
+      background: 'none', border: 'none', borderRadius: 4, cursor: disabled ? 'default' : 'pointer',
+      color: disabled ? 'var(--ink-faint)' : 'var(--ink-muted)', padding: 0, flexShrink: 0 }}
+    onMouseEnter=${disabled ? null : (e) => { e.currentTarget.style.color = 'var(--ink)'; e.currentTarget.style.background = 'var(--surface)'; }}
+    onMouseLeave=${disabled ? null : (e) => { e.currentTarget.style.color = 'var(--ink-muted)'; e.currentTarget.style.background = 'none'; }}>
+    <${Icon} name=${icon} size=${13} />
+  </button>`;
+}
+
 export function Topbar({ crumbs = [], right }) {
+  const s = useStore();
   return html`<div style=${{
     padding: '0 24px', borderBottom: '1px solid var(--rule-soft)',
     display: 'flex', alignItems: 'center', gap: 12, background: 'var(--paper)',
     flex: '0 0 auto', height: 52,
   }}>
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 2 }}>
+      <${NavBtn} icon="chev-l" onClick=${navigateBack} disabled=${!s.canNavBack} title="Go back (⌘[)" />
+      <${NavBtn} icon="chev-r" onClick=${navigateForward} disabled=${!s.canNavFwd} title="Go forward (⌘])" />
+    </div>
     <div style=${{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-muted)' }}>
       ${crumbs.filter(Boolean).map((c, i, arr) => {
         const label = typeof c === 'string' ? c : c?.label;

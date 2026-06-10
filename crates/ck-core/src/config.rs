@@ -31,7 +31,9 @@ fn default_config() -> Vec<(&'static str, String)> {
         ("default_language", "en".into()),
         ("whisperx_model", "nemo-parakeet-tdt-0.6b-v3".into()),
         ("transcription_accelerator", "auto".into()),
-        ("transcription_timeout_seconds", "3600".into()),
+        // Stall watchdog, not a wall-clock cap: cancel a transcription only
+        // after this many seconds without progress.
+        ("transcription_timeout_seconds", "600".into()),
         ("current_campaign_id", "".into()),
     ]
 }
@@ -198,7 +200,7 @@ pub fn to_response(map: &HashMap<String, String>) -> ConfigResponse {
             if t > 0 {
                 t
             } else {
-                3600
+                600
             }
         },
         has_litellm_key: !get_str(map, "litellm_api_key").is_empty(),

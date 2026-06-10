@@ -8,12 +8,11 @@
 //! With no args it tries both tracks in the bundled example recording.
 
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use ck_core::paths::Paths;
 use ck_core::state::ModelProgress;
-use ck_core::transcription::{model, transcribe_tracks};
+use ck_core::transcription::{model, transcribe_tracks, Watch};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -50,17 +49,18 @@ async fn main() -> anyhow::Result<()> {
         .map(|(i, f)| (format!("t{i}"), f.clone(), format!("Speaker{i}")))
         .collect();
 
-    let cancel = AtomicBool::new(false);
+    let watch = Watch::default();
     let progress = Arc::new(Mutex::new(ModelProgress::default()));
     let t0 = std::time::Instant::now();
-    let segments = transcribe_tracks(
+    let result = transcribe_tracks(
         &model_dir,
         "cpu",
         vad.as_deref(),
         &tracks,
-        &cancel,
+        &watch,
         &progress,
     )?;
+    let segments = result.segments;
     let elapsed = t0.elapsed();
 
     println!(

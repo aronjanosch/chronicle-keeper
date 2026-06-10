@@ -119,14 +119,14 @@ pub async fn transcribe(
     // Best-effort VAD model fetch (None → fixed-window fallback inside the engine).
     let vad_model = model::ensure_vad(&state.paths).await;
 
-    // Cap how long a single transcription may run. A corrupt or huge file would
-    // otherwise pin a worker forever and freeze the frontend op-banner. The flag
-    // cooperatively stops the blocking thread at its next chunk boundary (a
-    // blocking thread can't be force-aborted), so the leaked core is freed too.
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
+    use crate::transcription::Watch;
+
+    // "Timeout" means stall, not wall clock: a multi-hour session legitimately
+    // transcribes for hours, so the only thing worth killing is a job that has
+    // stopped making progress (e.g. a corrupt file pinning the decoder).
     let timeout_secs: u64 = state
         .with_db(crate::config::get_config_map)
         .ok()
@@ -135,39 +135,67 @@ pub async fn transcribe(
                 .and_then(|s| s.parse().ok())
         })
         .filter(|&s: &u64| s > 0)
-        .unwrap_or(3600);
+        .unwrap_or(600);
 
     // Resolve the accelerator preference (default "auto") to a concrete provider
     // for this OS; the engine still falls back to CPU if it isn't linked in.
     let accelerator = crate::config::resolve_accelerator(&accelerator);
 
-    let cancel = Arc::new(AtomicBool::new(false));
-    let cancel_worker = cancel.clone();
+    let watch = Arc::new(Watch::default());
+    let watch_worker = watch.clone();
     let progress = state.model_progress.clone();
-    let handle = tokio::task::spawn_blocking(move || {
+    let mut handle = tokio::task::spawn_blocking(move || {
         transcribe_tracks(
             &model_dir,
             accelerator,
             vad_model.as_deref(),
             &tracks,
-            &cancel_worker,
+            &watch_worker,
             &progress,
         )
     });
 
-    let segments = match tokio::time::timeout(Duration::from_secs(timeout_secs), handle).await {
-        Ok(joined) => joined
+    // Stall watchdog: the worker ticks `watch` per decoded packet / VAD window;
+    // cancel only when the tick counter hasn't moved for `timeout_secs`. After
+    // cancelling, grace-wait for the cooperative stop so the tracks that did
+    // finish come back — a thread wedged inside onnx can't be aborted, so give
+    // up on it after a minute (`None`).
+    let mut last = (watch.ticks(), Instant::now());
+    let joined = loop {
+        match tokio::time::timeout(Duration::from_secs(5), &mut handle).await {
+            Ok(joined) => break Some(joined),
+            Err(_) => {
+                let ticks = watch.ticks();
+                if ticks != last.0 {
+                    last = (ticks, Instant::now());
+                } else if last.1.elapsed().as_secs() >= timeout_secs {
+                    watch.cancel();
+                    break tokio::time::timeout(Duration::from_secs(60), &mut handle)
+                        .await
+                        .ok();
+                }
+            }
+        }
+    };
+    let outcome = match joined {
+        Some(joined) => joined
             .map_err(|e| AppError::Internal(anyhow::anyhow!("transcription task: {e}")))?
             .map_err(AppError::Internal)?,
-        Err(_) => {
-            cancel.store(true, Ordering::Relaxed); // signal the blocking thread to bail
+        None => {
             return Err(AppError::Internal(anyhow::anyhow!(
-                "Transcription timed out after {timeout_secs}s. The audio may be corrupt or too long; try splitting it or raise transcription_timeout_seconds."
+                "Transcription stalled (no progress for {timeout_secs}s) and the worker did not \
+                 stop — likely stuck on a corrupt audio file. Nothing was saved."
             )));
         }
     };
+    if !outcome.complete && outcome.segments.is_empty() {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "Transcription stalled (no progress for {timeout_secs}s) before any speech was \
+             transcribed. Nothing was saved."
+        )));
+    }
 
-    let transcript_text = segments_to_plain_text(&segments);
+    let transcript_text = segments_to_plain_text(&outcome.segments);
 
     // Writes transcript.md + provenance into session.toml (files are truth).
     state.with_db(|conn| {
@@ -180,6 +208,14 @@ pub async fn transcribe(
             &transcript_text,
         )
     })?;
+
+    if !outcome.complete {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "Transcription stalled (no progress for {timeout_secs}s) and was cancelled. A partial \
+             transcript ({} segments) was saved — re-run after checking the audio files.",
+            outcome.segments.len()
+        )));
+    }
 
     Ok(Json(TranscribeResponse {
         language,

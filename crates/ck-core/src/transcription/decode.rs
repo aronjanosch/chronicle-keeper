@@ -9,9 +9,10 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
 /// Decode an audio file (any sample rate / channel count) to mono f32 in
-/// [-1, 1]. The native sample rate is returned; sherpa-onnx resamples to 16kHz
-/// internally, so no resampler is needed here.
-pub fn decode_to_mono(path: &Path) -> Result<(Vec<f32>, u32)> {
+/// [-1, 1] at the file's native sample rate (the caller resamples to 16kHz).
+/// Ticks `watch` per packet so the stall watchdog sees decode progress, and
+/// bails early when cancelled.
+pub fn decode_to_mono(path: &Path, watch: &super::Watch) -> Result<(Vec<f32>, u32)> {
     let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
@@ -46,6 +47,10 @@ pub fn decode_to_mono(path: &Path) -> Result<(Vec<f32>, u32)> {
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
 
     loop {
+        if watch.cancelled() {
+            anyhow::bail!("decode cancelled");
+        }
+        watch.tick();
         let packet = match format.next_packet() {
             Ok(p) => p,
             Err(symphonia::core::errors::Error::IoError(e))

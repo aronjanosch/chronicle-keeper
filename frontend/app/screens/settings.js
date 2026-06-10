@@ -107,7 +107,7 @@ export function SettingsScreen({ store }) {
       setF({
         output_root: cfg.output_root || '',
         summary_provider: (cfg.summary_provider || 'ollama').toLowerCase(),
-        transcription_timeout_seconds: cfg.transcription_timeout_seconds || 3600,
+        transcription_timeout_seconds: cfg.transcription_timeout_seconds || 600,
       });
       setApiBase(store.apiBase);
       // Live reachability, Ollama-family only (other transports have no keyless probe).
@@ -130,7 +130,7 @@ export function SettingsScreen({ store }) {
       const payload = {
         output_root: f.output_root.trim(),
         summary_provider: f.summary_provider || 'ollama',
-        transcription_timeout_seconds: Math.max(60, parseInt(f.transcription_timeout_seconds, 10) || 3600),
+        transcription_timeout_seconds: Math.max(60, parseInt(f.transcription_timeout_seconds, 10) || 600),
       };
       await saveConfig(payload, apiBase.trim());
       setOp('Settings saved', 'done');
@@ -158,7 +158,7 @@ export function SettingsScreen({ store }) {
               <div style=${{ padding: '7px 10px', background: 'var(--paper-deep)', border: '1px solid var(--rule-soft)', borderRadius: 4, fontSize: 12.5, color: 'var(--ink-faint)' }}>Dark (soon)</div>
             </div>
           </${Row}>
-          <${Row} label="Transcription timeout" hint="Cap a single transcription run, in seconds. Raise for very long sessions.">
+          <${Row} label="Transcription stall timeout" hint="Cancel a run after this many seconds without progress. Long sessions keep going as long as they advance.">
             <input type="number" min="60" step="60" value=${f.transcription_timeout_seconds} onInput=${(e) => set('transcription_timeout_seconds', e.target.value)} style=${inp({ width: 140, fontFamily: 'var(--font-mono)' })} />
           </${Row}>
           ${!store.shellMode && html`

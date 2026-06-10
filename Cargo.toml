@@ -1,3 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/ck-core", "src-tauri"]
+
+# Dev builds keep workspace crates debuggable but optimize dependencies —
+# unoptimized symphonia makes FLAC decode of a multi-hour track take minutes.
+[profile.dev.package."*"]
+opt-level = 2

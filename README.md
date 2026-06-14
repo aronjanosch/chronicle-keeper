@@ -1,31 +1,46 @@
 # Chronicle Keeper
 <img width="611" height="369" alt="SCR-20260601-paxt" src="https://github.com/user-attachments/assets/231952c8-b26a-455b-bb55-3325a88c372c" />
 
-Chronicle Keeper is an AI-powered, local-first copilot for D&D session memory.
-It turns raw session audio into structured notes, campaign continuity, and reusable world knowledge.
+> 🚧 **Public beta (1.0.0-beta).** The bigger version of Chronicle Keeper. Unsigned builds —
+> see [install](#download--install). Bugs & feedback → [Issues](https://github.com/aronjanosch/chronicle-keeper-world/issues).
+
+Chronicle Keeper is an AI-powered, local-first **worldbuilding workspace** for tabletop campaigns.
+It turns raw session audio into structured notes — and then turns those notes into a living world
+you can navigate, edit, and grow.
 
 Drop in a [Craig Bot](https://craig.chat) recording, label who's who, and Chronicle Keeper
 transcribes every track on-device, then uses your chosen LLM to produce clean, campaign-aware summaries.
-The results land as Markdown with Obsidian frontmatter, ready to paste into your vault.
+Every NPC, place, faction and item becomes an editable wiki page — plain Markdown in your vault,
+with an atlas, a timeline, a relationship graph, and an AI Keeper that keeps it all current.
 
-- **AI-first workflow.** Recordings become summaries, recap context, and codex memory.
-- **Local-first and private.** Core processing runs on your device.
+- **Session notes → world.** Recordings become summaries, recaps, and a wiki the AI maintains.
+- **Navigate your world.** Atlas (maps), timeline (in-world calendar), and a graph of how everything connects.
+- **Local-first and private.** All transcription and processing runs on your device.
+- **Files are truth.** Every page is plain Markdown — fully Obsidian-compatible, no lock-in.
 - **Bring your own LLM.** Local [Ollama](https://ollama.com), Anthropic, and OpenAI-compatible providers.
-- **Built for continuity.** Keep characters, places, factions, and items consistent across sessions.
 
 📖 **[Read the docs →](https://aronjanosch.github.io/chronicle-keeper-world/)** — install guides, LLM
 setup (Ollama + getting API keys), the full workflow, and FAQ.
 
 ## Features
 
-- **On-device transcription (Parakeet native ASR).** Fast per-speaker transcript generation from Craig ZIP tracks.
-- **LLM-powered session summaries.** Generate readable notes with your selected prompt template and provider.
-- **Codex memory system.** Build and maintain a campaign glossary (NPCs, places, factions, items, PCs) that is injected into summary prompts to improve naming consistency.
-- **Codex import AI distillation.** Import an existing notes folder and let the app extract candidate glossary entries.
-- **Story-so-far recap generation.** Produce campaign continuity recaps from existing session history.
-- **Prompt template library.** Use built-in prompts or create your own summary styles.
-- **Markdown + Obsidian export.** Export notes in a format that drops directly into your vault.
-- **Artifact management.** Keep transcript and summary artifacts per session with in-app retrieval.
+**Worldbuilding**
+- **Editable wiki pages.** Every NPC, place, faction, item, PC and lore entry is a Markdown page you read and write — files are truth, fully Obsidian-compatible.
+- **The Keeper.** An AI assistant that reads your world and edits pages for you, with permissions, grounding, and undo.
+- **Atlas.** Maps with pins for your places.
+- **Timeline.** Dated pages laid out on your world's own in-world calendar (custom months/eras).
+- **Graph.** A force-directed view of how characters, factions and places link together.
+- **Multiple worlds.** Keep separate campaigns/settings side by side, each a self-contained portable folder.
+- **Backlinks, tags & queries.** Wikilinks, typed relations, broken-link diagnostics, and dataview-lite queries.
+- **Import existing notes.** Bring a folder of notes and let the app distill them into wiki pages.
+
+**Session notes**
+- **On-device transcription (Parakeet native ASR).** Fast per-speaker transcripts from Craig ZIP tracks, 25 languages.
+- **LLM-powered summaries.** Readable session notes with your chosen prompt template and provider.
+- **Story-so-far recaps.** Campaign continuity recaps from session history.
+- **Update-the-Codex.** Turn a session into proposed, grounded edits to your world pages.
+- **Prompt template library.** Built-in prompts or your own summary styles.
+- **Markdown + Obsidian export.** Notes drop straight into your vault.
 
 ## Screenshots
 <img width="305" height="218" alt="image" src="https://github.com/user-attachments/assets/437e6911-d5da-439c-b5bc-1e99ee6bba49" />
@@ -70,10 +85,14 @@ See the [LLM setup guide](https://aronjanosch.github.io/chronicle-keeper-world/d
 ## How it works
 
 ```
-Upload Craig ZIP → label speakers → transcribe on-device → summarize (your LLM) → export
+Upload Craig ZIP → label speakers → transcribe on-device → summarize (your LLM)
+        ↓
+   world pages (NPCs, places, factions…) → atlas · timeline · graph · the Keeper
 ```
 
-Everything runs on-device and offline-capable; your recordings and notes never leave your machine.
+Your world is one self-contained folder of Markdown files. Everything runs on-device and
+offline-capable; your recordings and notes never leave your machine (unless you pick a cloud LLM,
+which only ever sees the transcript text you send it).
 
 ## Build from source
 

@@ -8,7 +8,7 @@ import { openCampaign,
   loadVaultTree, createVaultFolder, moveVaultEntry,
   deleteVaultPage, deleteVaultFolder, duplicateVaultPage, copyText, attachVault, pickVaultFolder,
   searchVault, loadVaultTags, loadVaultDiagnostics, sniffVault, importVaultFolder, enhanceVaultPages, watchVault,
-  bulkVault } from '../actions.js';
+  bulkVault, saveTemplate } from '../actions.js';
 import { kindForFolder } from '../folderKinds.js';
 
 export const KINDS = [
@@ -67,6 +67,21 @@ async function importNotesFlow() {
 // Standalone AI enhancement run: pick folders to enhance, then batch-enhance.
 function enhanceFlow() {
   openModal('enhanceFolder');
+}
+
+// New template: name → a broad blank skeleton in _templates/, then open it.
+// `{{title}}` becomes the page title on create; the user sets `kind:` + fields.
+function newTemplateFlow() {
+  openModal('textPrompt', {
+    title: 'New template', label: 'Template name', placeholder: 'villain',
+    confirmLabel: 'Create template',
+    onSubmit: async (raw) => {
+      const name = (raw || '').trim().replace(/[\/\\.]/g, '');
+      if (!name) return;
+      await saveTemplate(name, '---\nkind: lore\nsummary:\n---\n\n# {{title}}\n\n');
+      navigate('template', { name });
+    },
+  });
 }
 
 export const dirOf = (p) => { const i = p.lastIndexOf('/'); return i < 0 ? '' : p.slice(0, i); };
@@ -274,6 +289,7 @@ function VaultPanel({ campaign, tree, active, onOpen, act }) {
   const [ftsHits, setFtsHits] = useState([]);
   const [saved, setSaved] = useState(() => loadSavedSearches(campaign?.campaign_id));
   const [renPath, setRenPath] = useState(null);
+  const [tplOpen, setTplOpen] = useState(false);
   const ftsTimer = useRef(null);
   // Inline rename (file-browser style) replaces the modal inside the tree.
   const ren = {
@@ -406,6 +422,29 @@ function VaultPanel({ campaign, tree, active, onOpen, act }) {
       ${diag.orphans > 0 && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 4 }}><span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--rule-strong)' }} />${diag.orphans} orphan${diag.orphans === 1 ? '' : 's'}</span>`}
       ${diag.issues > 0 && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 4 }}><span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--burgundy)' }} />${diag.issues} file issue${diag.issues === 1 ? '' : 's'}</span>`}
     </div>`}
+    <div style=${{ margin: '0 -12px', borderTop: '1px solid var(--rule-soft)' }}>
+      <div style=${{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--ink-faint)', cursor: 'pointer' }}>
+        <span onClick=${() => setTplOpen((o) => !o)} style=${{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <${Icon} name=${tplOpen ? 'chev-d' : 'chev-r'} size=${11} />
+          <${Icon} name="scroll" size=${11} />
+          <span>Templates</span>
+          <span style=${{ color: 'var(--ink-faint)', opacity: 0.7 }}>${(store.templates || []).length || ''}</span>
+        </span>
+        <span title="New template" onClick=${newTemplateFlow} style=${{ color: 'var(--ink-faint)', cursor: 'pointer', padding: 2 }}><${Icon} name="plus" size=${12} /></span>
+      </div>
+      ${tplOpen && html`<div style=${{ padding: '0 0 6px' }}>
+        ${(store.templates || []).length === 0
+          ? html`<div style=${{ fontSize: 11, color: 'var(--ink-faint)', fontStyle: 'italic', padding: '2px 12px 6px 30px' }}>No templates yet.</div>`
+          : (store.templates || []).map((t) => html`<div key=${t.name}
+              onClick=${() => navigate('template', { name: t.name })}
+              style=${{ padding: '4px 12px 4px 30px', display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--ink-soft)', cursor: 'pointer' }}
+              onMouseEnter=${(e) => (e.currentTarget.style.background = 'var(--surface)')}
+              onMouseLeave=${(e) => (e.currentTarget.style.background = 'transparent')}>
+              <span style=${{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${t.name}</span>
+              ${t.kind && html`<span style=${{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>${t.kind}</span>`}
+            </div>`)}
+      </div>`}
+    </div>
     <div onClick=${() => openModal('trash')} title="Deleted pages and folders — restore or empty"
       style=${{ margin: '0 -12px', borderTop: '1px solid var(--rule-soft)', padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--ink-faint)', cursor: 'pointer' }}>
       <${Icon} name="trash" size=${11} />

@@ -108,7 +108,8 @@ fields = ["captain", "crew:number", "home_port"]</code></pre>
         <figure><img src="../assets/screenshots/page.png" alt="A page in reading view with banner, infobox, AI-memory and tags rails" /><figcaption>A page in reading view: banner hero, the Infobox, "In the AI's memory" and tags on the right.</figcaption></figure>
 
         <h2 id="templates">Templates &amp; new pages</h2>
-        <p>Creating a page (⌘N, the Explorer's + menu, or the command palette) asks for a title and a kind, then starts you from that kind's <strong>template</strong> — a sensible heading skeleton (an NPC gets Appearance / Motivation / Relationships / History, a place gets At a glance / Notable people / Hooks, and so on). Templates live in <code>.ck/templates/&lt;kind&gt;.md</code> and are yours to edit; once you've touched one, the app never overwrites it.</p>
+        <p>Creating a page (⌘N, the Explorer's + menu, or the command palette) asks for a title and a kind, then starts you from that kind's <strong>template</strong> — a sensible heading skeleton (an NPC gets Appearance / Motivation / Relationships / History, a place gets At a glance / Notable people / Hooks, and so on).</p>
+        <p>Templates are plain Markdown files in a <code>_templates/</code> folder at the top of your world — one per kind (<code>_templates/npc.md</code>, <code>_templates/place.md</code> …), surfaced in the Explorer's <strong>Templates</strong> section. They're yours to edit, and you can add your own: drop a new <code>.md</code> file in there and it shows up as a starting point. A <code>{{title}}</code> placeholder in the body is replaced with the page's title on create, and a <code>kind:</code> in the template's frontmatter sets the new page's kind. Once you've touched a template, the app never overwrites it — only an untouched, still-default one gets upgraded when defaults change.</p>
 
         <h2 id="promote">Capture now, shape later</h2>
         <p>Jotting fast? Drop a rough note and <strong>promote</strong> it later: pick a kind and Chronicle Keeper rewrites the frontmatter, fills in the missing schema fields, appends the kind's template headings, drops the <code>#inbox</code> tag, and (optionally) files it in the right folder — links and all. Capture stays frictionless; structure comes when you're ready.</p>
@@ -123,6 +124,20 @@ fields = ["captain", "crew:number", "home_port"]</code></pre>
         <h2 id="search">Finding things</h2>
         <p>Press <strong>⌘K</strong> for the command palette: jump to any page by name or alias, run a full-text search, filter by tag, hop to recents, or fire an action. The dedicated Search screen adds facets — narrow by kind, tag, folder, or edited-date, and toggle scope between pages, session summaries and transcripts.</p>
         <figure><img src="../assets/screenshots/search.png" alt="Full-text search with kind, tag and edited-date facets" /><figcaption>Full-text search across pages, summaries and transcripts, with facets.</figcaption></figure>
+
+        <h2 id="queries">Live queries &amp; relations</h2>
+        <p>Drop a <strong>query block</strong> into any page and it renders as a live, always-current list — a roster that updates itself as the world grows. Fence it as <code>ck-query</code> (<code>query</code> and <code>dataview</code> work too):</p>
+        <pre><code>```ck-query
+LIST FROM #ashfall AND kind:npc WHERE status != dead
+```</code></pre>
+        <p>The grammar is small and read-only:</p>
+        <ul>
+          <li><strong><code>FROM</code></strong> — narrow the set by <code>#tag</code> and/or <code>kind:&lt;kind&gt;</code>, joined with <code>AND</code> (e.g. <code>FROM #ashfall AND kind:faction</code>). <code>LIST</code> is optional.</li>
+          <li><strong><code>WHERE</code></strong> — filter on frontmatter fields with <code>field = value</code>, <code>field != value</code>, or <code>field contains value</code>, again joined with <code>AND</code>.</li>
+          <li>Values are <strong>wikilink-insensitive</strong>: <code>location = [[Ashfall]]</code>, <code>location = Ashfall</code> and <code>location = "[[Ashfall|the city]]"</code> all match the same place.</li>
+        </ul>
+        <p>A typo explains itself inline rather than failing silently. Each hit links straight to the page.</p>
+        <p><strong>Relations</strong> are the typed links you put <em>in frontmatter</em> — a field whose value is a <code>[[link]]</code>, where the field name is the relationship: <code>location: "[[Ashfall]]"</code>, <code>patron: "[[Lady Voss]]"</code>, <code>members: ["[[Bram]]", "[[Sera]]"]</code>. Those predicate-typed links are what query <code>WHERE</code> clauses match on, and they show up as labelled edges in the <a href="views.html">graph view</a> — so "who reports to whom" is something you can both query and see.</p>
 
         <h2 id="trust">History, trash &amp; backups</h2>
         <p>Everything is reversible, and the AI's edits are auditable.</p>

@@ -17,7 +17,7 @@ use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde_json::{json, Value};
 use tower_http::cors::{Any, CorsLayer};
@@ -95,6 +95,11 @@ pub fn router(state: AppState) -> Router {
         .route("/campaigns/:id/backup", post(vault::backup))
         .route("/campaigns/:id/vault/kinds", get(vault::kind_schemas))
         .route("/campaigns/:id/vault/snippets", get(vault::list_snippets))
+        .route("/campaigns/:id/vault/templates", get(vault::list_templates))
+        .route(
+            "/campaigns/:id/vault/templates/:name",
+            put(vault::save_template).delete(vault::delete_template),
+        )
         .route("/campaigns/:id/vault/assets", post(vault::upload_asset))
         .route("/campaigns/:id/vault/assets/*name", get(vault::asset_bytes))
         .route(

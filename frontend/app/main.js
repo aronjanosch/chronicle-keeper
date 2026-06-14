@@ -16,6 +16,7 @@ import { SettingsScreen } from './screens/settings.js';
 import { CodexScreen } from './screens/codex.js';
 import { SearchScreen } from './screens/search.js';
 import { PageScreen } from './screens/page.js';
+import { TemplateScreen } from './screens/template.js';
 import { SessionsScreen } from './screens/sessions.js';
 import { NewWorldScreen } from './screens/newWorld.js';
 import { AtlasScreen } from './screens/atlas.js';
@@ -72,6 +73,7 @@ function App() {
     case 'search': screen = html`<${SearchScreen} store=${store} />`; break;
     case 'sessions': screen = html`<${SessionsScreen} store=${store} />`; break;
     case 'page': screen = html`<${PageScreen} store=${store} />`; break;
+    case 'template': screen = html`<${TemplateScreen} store=${store} />`; break;
     case 'newWorld': screen = html`<${NewWorldScreen} store=${store} />`; break;
     case 'atlas': screen = html`<${AtlasScreen} store=${store} />`; break;
     case 'timeline': screen = html`<${TimelineScreen} store=${store} />`; break;

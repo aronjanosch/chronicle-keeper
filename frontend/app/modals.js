@@ -462,24 +462,31 @@ function kindOptions() {
   }));
 }
 
-// ── New page (Phase 16): title + kind — the kind picks the template ─
+// ── New page (Phase 16): title + template — the template's frontmatter
+// picks the kind. Falls back to a kind picker when a world has no templates.
 function NewPageModal({ folder = '', kind: presetKind = 'npc', onCreated }) {
+  const templates = store.templates || [];
+  const defaultTpl = (templates.find((t) => t.kind === presetKind) || templates[0])?.name || '';
   const [title, setTitle] = useState('');
+  const [tpl, setTpl] = useState(defaultTpl);
   const [kind, setKind] = useState(presetKind);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const hasTemplates = templates.length > 0;
+  const pickedKind = templates.find((t) => t.name === tpl)?.kind;
   async function go() {
     const t = title.trim();
     if (!t) { setErr('Title is required'); return; }
     setBusy(true); setErr(null);
     try {
-      const page = await createVaultPage(t, kind, folder);
+      const page = await createVaultPage(t, hasTemplates ? { template: tpl } : kind, folder);
       closeModal();
       if (onCreated) onCreated(page); else navigate('page', { path: page.path });
     } catch (e) { setErr(e.message); setBusy(false); }
   }
+  const tplOptions = templates.map((t) => ({ value: t.name, label: t.kind ? `${t.name} · ${t.kind}` : t.name }));
   return html`<${ModalShell} title="New page" footer=${html`
-    <span style=${{ flex: 1, fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>${folder ? `In ${folder}/ · ` : ''}Starts from the kind's template</span>
+    <span style=${{ flex: 1, fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>${folder ? `In ${folder}/ · ` : ''}${hasTemplates ? `Starts from the “${tpl}” template${pickedKind ? ` (${pickedKind})` : ''}` : "Starts from the kind's template"}</span>
     <${Btn} kind="ghost" disabled=${busy} onClick=${closeModal}>Cancel</${Btn}>
     <${Btn} kind="primary" disabled=${busy} onClick=${go}>${busy ? 'Creating…' : 'Create page'}</${Btn}>`}>
     ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
@@ -487,9 +494,13 @@ function NewPageModal({ folder = '', kind: presetKind = 'npc', onCreated }) {
       <${Input} value=${title} onInput=${setTitle} placeholder="Lord Ulric Tannerheim" autofocus
         onKeydown=${(e) => { if (e.key === 'Enter') go(); }} />
     </${Field}>
-    <${Field} label="Kind">
-      <${Select} value=${kind} onChange=${setKind} options=${kindOptions()} />
-    </${Field}>
+    ${hasTemplates
+      ? html`<${Field} label="Template">
+          <${Select} value=${tpl} onChange=${setTpl} options=${tplOptions} />
+        </${Field}>`
+      : html`<${Field} label="Kind">
+          <${Select} value=${kind} onChange=${setKind} options=${kindOptions()} />
+        </${Field}>`}
   </${ModalShell}>`;
 }
 

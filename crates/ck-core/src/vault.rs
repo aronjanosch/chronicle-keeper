@@ -412,12 +412,14 @@ pub fn create_page_with(
     write_page(vault, &rel, content)
 }
 
-// ── Page templates (.ck/templates/<kind>.md) ─────────────────────
-// User-editable starter files; `{{title}}` is replaced on create. A missing
-// template falls back to a schema-derived default built at create time.
+// ── Page templates (_templates/<name>.md) ────────────────────────
+// User-editable, user-creatable starter files surfaced in the Explorer's
+// Templates section; `{{title}}` is replaced on create. `kind:` frontmatter
+// picks the page kind. A missing template falls back to a schema-derived
+// default. `_templates` is a reserved dir (out of the page tree/index/links).
 
 pub fn templates_dir(world_root: &Path) -> PathBuf {
-    world_root.join(".ck").join("templates")
+    world_root.join("_templates")
 }
 
 /// Standard body headings per kind (Phase 16); `lore` stays free-form.
@@ -478,16 +480,87 @@ pub fn write_default_templates(world_root: &Path) -> AppResult<()> {
     let fresh = !dir.exists();
     if fresh {
         std::fs::create_dir_all(&dir)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("create .ck/templates: {e}")))?;
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("create _templates: {e}")))?;
+        migrate_legacy_templates(world_root, &dir);
     }
     for (kind, fields) in crate::world_config::WorldConfig::default().kind_schemas() {
         let path = dir.join(format!("{kind}.md"));
         let untouched_seed = std::fs::read_to_string(&path)
             .map(|c| c == template_base(&kind, &fields))
             .unwrap_or(false);
-        if fresh || untouched_seed {
+        if (fresh && !path.exists()) || untouched_seed {
             let _ = std::fs::write(path, template_content(&kind, &fields));
         }
+    }
+    Ok(())
+}
+
+// One-time move of pre-`_templates` files from the old `.ck/templates/<kind>.md`
+// home. Only `*.md` files move; the `snippets` subdir stays where it is.
+fn migrate_legacy_templates(world_root: &Path, dest: &Path) {
+    let legacy = world_root.join(".ck").join("templates");
+    let Ok(entries) = std::fs::read_dir(&legacy) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        if let Some(name) = path.file_name() {
+            let _ = std::fs::rename(&path, dest.join(name));
+        }
+    }
+}
+
+/// List every template file as `(name, content)`, sorted by name. Skips
+/// dotfiles and the `snippets` subdir.
+pub fn list_templates(world_root: &Path) -> Vec<(String, String)> {
+    let Ok(entries) = std::fs::read_dir(templates_dir(world_root)) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("md") {
+                return None;
+            }
+            let name = path.file_stem()?.to_str()?.to_string();
+            if name.starts_with('.') {
+                return None;
+            }
+            Some((name, std::fs::read_to_string(&path).ok()?))
+        })
+        .collect();
+    out.sort_by_key(|(name, _)| name.to_lowercase());
+    out
+}
+
+fn template_path(world_root: &Path, name: &str) -> AppResult<PathBuf> {
+    let name = name.trim();
+    if name.is_empty() || name.contains(['/', '\\', '.']) {
+        return Err(AppError::BadRequest("invalid template name".into()));
+    }
+    Ok(templates_dir(world_root).join(format!("{name}.md")))
+}
+
+pub fn write_template(world_root: &Path, name: &str, content: &str) -> AppResult<()> {
+    let path = template_path(world_root, name)?;
+    let dir = templates_dir(world_root);
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("create _templates: {e}")))?;
+    }
+    std::fs::write(&path, content)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("write template: {e}")))
+}
+
+pub fn delete_template(world_root: &Path, name: &str) -> AppResult<()> {
+    let path = template_path(world_root, name)?;
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("delete template: {e}")))?;
     }
     Ok(())
 }
@@ -495,7 +568,7 @@ pub fn write_default_templates(world_root: &Path) -> AppResult<()> {
 // ── Snippets (.ck/templates/snippets/<name>.md) — caret inserts, Phase 8C ──
 
 pub fn snippets_dir(world_root: &Path) -> PathBuf {
-    templates_dir(world_root).join("snippets")
+    world_root.join(".ck").join("templates").join("snippets")
 }
 
 const DEFAULT_SNIPPETS: &[(&str, &str)] = &[
@@ -570,6 +643,27 @@ pub fn new_page_content(
 ) -> String {
     let tpl = read_template(world_root, kind).unwrap_or_else(|| template_content(kind, fields));
     tpl.replace("{{title}}", title.trim())
+}
+
+/// Starter content + frontmatter kind for a named template. `{{title}}` is
+/// substituted; the kind is read from the template's own `kind:` frontmatter
+/// (empty when absent — the caller decides the fallback). Returns None when no
+/// template of that name exists.
+pub fn new_page_from_template(
+    world_root: &Path,
+    name: &str,
+    title: &str,
+) -> Option<(String, String)> {
+    let path = template_path(world_root, name).ok()?;
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let (fm, _) = split_frontmatter(&raw);
+    let kind = fm
+        .iter()
+        .find(|(k, _)| k == "kind")
+        .and_then(|(_, v)| v.first())
+        .cloned()
+        .unwrap_or_default();
+    Some((raw.replace("{{title}}", title.trim()), kind))
 }
 
 /// `## ` headings of the kind's template (world override or built-in default).
@@ -1404,6 +1498,50 @@ mod tests {
         assert!(content.contains("region:"));
         assert!(content.contains("# Rivendell"));
         assert!(content.contains("## At a glance"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn templates_list_write_delete_and_from_template() {
+        let dir = tmp_vault("templates-crud");
+        write_default_templates(&dir).unwrap();
+
+        // a user-created custom template targeting an existing kind
+        write_template(&dir, "villain", "---\nkind: npc\nsummary:\n---\n\n# {{title}}\n\n## Scheme\n").unwrap();
+        let names: Vec<String> = list_templates(&dir).into_iter().map(|(n, _)| n).collect();
+        assert!(names.contains(&"villain".to_string()));
+        assert!(names.contains(&"npc".to_string()));
+
+        let (body, kind) = new_page_from_template(&dir, "villain", "Sauron").unwrap();
+        assert_eq!(kind, "npc");
+        assert!(body.contains("# Sauron"));
+        assert!(body.contains("## Scheme"));
+        assert!(!body.contains("{{title}}"));
+
+        delete_template(&dir, "villain").unwrap();
+        assert!(new_page_from_template(&dir, "villain", "x").is_none());
+
+        // name guards
+        assert!(write_template(&dir, "../evil", "x").is_err());
+        assert!(template_path(&dir, "a/b").is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn legacy_templates_migrate_to_new_dir() {
+        let dir = tmp_vault("templates-migrate");
+        let legacy = dir.join(".ck").join("templates");
+        std::fs::create_dir_all(legacy.join("snippets")).unwrap();
+        std::fs::write(legacy.join("npc.md"), "---\nkind: npc\nvoice:\n---\n\n# {{title}}\n").unwrap();
+        std::fs::write(legacy.join("snippets").join("Statblock.md"), "snip\n").unwrap();
+
+        write_default_templates(&dir).unwrap();
+        // the .md moved into _templates, the user edit preserved
+        let npc = std::fs::read_to_string(templates_dir(&dir).join("npc.md")).unwrap();
+        assert!(npc.contains("voice:"));
+        assert!(!legacy.join("npc.md").exists());
+        // snippets subdir untouched in its old home
+        assert!(legacy.join("snippets").join("Statblock.md").exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 

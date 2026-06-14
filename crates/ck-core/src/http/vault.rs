@@ -567,6 +567,55 @@ pub async fn list_snippets(
     Ok(Json(json!({ "snippets": snippets })))
 }
 
+// ── Page templates (Explorer Templates section) ─────────────────
+pub async fn list_templates(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let (root, _) = world_cfg(&state, &campaign_id)?;
+    // Lazily seed defaults / migrate the legacy `.ck/templates` home so worlds
+    // created before templates became user-facing still get them.
+    let _ = vault::write_default_templates(&root);
+    let templates: Vec<Value> = vault::list_templates(&root)
+        .into_iter()
+        .map(|(name, content)| {
+            let (fm, _) = vault::split_frontmatter(&content);
+            let kind = fm
+                .iter()
+                .find(|(k, _)| k == "kind")
+                .and_then(|(_, v)| v.first())
+                .cloned()
+                .unwrap_or_default();
+            json!({ "name": name, "kind": kind, "content": content })
+        })
+        .collect();
+    Ok(Json(json!({ "templates": templates })))
+}
+
+#[derive(Deserialize)]
+pub struct TemplateBody {
+    pub content: String,
+}
+
+pub async fn save_template(
+    State(state): State<AppState>,
+    Path((campaign_id, name)): Path<(String, String)>,
+    Json(req): Json<TemplateBody>,
+) -> AppResult<Json<Value>> {
+    let (root, _) = world_cfg(&state, &campaign_id)?;
+    vault::write_template(&root, &name, &req.content)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn delete_template(
+    State(state): State<AppState>,
+    Path((campaign_id, name)): Path<(String, String)>,
+) -> AppResult<Json<Value>> {
+    let (root, _) = world_cfg(&state, &campaign_id)?;
+    vault::delete_template(&root, &name)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 #[derive(Deserialize)]
 pub struct AssetQuery {
     pub name: String,
@@ -652,6 +701,9 @@ pub struct CreateRequest {
     pub kind: String,
     #[serde(default)]
     pub folder: Option<String>,
+    // When set, seed from this template file; kind comes from its frontmatter.
+    #[serde(default)]
+    pub template: Option<String>,
 }
 
 fn default_kind() -> String {
@@ -957,13 +1009,24 @@ pub async fn create_page(
 ) -> AppResult<Json<vault::Page>> {
     let root = vault_root(&state, &campaign_id)?;
     let (world_root, cfg) = world_cfg(&state, &campaign_id)?;
-    let fields = cfg
-        .kind_schemas()
-        .into_iter()
-        .find(|(k, _)| k == &req.kind)
-        .map(|(_, f)| f)
-        .unwrap_or_default();
-    let content = vault::new_page_content(&world_root, &req.kind, &req.title, &fields);
+    // A named template seeds the body (kind comes from its own frontmatter);
+    // otherwise fall back to the kind's schema-derived default.
+    let content = match req
+        .template
+        .as_deref()
+        .and_then(|t| vault::new_page_from_template(&world_root, t, &req.title))
+    {
+        Some((body, _kind)) => body,
+        None => {
+            let fields = cfg
+                .kind_schemas()
+                .into_iter()
+                .find(|(k, _)| k == &req.kind)
+                .map(|(_, f)| f)
+                .unwrap_or_default();
+            vault::new_page_content(&world_root, &req.kind, &req.title, &fields)
+        }
+    };
     let page = vault::create_page_with(&root, &req.title, req.folder.as_deref(), &content)?;
     // First version = "did not exist": restoring it deletes the page again.
     let _ = history::record_create(&world_root, &page.path, "user");

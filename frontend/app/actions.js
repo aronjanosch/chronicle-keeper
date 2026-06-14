@@ -37,7 +37,7 @@ export async function openCampaign(id) {
     });
     loadWorldTabs(id);
     if (vaultTree) pruneTabs(vaultTree.pages || []);
-    if (campaign.vault_path) { loadVaultLinks(id); loadKindSchemas(id); loadAtlasMaps(id); }
+    if (campaign.vault_path) { loadVaultLinks(id); loadKindSchemas(id); loadAtlasMaps(id); loadTemplates(id); }
     navigate('campaign', { id });
   } catch (e) { setState({ error: e.message, loading: false }); }
 }
@@ -469,15 +469,41 @@ export async function loadSnippets(campaignId) {
   return r.snippets || [];
 }
 
+// User-editable page templates (_templates/<name>.md). Each: { name, kind, content }.
+export async function loadTemplates(campaignId) {
+  const id = campaignId || store.campaign?.campaign_id;
+  if (!id) return [];
+  const r = await apiFetch(`/campaigns/${id}/vault/templates`).catch(() => ({ templates: [] }));
+  setState({ templates: r.templates || [] });
+  return r.templates || [];
+}
+
+export async function saveTemplate(name, content) {
+  const id = store.campaign.campaign_id;
+  await apiJson(`/campaigns/${id}/vault/templates/${encodeURIComponent(name)}`, 'PUT', { content });
+  await loadTemplates(id);
+}
+
+export async function deleteTemplate(name) {
+  const id = store.campaign.campaign_id;
+  await apiFetch(`/campaigns/${id}/vault/templates/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  await loadTemplates(id);
+}
+
 // Pasted/dropped editor media → <vault>/Assets/. Returns { path, name }.
 export function uploadVaultAsset(name, blob) {
   const id = store.campaign.campaign_id;
   return apiFetch(`/campaigns/${id}/vault/assets?name=${encodeURIComponent(name)}`, { method: 'POST', body: blob });
 }
 
-export async function createVaultPage(title, kind, folder) {
+// `pick` is either a kind (schema-derived body) or { template } to seed from a
+// named template file — its frontmatter then dictates the page's kind.
+export async function createVaultPage(title, pick, folder) {
   const id = store.campaign.campaign_id;
-  const page = await apiJson(`/campaigns/${id}/vault/pages`, 'POST', { title, kind, folder: folder || null });
+  const body = { title, folder: folder || null };
+  if (pick && typeof pick === 'object' && pick.template) body.template = pick.template;
+  else body.kind = pick;
+  const page = await apiJson(`/campaigns/${id}/vault/pages`, 'POST', body);
   await loadVaultTree(id);
   return page;
 }

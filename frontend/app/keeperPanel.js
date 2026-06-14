@@ -46,12 +46,12 @@ export function defaultPick() {
 async function fetchChatInto(chatId) {
   const cid = store.campaign?.campaign_id;
   if (!cid || !chatId) return;
-  const [{ events }, att] = await Promise.all([
+  const [{ events, undoable }, att] = await Promise.all([
     apiFetch(`/campaigns/${cid}/agent/chats/${chatId}`),
     apiFetch(`/campaigns/${cid}/agent/chats/${chatId}/attachments`).catch(() => ({ attachments: [] })),
   ]);
   // Entering a chat resets the pick to the global default (per-chat choice).
-  patchKeeper({ chatId, events, attachments: att.attachments || [], live: null, error: null, ...defaultPick() });
+  patchKeeper({ chatId, events, undoable: undoable || 0, attachments: att.attachments || [], live: null, error: null, ...defaultPick() });
 }
 
 export async function openChat(chatId) {
@@ -84,7 +84,7 @@ export async function newChat() {
   if (!cid) return;
   try {
     const chat = await apiJson(`/campaigns/${cid}/agent/chats`, 'POST', {});
-    patchKeeper({ chatId: chat.id, events: [], attachments: [], live: null, error: null, ...defaultPick() });
+    patchKeeper({ chatId: chat.id, events: [], undoable: 0, attachments: [], live: null, error: null, ...defaultPick() });
     bump('keeper');
     return chat.id;
   } catch (e) {
@@ -137,8 +137,8 @@ export async function sendMessage(text, images = []) {
   }
   // Authoritative reload: persisted jsonl is the truth for the transcript.
   try {
-    const { events: fresh } = await apiFetch(`/campaigns/${cid}/agent/chats/${keeperState().chatId}`);
-    patchKeeper({ events: fresh, live: null });
+    const { events: fresh, undoable } = await apiFetch(`/campaigns/${cid}/agent/chats/${keeperState().chatId}`);
+    patchKeeper({ events: fresh, undoable: undoable || 0, live: null });
   } catch (_) {
     patchKeeper({ live: null });
   }
@@ -175,9 +175,13 @@ export async function undoLast() {
   const k = keeperState();
   if (!cid || !k.chatId || k.live) return;
   try {
-    const { restored } = await apiJson(`/campaigns/${cid}/agent/chats/${k.chatId}/undo`, 'POST', { scope: 'last' });
+    const { restored, remaining } = await apiJson(`/campaigns/${cid}/agent/chats/${k.chatId}/undo`, 'POST', { scope: 'last' });
     setOp(restored.length ? `Restored ${restored.join(', ')}` : 'Nothing to undo', restored.length ? 'done' : '');
-    if (restored.length) { loadVaultTree(cid); bump('vault'); }
+    if (typeof remaining === 'number') patchKeeper({ undoable: remaining });
+    if (restored.length) {
+      loadVaultTree(cid);
+      bump('vault');
+    }
   } catch (e) {
     patchKeeper({ error: String(e.message || e) });
   }
@@ -583,6 +587,12 @@ export function Conversation({ k, empty }) {
   const { dragging, bind } = useDropAttachments();
   return html`<div style=${{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }} ...${bind}>
     <${Transcript} k=${k} empty=${empty} />
+    ${k.undoable > 0 && !k.live && html`<div style=${{ display: 'flex', alignItems: 'center', gap: 7, padding: '4px 12px', borderTop: '1px solid var(--rule-soft)', fontSize: 12, color: 'var(--ink-muted)' }}>
+      <span style=${{ flex: 1 }}>The Keeper changed ${k.undoable} ${k.undoable === 1 ? 'file' : 'files'} in this chat.</span>
+      <button class="ck-btn" onClick=${undoLast} title="Revert the Keeper's most recent change">
+        <${Icon} name="undo" size=${12} /> Undo last change
+      </button>
+    </div>`}
     <${Composer} busy=${!!k.live} />
     <${PickerBar} k=${k} />
     ${dragging && html`<div style=${{

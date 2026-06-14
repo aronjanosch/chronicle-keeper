@@ -53,6 +53,7 @@ const PATHS = {
   sword:    'm13 3-7 7M13 3l-1 4M13 3l-4 1M6 10l-3 3 1 1 3-3M6 10l1 1M9 13l1 1',
   flag:     'M3 14V2M3 3h8l-1.5 2.5L11 8H3',
   backlink: 'M9.5 6.5 6.5 9.5M10 4l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M6 12l-1 1A2.5 2.5 0 0 1 1.5 9.5l1-1M2 2v3h3',
+  undo:     'M3.5 7.5a5 5 0 1 1-1 3M3.5 7.5V4M3.5 7.5H7',
 };
 // icons needing extra geometry (circles/rects)
 function customIcon(name, p) {

@@ -49,9 +49,10 @@ pub async fn get_chat(
     Path((campaign_id, chat_id)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
     let (root, _) = world_cfg(&state, &campaign_id)?;
-    Ok(Json(
-        json!({ "events": chats::load_chat(&root, &chat_id)? }),
-    ))
+    Ok(Json(json!({
+        "events": chats::load_chat(&root, &chat_id)?,
+        "undoable": checkpoints::count(&root, &chat_id),
+    })))
 }
 
 pub async fn delete_chat(

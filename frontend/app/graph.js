@@ -329,7 +329,7 @@ export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hidde
     };
     const onDbl = (e) => {
       const n = nodeAt(toWorld(e));
-      if (n && onOpen) onOpen(n.path);
+      if (n && onOpen) onOpen(n.path, e);
     };
     const onCtx = (e) => {
       const n = nodeAt(toWorld(e));

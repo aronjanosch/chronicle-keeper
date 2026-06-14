@@ -3,7 +3,7 @@
 // init run streams like a chat turn (tool rows visible); memories are the
 // fact files the Keeper maintains across chats.
 import { html, useState, useEffect } from '../vendor/htm-preact-standalone.mjs';
-import { apiFetch, apiJson, apiStream, setOp, store } from './core.js';
+import { apiFetch, apiJson, apiStream, bump, setOp, store } from './core.js';
 import { Icon, Spinner, renderBlockHtml, wikilinkClick } from './ui.js';
 
 const TYPE_LABEL = { preference: 'preference', task: 'task', style: 'style', correction: 'correction' };
@@ -26,7 +26,7 @@ export function MemoryView({ cid }) {
     setBrief(b);
     setMemories(m.memories || []);
   }
-  useEffect(() => { reload(); }, [cid]);
+  useEffect(() => { reload(); }, [cid, store.dirty_keeper]);
 
   async function regenerate() {
     if (run) return;
@@ -51,7 +51,7 @@ export function MemoryView({ cid }) {
       setOp(String(e.message || e), 'error');
     }
     setRun(null);
-    reload();
+    bump('keeper'); // reload here + the brief dot in the chat list
   }
 
   async function forget(name) {

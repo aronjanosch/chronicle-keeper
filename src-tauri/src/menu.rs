@@ -9,7 +9,7 @@ use tauri_plugin_opener::OpenerExt;
 
 const DOCS_URL: &str = "https://aronjanosch.github.io/chronicle-keeper/";
 
-/// Format/Find items that only apply while the page editor is mounted; the
+/// Format items that only apply while the page editor is mounted; the
 /// frontend toggles them via the `set_format_enabled` command.
 pub struct EditorMenuItems(Vec<MenuItem<Wry>>);
 
@@ -48,19 +48,34 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .quit()
         .build()?;
 
+    #[allow(unused_mut)] // mutated only on non-macOS (settings + quit)
     let mut file = SubmenuBuilder::new(app, "File")
         .item(&mi("new-page", "New Page", Some("CmdOrCtrl+N"))?)
         .item(&mi("new-folder", "New Folder", None)?)
-        .item(&mi("quick-capture", "Quick Capture", Some("CmdOrCtrl+Shift+J"))?)
+        .item(&mi(
+            "quick-capture",
+            "Quick Capture",
+            Some("CmdOrCtrl+Shift+J"),
+        )?)
         .separator()
         .item(&mi("import", "Import Notes…", None)?)
         .item(&mi("export-world", "Export World…", None)?)
         .separator()
-        .item(&mi("go-library", "All Worlds", None)?);
-    #[cfg(target_os = "macos")]
-    {
-        file = file.separator().close_window();
-    }
+        .item(&mi("go-library", "All Worlds", None)?)
+        .separator()
+        // Close Tab owns CmdOrCtrl+W (15D), so Close Window is a custom item on
+        // Shift — the predefined one would grab CmdOrCtrl+W for itself.
+        .item(&mi("tab-close", "Close Tab", Some("CmdOrCtrl+W"))?)
+        .item(&mi(
+            "tab-reopen",
+            "Reopen Closed Tab",
+            Some("CmdOrCtrl+Shift+T"),
+        )?)
+        .item(&mi(
+            "close-window",
+            "Close Window",
+            Some("CmdOrCtrl+Shift+W"),
+        )?);
     #[cfg(not(target_os = "macos"))]
     {
         file = file
@@ -71,7 +86,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     }
     let file = file.build()?;
 
-    let f_find = mi("find", "Find in Page", Some("CmdOrCtrl+F"))?;
     let edit = SubmenuBuilder::new(app, "Edit")
         .undo()
         .redo()
@@ -81,8 +95,12 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .paste()
         .select_all()
         .separator()
-        .item(&f_find)
-        .item(&mi("search-world", "Search World", Some("CmdOrCtrl+Shift+F"))?)
+        .item(&mi("find", "Find in Page", Some("CmdOrCtrl+F"))?)
+        .item(&mi(
+            "search-world",
+            "Search World",
+            Some("CmdOrCtrl+Shift+F"),
+        )?)
         .build()?;
 
     let f_bold = mi("fmt-bold", "Bold", Some("CmdOrCtrl+B"))?;
@@ -116,7 +134,11 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .item(&mi("palette", "Command Palette…", Some("CmdOrCtrl+K"))?)
         .item(&mi("quick-open", "Quick Open…", Some("CmdOrCtrl+P"))?)
         .separator()
-        .item(&mi("toggle-rail", "Toggle Side Panel", Some("CmdOrCtrl+Shift+K"))?)
+        .item(&mi(
+            "toggle-rail",
+            "Toggle Side Panel",
+            Some("CmdOrCtrl+Shift+K"),
+        )?)
         .item(&mi("zen", "Zen Mode", None)?)
         .separator()
         .item(&mi("go-overview", "World Overview", None)?)
@@ -130,6 +152,9 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .item(&mi("nav-back", "Back", Some("CmdOrCtrl+["))?)
         .item(&mi("nav-forward", "Forward", Some("CmdOrCtrl+]"))?)
         .separator()
+        .item(&mi("tab-next", "Next Tab", Some("CmdOrCtrl+Shift+]"))?)
+        .item(&mi("tab-prev", "Previous Tab", Some("CmdOrCtrl+Shift+["))?)
+        .separator()
         .item(&mi("zoom-in", "Zoom In", Some("CmdOrCtrl+="))?)
         .item(&mi("zoom-out", "Zoom Out", Some("CmdOrCtrl+-"))?)
         .item(&mi("zoom-reset", "Actual Size", Some("CmdOrCtrl+0"))?)
@@ -140,8 +165,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let window = SubmenuBuilder::new(app, "Window")
         .minimize()
         .maximize()
-        .separator()
-        .close_window()
         .build()?;
 
     let help = SubmenuBuilder::new(app, "Help")
@@ -165,8 +188,17 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     app.set_menu(menu)?;
 
     let editor_items = vec![
-        f_find, f_bold, f_italic, f_code, f_highlight, f_wikilink, f_h1, f_h2, f_h3, f_list,
-        f_quote, f_callout,
+        f_bold,
+        f_italic,
+        f_code,
+        f_highlight,
+        f_wikilink,
+        f_h1,
+        f_h2,
+        f_h3,
+        f_list,
+        f_quote,
+        f_callout,
     ];
     for item in &editor_items {
         let _ = item.set_enabled(false);
@@ -193,6 +225,11 @@ pub fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         }
         "docs" => {
             let _ = app.opener().open_url(DOCS_URL, None::<&str>);
+        }
+        "close-window" => {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.close();
+            }
         }
         _ => {
             let _ = app.emit("ck-menu", id);

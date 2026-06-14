@@ -15,7 +15,8 @@ use crate::store::campaigns;
 use crate::{history, trash, vault};
 
 pub(super) fn vault_root(state: &AppState, campaign_id: &str) -> AppResult<PathBuf> {
-    let path = state.with_db(|conn| campaigns::get_campaign(conn, campaign_id))?
+    let path = state
+        .with_db(|conn| campaigns::get_campaign(conn, campaign_id))?
         .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))?
         .vault_path;
     match path {
@@ -71,25 +72,26 @@ pub async fn attach(
     if let Ok(old) = vault_root(&state, &campaign_id) {
         state.evict_index(&old);
     }
-    let campaign = state.with_db(|conn| {
-        let detail = campaigns::get_campaign(conn, &campaign_id)?
-            .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))?;
-        match crate::world_config::read(&new_root)? {
-            Some(cfg) if cfg.id != campaign_id => {
-                return Err(AppError::BadRequest(
-                    "That folder already belongs to another world".into(),
-                ));
+    let campaign = state
+        .with_db(|conn| {
+            let detail = campaigns::get_campaign(conn, &campaign_id)?
+                .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))?;
+            match crate::world_config::read(&new_root)? {
+                Some(cfg) if cfg.id != campaign_id => {
+                    return Err(AppError::BadRequest(
+                        "That folder already belongs to another world".into(),
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    let codex_root = vault::adopt_vault_layout(&new_root)?;
+                    vault::write_world_config(&new_root, &campaign_id, &detail.name, &codex_root)?;
+                }
             }
-            Some(_) => {}
-            None => {
-                let codex_root = vault::adopt_vault_layout(&new_root)?;
-                vault::write_world_config(&new_root, &campaign_id, &detail.name, &codex_root)?;
-            }
-        }
-        campaigns::register_world_dir(conn, &new_root)?;
-        campaigns::get_campaign(conn, &campaign_id)
-    })?
-    .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))?;
+            campaigns::register_world_dir(conn, &new_root)?;
+            campaigns::get_campaign(conn, &campaign_id)
+        })?
+        .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))?;
     Ok(Json(serde_json::to_value(campaign).unwrap()))
 }
 
@@ -122,6 +124,7 @@ pub async fn sniff(Json(req): Json<SniffRequest>) -> AppResult<Json<Value>> {
     Ok(Json(json!({
         "mode": if pages > 0 { "foreign" } else { "empty" },
         "md_pages": pages,
+        "assets": vault::count_assets(&root),
     })))
 }
 
@@ -139,7 +142,9 @@ pub async fn import_notes(
     let root = vault_root(&state, &campaign_id)?;
     let report = vault::import_folder(&root, std::path::Path::new(req.path.trim()))?;
     reindex_all(&state, &root);
-    Ok(Json(json!({ "imported": report.imported, "renamed": report.renamed })))
+    Ok(Json(
+        json!({ "imported": report.imported, "renamed": report.renamed, "assets": report.assets }),
+    ))
 }
 
 // Pages as JSON, enriched with index-known aliases + tags (empty when the
@@ -208,27 +213,37 @@ pub async fn move_entry(
 ) -> AppResult<Json<Value>> {
     let root = vault_root(&state, &campaign_id)?;
     let (world_root, _) = world_cfg(&state, &campaign_id)?;
-    let is_page_move = req.from.ends_with(".md") && req.to.ends_with(".md");
-    // Collect inbound links before the index forgets the old target.
-    let sources = if is_page_move {
-        state
-            .with_index(&root, |conn| crate::store::index::sources_linking_to(conn, &req.from))
-            .and_then(|r| r)
-            .unwrap_or_default()
+    if req.from.ends_with(".md") && req.to.ends_with(".md") {
+        move_page_cascade(&state, &root, &world_root, &req.from, &req.to)?;
     } else {
-        Vec::new()
-    };
-    vault::move_entry(&root, &req.from, &req.to)?;
-    history::move_history(&world_root, &req.from, &req.to);
-    if is_page_move {
-        rewrite_links_after_rename(&state, &world_root, &root, &req.from, &req.to, sources);
-        reindex_remove(&state, &root, &req.from);
-        reindex_page(&state, &root, &req.to);
-    } else {
+        vault::move_entry(&root, &req.from, &req.to)?;
+        history::move_history(&world_root, &req.from, &req.to);
         // Folder move: every child path changed — full rebuild.
         reindex_all(&state, &root);
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+fn move_page_cascade(
+    state: &AppState,
+    root: &std::path::Path,
+    world_root: &std::path::Path,
+    from: &str,
+    to: &str,
+) -> AppResult<()> {
+    // Collect inbound links before the index forgets the old target.
+    let sources = state
+        .with_index(root, |conn| {
+            crate::store::index::sources_linking_to(conn, from)
+        })
+        .and_then(|r| r)
+        .unwrap_or_default();
+    vault::move_entry(root, from, to)?;
+    history::move_history(world_root, from, to);
+    rewrite_links_after_rename(state, world_root, root, from, to, sources);
+    reindex_remove(state, root, from);
+    reindex_page(state, root, to);
+    Ok(())
 }
 
 // Rename cascade: rewrite [[OldName]] → [[NewName]] in every page that linked
@@ -321,7 +336,10 @@ pub async fn trash_restore(
 ) -> AppResult<Json<Value>> {
     let root = vault_root(&state, &campaign_id)?;
     let (world_root, _) = world_cfg(&state, &campaign_id)?;
-    let id = req.id.as_deref().ok_or_else(|| AppError::BadRequest("id is required".into()))?;
+    let id = req
+        .id
+        .as_deref()
+        .ok_or_else(|| AppError::BadRequest("id is required".into()))?;
     let restored = trash::restore(&world_root, &root, id)?;
     for rel in &restored {
         reindex_page(&state, &root, rel);
@@ -335,7 +353,9 @@ pub async fn trash_empty(
     Json(req): Json<TrashIdRequest>,
 ) -> AppResult<Json<Value>> {
     let (world_root, _) = world_cfg(&state, &campaign_id)?;
-    Ok(Json(json!({ "removed": trash::empty(&world_root, req.id.as_deref()) })))
+    Ok(Json(
+        json!({ "removed": trash::empty(&world_root, req.id.as_deref()) }),
+    ))
 }
 
 // ── Page history (Phase 13A): versions, snapshots, restore ────────
@@ -370,9 +390,13 @@ pub async fn page_history(
     match q.ts {
         Some(ts) => {
             let (meta, content) = history::read_version(&world_root, &page, ts)?;
-            Ok(Json(json!({ "ts": meta.ts, "origin": meta.origin, "content": content })))
+            Ok(Json(
+                json!({ "ts": meta.ts, "origin": meta.origin, "content": content }),
+            ))
         }
-        None => Ok(Json(json!({ "versions": history::list_page(&world_root, &page)? }))),
+        None => Ok(Json(
+            json!({ "versions": history::list_page(&world_root, &page)? }),
+        )),
     }
 }
 
@@ -461,7 +485,11 @@ pub async fn bulk(
             let folder = req.folder.as_deref().unwrap_or("").trim().trim_matches('/');
             for page in &req.pages {
                 let name = base(page);
-                let to = if folder.is_empty() { name } else { format!("{folder}/{name}") };
+                let to = if folder.is_empty() {
+                    name
+                } else {
+                    format!("{folder}/{name}")
+                };
                 if to == *page {
                     continue; // already there
                 }
@@ -499,16 +527,18 @@ pub async fn bulk(
                                 reindex_page(&state, &root, page);
                                 done += 1;
                             }
-                            Err(e) => {
-                                errors.push(json!({ "page": page, "error": e.to_string() }))
-                            }
+                            Err(e) => errors.push(json!({ "page": page, "error": e.to_string() })),
                         }
                     }
                     Err(e) => errors.push(json!({ "page": page, "error": e.to_string() })),
                 }
             }
         }
-        other => return Err(AppError::BadRequest(format!("Unknown bulk action: {other}"))),
+        other => {
+            return Err(AppError::BadRequest(format!(
+                "Unknown bulk action: {other}"
+            )))
+        }
     }
     Ok(Json(json!({ "done": done, "errors": errors })))
 }
@@ -567,8 +597,8 @@ pub async fn asset_bytes(
 ) -> AppResult<impl IntoResponse> {
     let root = vault_root(&state, &campaign_id)?;
     let path = vault::find_asset(&root, &name)?;
-    let bytes = std::fs::read(&path)
-        .map_err(|_| AppError::NotFound(format!("Asset not found: {name}")))?;
+    let bytes =
+        std::fs::read(&path).map_err(|_| AppError::NotFound(format!("Asset not found: {name}")))?;
     let mime = match path
         .extension()
         .and_then(|e| e.to_str())
@@ -629,7 +659,13 @@ fn default_kind() -> String {
 }
 
 fn language_name(code: &str) -> String {
-    match code.trim().to_lowercase().split(['-', '_']).next().unwrap_or("") {
+    match code
+        .trim()
+        .to_lowercase()
+        .split(['-', '_'])
+        .next()
+        .unwrap_or("")
+    {
         "de" => "German".into(),
         "en" => "English".into(),
         "fr" => "French".into(),
@@ -652,9 +688,7 @@ fn kind_from_folder(path: &str) -> Option<&'static str> {
             Some("npc")
         }
         "pcs" | "pc" | "players" | "party" | "heroes" | "spieler" => Some("pc"),
-        "places" | "place" | "locations" | "location" | "cities" | "orte" => {
-            Some("place")
-        }
+        "places" | "place" | "locations" | "location" | "cities" | "orte" => Some("place"),
         "factions" | "faction" | "organizations" | "organisations" | "groups" | "guilds"
         | "fraktionen" => Some("faction"),
         "items" | "item" | "artifacts" | "gear" | "weapons" | "gegenstände" => Some("item"),
@@ -732,11 +766,16 @@ fn parse_batch_response(
         None => return results,
     };
 
-    let title_idx: std::collections::HashMap<String, usize> =
-        titles.iter().enumerate().map(|(i, t)| (t.to_lowercase(), i)).collect();
+    let title_idx: std::collections::HashMap<String, usize> = titles
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.to_lowercase(), i))
+        .collect();
 
     for (pos, item) in arr.iter().enumerate() {
-        let Some(obj) = item.as_object() else { continue };
+        let Some(obj) = item.as_object() else {
+            continue;
+        };
         let summary = obj
             .get("summary")
             .and_then(|v| v.as_str())
@@ -753,7 +792,7 @@ fn parse_batch_response(
                 .and_then(|v| v.as_str())
                 .map(|s| s.trim().to_lowercase())
                 .unwrap_or_default();
-            if !crate::store::codex::KINDS.contains(&raw_kind.as_str()) {
+            if !crate::vault::KINDS.contains(&raw_kind.as_str()) {
                 continue;
             }
             raw_kind
@@ -812,10 +851,11 @@ pub async fn enhance_pages(
         let abs = root.join(&info.path);
         if let Ok(content) = std::fs::read_to_string(&abs) {
             if vault::needs_frontmatter_enhance(&content) {
-                by_folder
-                    .entry(folder)
-                    .or_default()
-                    .push((info.path.clone(), info.title.clone(), content));
+                by_folder.entry(folder).or_default().push((
+                    info.path.clone(),
+                    info.title.clone(),
+                    content,
+                ));
             }
         }
     }
@@ -876,7 +916,9 @@ pub async fn enhance_pages(
 
     let total: usize = by_folder.values().map(|v| v.len()).sum();
     let skipped = total - enhanced - failed;
-    Ok(Json(json!({ "enhanced": enhanced, "skipped": skipped, "failed": failed })))
+    Ok(Json(
+        json!({ "enhanced": enhanced, "skipped": skipped, "failed": failed }),
+    ))
 }
 
 // World root + parsed `.ck/config.toml` (defaults when unreadable).
@@ -887,7 +929,10 @@ pub(super) fn world_cfg(
     let root = state
         .with_db(|conn| campaigns::world_root_for_id(conn, campaign_id))?
         .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))?;
-    let cfg = crate::world_config::read(&root).ok().flatten().unwrap_or_default();
+    let cfg = crate::world_config::read(&root)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     Ok((root, cfg))
 }
 
@@ -924,4 +969,51 @@ pub async fn create_page(
     let _ = history::record_create(&world_root, &page.path, "user");
     reindex_page(&state, &root, &page.path);
     Ok(Json(page))
+}
+
+#[derive(Deserialize)]
+pub struct PromoteRequest {
+    pub page: String,
+    pub kind: String,
+    #[serde(default)]
+    pub folder: Option<String>,
+}
+
+/// Phase 16: capture → real page. Rewrites the frontmatter to the target
+/// kind (existing values kept, `inbox` tag dropped), appends the kind's
+/// missing template headings, and optionally moves the page.
+pub async fn promote_page(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<PromoteRequest>,
+) -> AppResult<Json<vault::Page>> {
+    let root = vault_root(&state, &campaign_id)?;
+    let (world_root, cfg) = world_cfg(&state, &campaign_id)?;
+    let fields = cfg
+        .kind_schemas()
+        .into_iter()
+        .find(|(k, _)| k == &req.kind)
+        .map(|(_, f)| f)
+        .unwrap_or_default();
+    let page = vault::read_page(&root, &req.page)?;
+    let headings = vault::template_headings(&world_root, &req.kind);
+    let content = vault::promote_content(&page.content, &req.kind, &fields, &headings);
+    let _ = history::record(&world_root, &root, &req.page, "user");
+    vault::write_page(&root, &req.page, &content)?;
+    reindex_page(&state, &root, &req.page);
+
+    let mut path = req.page.clone();
+    if let Some(folder) = req.folder.as_deref().map(str::trim) {
+        let name = req.page.rsplit('/').next().unwrap_or(&req.page);
+        let to = if folder.is_empty() {
+            name.to_string()
+        } else {
+            format!("{folder}/{name}")
+        };
+        if to != req.page {
+            move_page_cascade(&state, &root, &world_root, &req.page, &to)?;
+            path = to;
+        }
+    }
+    Ok(Json(vault::read_page(&root, &path)?))
 }

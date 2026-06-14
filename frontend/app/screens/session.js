@@ -254,7 +254,8 @@ export function SessionScreen({ store }) {
         </div>
         <div style=${{ padding: '24px 28px' }}>
           ${store.summaryPreview
-            ? html`<${Markdown} text=${store.summaryPreview.text} codex=${store.codexEntries} />`
+            ? html`<${Markdown} text=${store.summaryPreview.text}
+                codex=${(store.vaultPages || []).map((p) => ({ name: p.title, page: p.path }))} />`
             : html`<${Empty} icon="feather" title=${hasT ? 'Not summarized yet' : 'No transcript yet'}>
                 ${hasT ? 'Generate a summary with your chosen LLM.' : 'Transcribe the recording, then summarize.'}
               </${Empty}>`}

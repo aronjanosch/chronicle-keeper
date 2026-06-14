@@ -17,7 +17,11 @@ pub const TRANSCRIPT_ID: i64 = 1;
 pub const SUMMARY_ID: i64 = 2;
 
 fn id_of(kind: &str) -> i64 {
-    if kind == "summary" { SUMMARY_ID } else { TRANSCRIPT_ID }
+    if kind == "summary" {
+        SUMMARY_ID
+    } else {
+        TRANSCRIPT_ID
+    }
 }
 
 fn kind_of(id: i64) -> Option<&'static str> {
@@ -70,9 +74,13 @@ fn meta_for(dir: &Path, kind: &str) -> ArtifactMeta {
     };
     let (fm, _) = crate::vault::split_frontmatter(&raw);
     ArtifactMeta {
-        provider: crate::vault::fm_get(&fm, "provider").unwrap_or("").to_string(),
+        provider: crate::vault::fm_get(&fm, "provider")
+            .unwrap_or("")
+            .to_string(),
         model: crate::vault::fm_get(&fm, "model").unwrap_or("").to_string(),
-        generated_at: crate::vault::fm_get(&fm, "generated_at").unwrap_or("").to_string(),
+        generated_at: crate::vault::fm_get(&fm, "generated_at")
+            .unwrap_or("")
+            .to_string(),
     }
 }
 
@@ -89,7 +97,11 @@ fn info_for(dir: &Path, session_id: &str, kind: &str) -> Option<ArtifactInfo> {
         kind: kind.to_string(),
         provider: meta.provider,
         model: meta.model,
-        created_at: if meta.generated_at.is_empty() { mtime_stamp(&path) } else { meta.generated_at },
+        created_at: if meta.generated_at.is_empty() {
+            mtime_stamp(&path)
+        } else {
+            meta.generated_at
+        },
     })
 }
 
@@ -108,7 +120,10 @@ pub fn insert_artifact(
         .format("%Y-%m-%dT%H:%M:%S%.6f")
         .to_string();
     if kind == "summary" {
-        let st = session_files::read_session_toml(&dir).ok().flatten().unwrap_or_default();
+        let st = session_files::read_session_toml(&dir)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
         session_files::write_summary_md(
             &dir,
             content,
@@ -151,10 +166,19 @@ pub fn list_artifacts(
 ) -> AppResult<Vec<ArtifactInfo>> {
     let dir = session_dir(conn, session_id)?;
     let kinds: &[&str] = match kind {
-        Some(k) => if k == "summary" { &["summary"] } else { &["transcript"] },
+        Some(k) => {
+            if k == "summary" {
+                &["summary"]
+            } else {
+                &["transcript"]
+            }
+        }
         None => &["transcript", "summary"],
     };
-    Ok(kinds.iter().filter_map(|k| info_for(&dir, session_id, k)).collect())
+    Ok(kinds
+        .iter()
+        .filter_map(|k| info_for(&dir, session_id, k))
+        .collect())
 }
 
 pub fn get_artifact(
@@ -215,5 +239,8 @@ pub fn delete_artifact(conn: &Connection, session_id: &str, id: i64) -> AppResul
 
 pub fn has_kind(conn: &Connection, session_id: &str, kind: &str) -> AppResult<bool> {
     let dir = session_dir(conn, session_id)?;
-    Ok(file_of(&dir, kind).metadata().map(|m| m.len() > 0).unwrap_or(false))
+    Ok(file_of(&dir, kind)
+        .metadata()
+        .map(|m| m.len() > 0)
+        .unwrap_or(false))
 }

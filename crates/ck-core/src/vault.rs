@@ -6,6 +6,9 @@ use serde::Serialize;
 
 use crate::error::{AppError, AppResult};
 
+/// Page kinds the world schema knows about (frontmatter `kind:`).
+pub const KINDS: &[&str] = &["pc", "npc", "place", "faction", "item", "event", "lore"];
+
 #[derive(Debug, Serialize)]
 pub struct PageInfo {
     pub path: String,
@@ -89,7 +92,10 @@ fn rel_of(vault: &Path, abs: &Path) -> String {
 // Flat YAML: scalars, inline `[a, b]` lists, block `- item` lists. Nested
 // mappings are skipped. Each key maps to its values (scalar = one value).
 pub(crate) fn split_frontmatter(content: &str) -> (Vec<(String, Vec<String>)>, &str) {
-    let rest = match content.strip_prefix("---\n").or_else(|| content.strip_prefix("---\r\n")) {
+    let rest = match content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))
+    {
         Some(r) => r,
         None => return (Vec::new(), content),
     };
@@ -104,7 +110,10 @@ pub(crate) fn split_frontmatter(content: &str) -> (Vec<(String, Vec<String>)>, &
         if trimmed.is_empty() {
             continue;
         }
-        if let Some(item) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix('-').filter(|s| !s.is_empty())) {
+        if let Some(item) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix('-').filter(|s| !s.is_empty()))
+        {
             let v = item.trim().trim_matches(['"', '\'']);
             if !v.is_empty() {
                 if let Some((_, vals)) = map.last_mut() {
@@ -126,7 +135,11 @@ pub(crate) fn split_frontmatter(content: &str) -> (Vec<(String, Vec<String>)>, &
                     .collect(),
                 None => {
                     let v = v.trim_matches(['"', '\'']);
-                    if v.is_empty() { Vec::new() } else { vec![v.to_string()] }
+                    if v.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![v.to_string()]
+                    }
                 }
             };
             map.push((k.trim().to_string(), vals));
@@ -167,13 +180,21 @@ fn page_from(vault: &Path, abs: &Path, content: String) -> Page {
     Page {
         path: rel_of(vault, abs),
         title: title_of(abs),
-        kind: fm_get(&fm, "kind").filter(|s| !s.is_empty()).map(str::to_string),
+        kind: fm_get(&fm, "kind")
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
         summary,
         content,
     }
 }
 
 fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {
+    collect_files(dir, out, &|p| {
+        p.extension().and_then(|e| e.to_str()) == Some("md")
+    });
+}
+
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>, want: &dyn Fn(&Path) -> bool) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -186,9 +207,9 @@ fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {
         }
         if path.is_dir() {
             if !is_reserved_dir(&name) {
-                collect_md(&path, out);
+                collect_files(&path, out, want);
             }
-        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+        } else if want(&path) {
             out.push(path);
         }
     }
@@ -257,8 +278,7 @@ pub fn move_entry(vault: &Path, from: &str, to: &str) -> AppResult<()> {
         std::fs::create_dir_all(parent)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("create dir: {e}")))?;
     }
-    std::fs::rename(&src, &dst)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("move: {e}")))
+    std::fs::rename(&src, &dst).map_err(|e| AppError::Internal(anyhow::anyhow!("move: {e}")))
 }
 
 pub fn delete_page(vault: &Path, rel: &str) -> AppResult<()> {
@@ -274,7 +294,9 @@ pub fn delete_page(vault: &Path, rel: &str) -> AppResult<()> {
 pub fn page_paths_in_folder(vault: &Path, folder_rel: &str) -> AppResult<Vec<String>> {
     let abs = resolve_rel(vault, folder_rel)?;
     if !abs.is_dir() {
-        return Err(AppError::NotFound(format!("Folder not found: {folder_rel}")));
+        return Err(AppError::NotFound(format!(
+            "Folder not found: {folder_rel}"
+        )));
     }
     let mut files = Vec::new();
     collect_md(&abs, &mut files);
@@ -362,7 +384,12 @@ pub fn create_page(vault: &Path, title: &str, kind: &str, folder: Option<&str>) 
 }
 
 /// Create a page with explicit initial content (template-driven create).
-pub fn create_page_with(vault: &Path, title: &str, folder: Option<&str>, content: &str) -> AppResult<Page> {
+pub fn create_page_with(
+    vault: &Path,
+    title: &str,
+    folder: Option<&str>,
+    content: &str,
+) -> AppResult<Page> {
     require_dir(vault)?;
     let title = title.trim();
     if title.is_empty() {
@@ -393,9 +420,33 @@ pub fn templates_dir(world_root: &Path) -> PathBuf {
     world_root.join(".ck").join("templates")
 }
 
-/// Built-in starter content for a kind: frontmatter with the kind's infobox
-/// fields left blank (list → `[]`, checkbox → `false`) + a `{{title}}` H1.
-pub fn template_content(kind: &str, fields: &[crate::world_config::KindField]) -> String {
+/// Standard body headings per kind (Phase 16); `lore` stays free-form.
+pub const DEFAULT_HEADINGS: &[(&str, &[&str])] = &[
+    ("pc", &["Background", "Goals", "Relationships", "Notes"]),
+    (
+        "npc",
+        &["Appearance", "Motivation", "Relationships", "History"],
+    ),
+    ("place", &["At a glance", "Notable people", "Hooks"]),
+    (
+        "faction",
+        &["Goals", "Members", "Allies & enemies", "History"],
+    ),
+    ("item", &["Description", "Properties", "History"]),
+    ("event", &["What happened", "Consequences"]),
+];
+
+pub fn default_headings(kind: &str) -> &'static [&'static str] {
+    DEFAULT_HEADINGS
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, h)| *h)
+        .unwrap_or(&[])
+}
+
+// Frontmatter + H1 only — the pre-Phase-16 default, kept so untouched seeded
+// templates can be recognized and upgraded.
+fn template_base(kind: &str, fields: &[crate::world_config::KindField]) -> String {
     let mut out = format!("---\nkind: {kind}\nsummary:\n");
     for f in fields {
         match f.ftype.as_str() {
@@ -408,17 +459,35 @@ pub fn template_content(kind: &str, fields: &[crate::world_config::KindField]) -
     out
 }
 
-/// Write the default per-kind starter files. No-op when `.ck/templates/`
-/// already exists — user edits and deletions are never overwritten.
+/// Built-in starter content for a kind: frontmatter with the kind's infobox
+/// fields left blank (list → `[]`, checkbox → `false`), a `{{title}}` H1, and
+/// the kind's standard headings.
+pub fn template_content(kind: &str, fields: &[crate::world_config::KindField]) -> String {
+    let mut out = template_base(kind, fields);
+    for h in default_headings(kind) {
+        out.push_str(&format!("## {h}\n\n"));
+    }
+    out
+}
+
+/// Write the default per-kind starter files. User edits and deletions are
+/// never overwritten — only a file still byte-equal to the pre-Phase-16
+/// default is upgraded to the current one.
 pub fn write_default_templates(world_root: &Path) -> AppResult<()> {
     let dir = templates_dir(world_root);
-    if dir.exists() {
-        return Ok(());
+    let fresh = !dir.exists();
+    if fresh {
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("create .ck/templates: {e}")))?;
     }
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("create .ck/templates: {e}")))?;
     for (kind, fields) in crate::world_config::WorldConfig::default().kind_schemas() {
-        let _ = std::fs::write(dir.join(format!("{kind}.md")), template_content(&kind, &fields));
+        let path = dir.join(format!("{kind}.md"));
+        let untouched_seed = std::fs::read_to_string(&path)
+            .map(|c| c == template_base(&kind, &fields))
+            .unwrap_or(false);
+        if fresh || untouched_seed {
+            let _ = std::fs::write(path, template_content(&kind, &fields));
+        }
     }
     Ok(())
 }
@@ -503,9 +572,138 @@ pub fn new_page_content(
     tpl.replace("{{title}}", title.trim())
 }
 
+/// `## ` headings of the kind's template (world override or built-in default).
+pub fn template_headings(world_root: &Path, kind: &str) -> Vec<String> {
+    match read_template(world_root, kind) {
+        Some(tpl) => tpl
+            .lines()
+            .filter_map(|l| l.strip_prefix("## "))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        None => default_headings(kind)
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+    }
+}
+
+// Raw frontmatter block (without fences) + body, or None when absent.
+fn split_raw_frontmatter(content: &str) -> Option<(&str, &str)> {
+    let rest = content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))?;
+    let end = rest.find("\n---")?;
+    Some((
+        &rest[..end],
+        rest[end + 4..].trim_start_matches(['\r', '\n']),
+    ))
+}
+
+/// Promote a page to `kind` (Phase 16, quick-capture → real page): set
+/// `kind:`, add the schema fields it lacks, drop the `inbox` tag, and append
+/// the kind's template headings the body doesn't already have. Existing
+/// frontmatter values and body text are kept verbatim.
+pub fn promote_content(
+    content: &str,
+    kind: &str,
+    fields: &[crate::world_config::KindField],
+    headings: &[String],
+) -> String {
+    let (fm_raw, body) = split_raw_frontmatter(content).unwrap_or(("", content));
+
+    let mut fm: Vec<String> = Vec::new();
+    let mut in_tags_block = false;
+    for line in fm_raw.lines() {
+        let trimmed = line.trim();
+        if in_tags_block {
+            if let Some(item) = trimmed.strip_prefix("- ") {
+                if item.trim().trim_matches(['"', '\'']) != "inbox" {
+                    fm.push(line.to_string());
+                }
+                continue;
+            }
+            in_tags_block = false;
+        }
+        let top_level = !line.starts_with([' ', '\t']);
+        if top_level && trimmed.strip_prefix("kind:").is_some() {
+            fm.push(format!("kind: {kind}"));
+            continue;
+        }
+        if let Some(v) = trimmed.strip_prefix("tags:").filter(|_| top_level) {
+            match v.trim().strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                Some(inner) => {
+                    let kept: Vec<&str> = inner
+                        .split(',')
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty() && s.trim_matches(['"', '\'']) != "inbox")
+                        .collect();
+                    if !kept.is_empty() {
+                        fm.push(format!("tags: [{}]", kept.join(", ")));
+                    }
+                }
+                None if v.trim().is_empty() => {
+                    in_tags_block = true;
+                    fm.push(line.to_string());
+                }
+                None => fm.push(line.to_string()),
+            }
+            continue;
+        }
+        fm.push(line.to_string());
+    }
+    // a block list whose items were all removed leaves a dangling `tags:`
+    if fm.last().map(|l| l.trim() == "tags:").unwrap_or(false) {
+        fm.pop();
+    }
+
+    let has_key = |fm: &[String], key: &str| {
+        fm.iter().any(|l| {
+            !l.starts_with([' ', '\t'])
+                && l.split_once(':')
+                    .map(|(k, _)| k.trim() == key)
+                    .unwrap_or(false)
+        })
+    };
+    if !has_key(&fm, "kind") {
+        fm.insert(0, format!("kind: {kind}"));
+    }
+    if !has_key(&fm, "summary") {
+        fm.push("summary:".to_string());
+    }
+    for f in fields {
+        if !has_key(&fm, &f.name) {
+            match f.ftype.as_str() {
+                "list" => fm.push(format!("{}: []", f.name)),
+                "checkbox" => fm.push(format!("{}: false", f.name)),
+                _ => fm.push(format!("{}:", f.name)),
+            }
+        }
+    }
+
+    let existing: std::collections::HashSet<String> = body
+        .lines()
+        .filter_map(|l| l.strip_prefix("## "))
+        .map(|s| s.trim().to_lowercase())
+        .collect();
+    let mut out = format!("---\n{}\n---\n\n{}", fm.join("\n"), body.trim_end());
+    out.push('\n');
+    for h in headings {
+        if !existing.contains(&h.to_lowercase()) {
+            out.push_str(&format!("\n## {h}\n"));
+        }
+    }
+    out
+}
+
 /// `.ck/config.toml` — its presence marks a folder as a world (discovery
 /// scans for it). Never overwrites an existing one.
-pub fn write_world_config(world_root: &Path, id: &str, name: &str, codex_root: &str) -> AppResult<()> {
+pub fn write_world_config(
+    world_root: &Path,
+    id: &str,
+    name: &str,
+    codex_root: &str,
+) -> AppResult<()> {
     if crate::world_config::config_path(world_root).exists() {
         return Ok(());
     }
@@ -602,8 +800,12 @@ pub(crate) fn safe_page_filename(name: &str) -> String {
 /// Non-`kind`/`summary` fields are preserved (reformatted to scalar or block-list YAML).
 pub(crate) fn set_frontmatter_fields(content: &str, kind: &str, summary: &str) -> String {
     let (fm, body) = split_frontmatter(content);
-    let k = fm_get(&fm, "kind").filter(|s| !s.is_empty()).unwrap_or(kind);
-    let s = fm_get(&fm, "summary").filter(|s| !s.is_empty()).unwrap_or(summary);
+    let k = fm_get(&fm, "kind")
+        .filter(|s| !s.is_empty())
+        .unwrap_or(kind);
+    let s = fm_get(&fm, "summary")
+        .filter(|s| !s.is_empty())
+        .unwrap_or(summary);
     let mut out = String::from("---\n");
     out.push_str(&format!("kind: {k}\n"));
     let sq = yaml_scalar(s);
@@ -761,25 +963,51 @@ pub(crate) fn page_file_content(name: &str, kind: &str, summary: &str, body: &st
 }
 
 fn unique_md_path(dir: &Path, stem: &str) -> PathBuf {
-    let mut candidate = dir.join(format!("{stem}.md"));
+    unique_path(dir, stem, "md")
+}
+
+fn unique_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+    let mut candidate = dir.join(format!("{stem}.{ext}"));
     let mut n = 2;
     while candidate.exists() {
-        candidate = dir.join(format!("{stem}-{n}.md"));
+        candidate = dir.join(format!("{stem}-{n}.{ext}"));
         n += 1;
     }
     candidate
+}
+
+// Embeddable media an Obsidian vault commonly carries alongside its notes —
+// imported with the pages so `![[image.png]]` embeds keep resolving.
+const ASSET_EXTS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "heic", "pdf", "mp3", "wav", "m4a",
+    "ogg", "flac", "mp4", "webm", "mov",
+];
+
+fn is_asset(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| ASSET_EXTS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+pub fn count_assets(dir: &Path) -> usize {
+    let mut files = Vec::new();
+    collect_files(dir, &mut files, &is_asset);
+    files.len()
 }
 
 #[derive(Debug, Serialize)]
 pub struct ImportReport {
     pub imported: usize,
     pub renamed: usize,
+    pub assets: usize,
 }
 
-/// Copy-in import (Phase 3): copy every `.md` page from `src` into the vault,
-/// preserving folder structure. The source folder is never touched; name
-/// collisions get a numeric suffix (never overwrite). Reserved and dot dirs
-/// (`.obsidian/`, `Sessions/`, …) are skipped on the source side too.
+/// Copy-in import (Phase 3): copy every `.md` page — plus the media assets the
+/// pages may embed — from `src` into the vault, preserving folder structure.
+/// The source folder is never touched; name collisions get a numeric suffix
+/// (never overwrite). Reserved and dot dirs (`.obsidian/`, `Sessions/`, …) are
+/// skipped on the source side too.
 pub fn import_folder(vault: &Path, src: &Path) -> AppResult<ImportReport> {
     require_dir(vault)?;
     if !src.is_dir() {
@@ -795,9 +1023,16 @@ pub fn import_folder(vault: &Path, src: &Path) -> AppResult<ImportReport> {
     let mut files = Vec::new();
     collect_md(&sc, &mut files);
     if files.is_empty() {
-        return Err(AppError::BadRequest("No markdown pages found in that folder".into()));
+        return Err(AppError::BadRequest(
+            "No markdown pages found in that folder".into(),
+        ));
     }
-    let mut report = ImportReport { imported: 0, renamed: 0 };
+    collect_files(&sc, &mut files, &is_asset);
+    let mut report = ImportReport {
+        imported: 0,
+        renamed: 0,
+        assets: 0,
+    };
     for abs in &files {
         let rel = abs.strip_prefix(&sc).unwrap_or(abs);
         let mut dest = vault.join(rel);
@@ -805,14 +1040,27 @@ pub fn import_folder(vault: &Path, src: &Path) -> AppResult<ImportReport> {
             std::fs::create_dir_all(parent)
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("create dir: {e}")))?;
         }
+        let ext = dest
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("md")
+            .to_lowercase();
         if dest.exists() {
-            let stem = dest.file_stem().and_then(|s| s.to_str()).unwrap_or("Untitled").to_string();
-            dest = unique_md_path(dest.parent().unwrap_or(vault), &stem);
+            let stem = dest
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Untitled")
+                .to_string();
+            dest = unique_path(dest.parent().unwrap_or(vault), &stem, &ext);
             report.renamed += 1;
         }
         std::fs::copy(abs, &dest)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("copy {}: {e}", rel.display())))?;
-        report.imported += 1;
+        if ext == "md" {
+            report.imported += 1;
+        } else {
+            report.assets += 1;
+        }
     }
     Ok(report)
 }
@@ -893,13 +1141,14 @@ pub fn find_asset(vault: &Path, target: &str) -> AppResult<PathBuf> {
         }
         None
     }
-    walk(vault, &want, &norm).ok_or_else(|| AppError::NotFound(format!("Asset not found: {target}")))
+    walk(vault, &want, &norm)
+        .ok_or_else(|| AppError::NotFound(format!("Asset not found: {target}")))
 }
 
 // Stub page for an auto-extracted name. No-op if a page of that title exists.
 pub fn create_stub(vault: &Path, name: &str, kind: &str) -> bool {
     let name = name.trim();
-    if name.is_empty() || !crate::store::codex::KINDS.contains(&kind) || page_exists(vault, name) {
+    if name.is_empty() || !KINDS.contains(&kind) || page_exists(vault, name) {
         return false;
     }
     let path = unique_md_path(vault, &safe_page_filename(name));
@@ -917,7 +1166,10 @@ mod tests {
         assert!(resolve(v, "/etc/passwd.md").is_err());
         assert!(resolve(v, "a/../../b.md").is_err());
         assert!(resolve(v, "notes.txt").is_err());
-        assert_eq!(resolve(v, "Characters/Aragorn.md").unwrap(), v.join("Characters/Aragorn.md"));
+        assert_eq!(
+            resolve(v, "Characters/Aragorn.md").unwrap(),
+            v.join("Characters/Aragorn.md")
+        );
     }
 
     #[test]
@@ -967,7 +1219,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ck-vault-sum-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let abs = dir.join("Note.md");
-        std::fs::write(&abs, "---\nkind: lore\n---\n\n# Title\n\nFirst real paragraph here.").unwrap();
+        std::fs::write(
+            &abs,
+            "---\nkind: lore\n---\n\n# Title\n\nFirst real paragraph here.",
+        )
+        .unwrap();
         let p = page_from(&dir, &abs, std::fs::read_to_string(&abs).unwrap());
         assert_eq!(p.summary, "");
         std::fs::remove_dir_all(&dir).ok();
@@ -981,7 +1237,12 @@ mod tests {
         assert_eq!(created.path, "Rivendell.md");
         assert_eq!(created.kind.as_deref(), Some("place"));
         assert!(create_page(&dir, "Rivendell", "place", None).is_err());
-        write_page(&dir, "Rivendell.md", "---\nkind: place\nsummary: Elf haven.\n---\n\nBody").unwrap();
+        write_page(
+            &dir,
+            "Rivendell.md",
+            "---\nkind: place\nsummary: Elf haven.\n---\n\nBody",
+        )
+        .unwrap();
         let read = read_page(&dir, "Rivendell.md").unwrap();
         assert_eq!(read.summary, "Elf haven.");
         assert_eq!(list_pages(&dir).unwrap().len(), 1);
@@ -1039,14 +1300,20 @@ mod tests {
         std::fs::write(src.join("Rivendell.md"), "# Rivendell\n").unwrap();
         std::fs::write(src.join(".obsidian/app.json"), "{}").unwrap();
         std::fs::write(src.join("Sessions/notes.md"), "skip\n").unwrap();
+        std::fs::write(src.join("People/aragorn.PNG"), b"img").unwrap();
+        std::fs::write(src.join("map.pdf"), b"pdf").unwrap();
+        std::fs::write(src.join("notes.txt"), "not an asset\n").unwrap();
         create_page(&vault, "Rivendell", "place", None).unwrap();
 
         let r = import_folder(&vault, &src).unwrap();
-        assert_eq!((r.imported, r.renamed), (2, 1));
+        assert_eq!((r.imported, r.renamed, r.assets), (2, 1, 2));
         assert!(vault.join("People/Aragorn.md").is_file());
         assert!(vault.join("Rivendell-2.md").is_file()); // collision suffixed
         assert!(!vault.join("Sessions/notes.md").exists()); // reserved skipped
-        // source untouched
+        assert!(vault.join("People/aragorn.PNG").is_file()); // media imported
+        assert!(vault.join("map.pdf").is_file());
+        assert!(!vault.join("notes.txt").exists()); // unknown extension skipped
+                                                    // source untouched
         assert!(src.join("People/Aragorn.md").is_file());
 
         // overlap + empty-source guards
@@ -1095,11 +1362,19 @@ mod tests {
         assert!(npc.contains("kind: npc"));
         assert!(npc.contains("affiliation: []"));
         assert!(npc.contains("# {{title}}"));
+        assert!(npc.contains("## Appearance"));
+        assert!(npc.contains("## History"));
         let item = std::fs::read_to_string(templates_dir(&dir).join("item.md")).unwrap();
         assert!(item.contains("magical: false"));
+        let lore = std::fs::read_to_string(templates_dir(&dir).join("lore.md")).unwrap();
+        assert!(!lore.contains("## "));
 
         // user edit survives a re-provision
-        std::fs::write(templates_dir(&dir).join("npc.md"), "---\nkind: npc\nsummary:\nvoice:\n---\n\n# {{title}}\n").unwrap();
+        std::fs::write(
+            templates_dir(&dir).join("npc.md"),
+            "---\nkind: npc\nsummary:\nvoice:\n---\n\n# {{title}}\n",
+        )
+        .unwrap();
         write_default_templates(&dir).unwrap();
         let kept = std::fs::read_to_string(templates_dir(&dir).join("npc.md")).unwrap();
         assert!(kept.contains("voice:"));
@@ -1128,6 +1403,76 @@ mod tests {
         let content = new_page_content(&dir, "place", "Rivendell", &pf);
         assert!(content.contains("region:"));
         assert!(content.contains("# Rivendell"));
+        assert!(content.contains("## At a glance"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn promote_sets_kind_fills_fields_drops_inbox_appends_headings() {
+        let fields = crate::world_config::WorldConfig::default()
+            .kind_schemas()
+            .into_iter()
+            .find(|(k, _)| k == "npc")
+            .map(|(_, f)| f)
+            .unwrap();
+        let headings: Vec<String> = default_headings("npc")
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let capture = "---\nkind: lore\nsummary: a stranger\ntags: [inbox, town]\nrace: human\n---\n\n# Stranger\n\nMet at the gate.\n\n## History\n\nUnknown.\n";
+        let out = promote_content(capture, "npc", &fields, &headings);
+        assert!(out.contains("kind: npc"));
+        assert!(out.contains("tags: [town]"));
+        assert!(out.contains("summary: a stranger"));
+        assert!(out.contains("race: human")); // existing value kept, not blanked
+        assert!(out.contains("affiliation: []"));
+        assert!(out.contains("status:"));
+        assert!(out.contains("Met at the gate."));
+        assert!(out.contains("## Appearance"));
+        assert_eq!(out.matches("## History").count(), 1); // already present → not duplicated
+
+        // block-list tags, inbox only → tags key dropped entirely
+        let block = "---\nkind: lore\ntags:\n  - inbox\n---\n\nBody.\n";
+        let out = promote_content(block, "npc", &fields, &[]);
+        assert!(!out.contains("tags"));
+        assert!(out.contains("kind: npc"));
+
+        // no frontmatter at all → one is created
+        let bare = "# Loose note\n\nJust text.\n";
+        let out = promote_content(bare, "place", &[], &[]);
+        assert!(out.starts_with("---\nkind: place\nsummary:\n---\n"));
+        assert!(out.contains("Just text."));
+    }
+
+    #[test]
+    fn untouched_legacy_template_upgrades_edited_kept() {
+        let dir = tmp_vault("tpl-upgrade");
+        std::fs::create_dir_all(templates_dir(&dir)).unwrap();
+        let fields = crate::world_config::WorldConfig::default()
+            .kind_schemas()
+            .into_iter()
+            .find(|(k, _)| k == "npc")
+            .map(|(_, f)| f)
+            .unwrap();
+        // pre-Phase-16 seed (no headings) → upgraded
+        std::fs::write(
+            templates_dir(&dir).join("npc.md"),
+            template_base("npc", &fields),
+        )
+        .unwrap();
+        // user-edited file → untouched; deleted file → not recreated
+        std::fs::write(
+            templates_dir(&dir).join("item.md"),
+            "---\nkind: item\n---\n\n# {{title}}\nMine\n",
+        )
+        .unwrap();
+        write_default_templates(&dir).unwrap();
+        let npc = std::fs::read_to_string(templates_dir(&dir).join("npc.md")).unwrap();
+        assert!(npc.contains("## Appearance"));
+        let item = std::fs::read_to_string(templates_dir(&dir).join("item.md")).unwrap();
+        assert!(item.contains("Mine"));
+        assert!(!templates_dir(&dir).join("place.md").exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 

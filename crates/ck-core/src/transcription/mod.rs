@@ -371,7 +371,11 @@ pub fn transcribe_tracks(
     });
     tracing::info!(
         "transcription {}: {} segment(s) across {total} track(s) in {:.1}s",
-        if complete { "done" } else { "cancelled (partial)" },
+        if complete {
+            "done"
+        } else {
+            "cancelled (partial)"
+        },
         all.len(),
         started.elapsed().as_secs_f64()
     );

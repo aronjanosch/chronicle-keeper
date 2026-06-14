@@ -69,7 +69,7 @@ pub async fn write_map(
 ) -> AppResult<Json<atlas::MapDoc>> {
     let root = world_root(&state, &campaign_id)?;
     doc.id = map_id; // the path segment is authoritative
-    // The image is managed by create; a PUT must not repoint it elsewhere.
+                     // The image is managed by create; a PUT must not repoint it elsewhere.
     doc.image = atlas::read_map(&root, &doc.id)?.image;
     atlas::write_map(&root, &doc)?;
     Ok(Json(doc))

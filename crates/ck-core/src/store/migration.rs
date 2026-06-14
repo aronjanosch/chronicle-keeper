@@ -37,7 +37,11 @@ pub struct MigrationStatus {
 }
 
 fn no_migration() -> MigrationStatus {
-    MigrationStatus { needs_migration: false, campaigns: vec![], skipped_sessions: 0 }
+    MigrationStatus {
+        needs_migration: false,
+        campaigns: vec![],
+        skipped_sessions: 0,
+    }
 }
 
 /// Return migration status without running anything. `conn` is the v1 DB.
@@ -58,7 +62,11 @@ pub fn status(conn: &Connection, legacy_db: &Path) -> AppResult<MigrationStatus>
          FROM campaigns c WHERE c.deleted = 0 ORDER BY c.name",
     )?;
     let rows = stmt.query_map([], |r| {
-        Ok(CampaignStatus { campaign_id: r.get(0)?, name: r.get(1)?, session_count: r.get(2)? })
+        Ok(CampaignStatus {
+            campaign_id: r.get(0)?,
+            name: r.get(1)?,
+            session_count: r.get(2)?,
+        })
     })?;
     for row in rows {
         list.push(row?);
@@ -66,7 +74,11 @@ pub fn status(conn: &Connection, legacy_db: &Path) -> AppResult<MigrationStatus>
 
     let skipped = skipped_session_count(&legacy)?;
     let needs = !list.is_empty();
-    Ok(MigrationStatus { needs_migration: needs, campaigns: list, skipped_sessions: skipped })
+    Ok(MigrationStatus {
+        needs_migration: needs,
+        campaigns: list,
+        skipped_sessions: skipped,
+    })
 }
 
 // ── Result ────────────────────────────────────────────────────────
@@ -124,7 +136,10 @@ pub fn run_all(conn: &Connection, legacy_db: &Path) -> AppResult<MigrationResult
         for s in legacy_sessions(&legacy, &c.campaign_id)? {
             let Some(number) = s.number else { continue };
             if !used_numbers.insert(number) {
-                errors.push(format!("{}: duplicate session number {number} — kept first", c.name));
+                errors.push(format!(
+                    "{}: duplicate session number {number} — kept first",
+                    c.name
+                ));
                 camp_ok = false;
                 continue;
             }
@@ -286,7 +301,9 @@ fn copy_settings(legacy: &Connection, conn: &Connection) -> AppResult<()> {
         "SELECT provider_id, api_key, api_base, default_model, updated_at FROM provider_keys",
     )?;
     let rows: Vec<(String, String, String, String, String)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     for (id, key, base, model, ts) in rows {
         conn.execute(
@@ -297,12 +314,19 @@ fn copy_settings(legacy: &Connection, conn: &Connection) -> AppResult<()> {
     }
 
     // Older legacy DBs may predate prompt_templates — best-effort.
-    if let Ok(mut stmt) = legacy.prepare(
-        "SELECT id, label, text, builtin, sort_order, updated_at FROM prompt_templates",
-    ) {
+    if let Ok(mut stmt) = legacy
+        .prepare("SELECT id, label, text, builtin, sort_order, updated_at FROM prompt_templates")
+    {
         let rows: Vec<(String, String, String, i64, i64, String)> = stmt
             .query_map([], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         for (id, label, text, builtin, sort, ts) in rows {
@@ -375,7 +399,9 @@ fn migrate_session(
     );
     st.id = Some(s.session_id.clone());
     let metadata: Value = serde_json::from_str(&s.metadata_json).unwrap_or(Value::Null);
-    st.metadata = crate::store::sessions::metadata_from_value(&crate::normalize::normalize_metadata(&metadata));
+    st.metadata = crate::store::sessions::metadata_from_value(
+        &crate::normalize::normalize_metadata(&metadata),
+    );
     st.notes = s.notes.clone().unwrap_or_default();
     // Fork-interim sessions may carry post-0.X edits in their session.toml —
     // existing file values win over the legacy DB.
@@ -596,7 +622,11 @@ mod tests {
         // Legacy DB untouched: still has its rows, no new columns flipped.
         let legacy = open_legacy(&legacy_path).unwrap();
         let old_path: String = legacy
-            .query_row("SELECT session_path FROM sessions WHERE session_id = 's1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT session_path FROM sessions WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(!old_path.ends_with("Sessions/001"));
 

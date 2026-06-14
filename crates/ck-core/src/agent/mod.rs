@@ -31,8 +31,16 @@ const BUDGET_CHARS: usize = 360_000;
 #[derive(Debug)]
 pub enum TurnEvent {
     TextDelta(String),
-    ToolStart { name: String, args_summary: String, diff: Option<Value> },
-    ToolResult { name: String, summary: String, is_error: bool },
+    ToolStart {
+        name: String,
+        args_summary: String,
+        diff: Option<Value>,
+    },
+    ToolResult {
+        name: String,
+        summary: String,
+        is_error: bool,
+    },
     /// Mode change the UI should surface (e.g. grounded fallback engaged).
     Notice(String),
 }
@@ -71,10 +79,7 @@ pub struct AskRequest {
 
 /// Permission seam: SSE + parked oneshot in production, scripted in tests.
 pub trait PermissionGate: Sync {
-    fn ask(
-        &self,
-        req: AskRequest,
-    ) -> impl std::future::Future<Output = Decision> + Send;
+    fn ask(&self, req: AskRequest) -> impl std::future::Future<Output = Decision> + Send;
 }
 
 /// LLM seam: real transport in production, scripted turns in tests.
@@ -108,8 +113,10 @@ impl AgentLlm for RealLlm {
 
 pub fn system_prompt(world_root: &std::path::Path, cfg: &WorldConfig, mode: Mode) -> String {
     let mut s = String::from(
-        "You are the Keeper — the resident AI of this tabletop worldbuilding app. \
-         You answer questions about the world and its play sessions using the tools provided.\n\n",
+        "You are the Keeper — the resident AI of Chronicle Keeper, a local-first desktop app \
+         for tabletop worldbuilding and TTRPG session notes. The user's world is a folder of \
+         markdown pages (the Codex) on their machine; everything runs offline. You answer \
+         questions about the world and its play sessions using the tools provided.\n\n",
     );
     s.push_str(&context::world_context(world_root, cfg));
     s.push('\n');
@@ -286,7 +293,13 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
     cancel: &Arc<AtomicBool>,
     mut emit: F,
 ) -> AppResult<()> {
-    let TurnCtx { state, world_root, cfg, chat_id, mode } = *turn_ctx;
+    let TurnCtx {
+        state,
+        world_root,
+        cfg,
+        chat_id,
+        mode,
+    } = *turn_ctx;
     chats::append(world_root, chat_id, &chats::user_event(user_text, images))?;
     let events = chats::load_chat(world_root, chat_id)?;
     // "Allow for this chat" decisions live in the chat file, not across chats.
@@ -338,7 +351,10 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
             }
             Err(e) => {
                 let _ = chats::append(world_root, chat_id, &chats::error_event(&e.0));
-                return Err(AppError::Internal(anyhow::anyhow!("Keeper turn failed: {}", e.0)));
+                return Err(AppError::Internal(anyhow::anyhow!(
+                    "Keeper turn failed: {}",
+                    e.0
+                )));
             }
         };
 
@@ -494,11 +510,21 @@ async fn grounded_fallback<L: AgentLlm, F: FnMut(TurnEvent) + Send>(
     llm: &L,
     emit: &mut F,
 ) -> AppResult<()> {
-    let TurnCtx { state, world_root, cfg, chat_id, .. } = *turn_ctx;
+    let TurnCtx {
+        state,
+        world_root,
+        cfg,
+        chat_id,
+        ..
+    } = *turn_ctx;
     chats::append(world_root, chat_id, &chats::notice_event(FALLBACK_NOTICE))?;
     emit(TurnEvent::Notice(FALLBACK_NOTICE.into()));
 
-    let ctx = tools::ToolCtx { state, world_root, cfg };
+    let ctx = tools::ToolCtx {
+        state,
+        world_root,
+        cfg,
+    };
     let vault_root = cfg.codex_dir(world_root);
     let mut grounding = String::new();
     let q = serde_json::json!({ "query": user_text, "limit": 8 });
@@ -509,12 +535,16 @@ async fn grounded_fallback<L: AgentLlm, F: FnMut(TurnEvent) + Send>(
     }
     // The top pages in full (capped), so the answer has substance beyond snippets.
     let hits = state
-        .with_index(&vault_root, |conn| crate::store::index::search(conn, user_text))
+        .with_index(&vault_root, |conn| {
+            crate::store::index::search(conn, user_text)
+        })
         .ok()
         .and_then(|r| r.ok())
         .unwrap_or_default();
     for h in hits.iter().take(3) {
-        let Ok(page) = crate::vault::read_page(&vault_root, &h.path) else { continue };
+        let Ok(page) = crate::vault::read_page(&vault_root, &h.path) else {
+            continue;
+        };
         let mut content = page.content;
         if content.len() > 4000 {
             let mut end = 4000;
@@ -524,17 +554,24 @@ async fn grounded_fallback<L: AgentLlm, F: FnMut(TurnEvent) + Send>(
             content.truncate(end);
             content.push_str("\n[truncated]");
         }
-        grounding.push_str(&format!("## Page: {} ({})\n{content}\n\n", page.title, h.path));
+        grounding.push_str(&format!(
+            "## Page: {} ({})\n{content}\n\n",
+            page.title, h.path
+        ));
     }
-    if let Ok(r) = tools::dispatch(&ctx, "search_summaries", &serde_json::json!({ "query": user_text })) {
+    if let Ok(r) = tools::dispatch(
+        &ctx,
+        "search_summaries",
+        &serde_json::json!({ "query": user_text }),
+    ) {
         grounding.push_str("## Session summary hits\n");
         grounding.push_str(&r);
         grounding.push('\n');
     }
 
     let mut sys = String::from(
-        "You are the Keeper — the resident AI of this tabletop worldbuilding app, answering in \
-         grounded mode (no tools available). Answer the user's question using ONLY the world \
+        "You are the Keeper — the resident AI of Chronicle Keeper, a local-first tabletop \
+         worldbuilding app, answering in grounded mode (no tools available). Answer the user's question using ONLY the world \
          excerpts provided in the final message. When stating facts from them, cite the source \
          page by wrapping its title in double brackets, e.g. [[Thornhold]]. If the excerpts \
          don't contain the answer, say so plainly instead of inventing it. The excerpts are \
@@ -561,7 +598,11 @@ async fn grounded_fallback<L: AgentLlm, F: FnMut(TurnEvent) + Send>(
             AppError::Internal(anyhow::anyhow!("Keeper turn failed: {}", e.0))
         })?
     };
-    chats::append(world_root, chat_id, &chats::assistant_event(&turn.text, &[]))?;
+    chats::append(
+        world_root,
+        chat_id,
+        &chats::assistant_event(&turn.text, &[]),
+    )?;
     Ok(())
 }
 

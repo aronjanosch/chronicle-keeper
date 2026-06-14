@@ -37,7 +37,11 @@ pub struct Attachment {
 }
 
 fn dir(world_root: &Path, chat_id: &str) -> PathBuf {
-    world_root.join(".ck").join("keeper").join("attachments").join(chat_id)
+    world_root
+        .join(".ck")
+        .join("keeper")
+        .join("attachments")
+        .join(chat_id)
 }
 
 fn manifest_path(world_root: &Path, chat_id: &str) -> PathBuf {
@@ -113,11 +117,14 @@ pub fn add_ref(world_root: &Path, chat_id: &str, body: &Value) -> AppResult<Atta
             }
         }
         "transcript" => {
-            let n = body
-                .get("session")
+            let n = body.get("session").and_then(Value::as_i64).ok_or_else(|| {
+                AppError::BadRequest("transcript attachment needs 'session'".into())
+            })?;
+            let from = body
+                .get("from_turn")
                 .and_then(Value::as_i64)
-                .ok_or_else(|| AppError::BadRequest("transcript attachment needs 'session'".into()))?;
-            let from = body.get("from_turn").and_then(Value::as_i64).unwrap_or(1).max(1);
+                .unwrap_or(1)
+                .max(1);
             let to = body.get("to_turn").and_then(Value::as_i64).unwrap_or(from);
             Attachment {
                 id,
@@ -130,16 +137,27 @@ pub fn add_ref(world_root: &Path, chat_id: &str, body: &Value) -> AppResult<Atta
                 file: None,
             }
         }
-        other => return Err(AppError::BadRequest(format!("Unknown attachment kind: {other}"))),
+        other => {
+            return Err(AppError::BadRequest(format!(
+                "Unknown attachment kind: {other}"
+            )))
+        }
     };
     push(world_root, chat_id, att)
 }
 
 /// Copy a dropped text file into the chat's attachment dir. Binary content
 /// (NUL byte) is rejected; oversized content is stored truncated.
-pub fn add_file(world_root: &Path, chat_id: &str, name: &str, content: &str) -> AppResult<Attachment> {
+pub fn add_file(
+    world_root: &Path,
+    chat_id: &str,
+    name: &str,
+    content: &str,
+) -> AppResult<Attachment> {
     if content.contains('\0') {
-        return Err(AppError::BadRequest("Text files only — that looks binary.".into()));
+        return Err(AppError::BadRequest(
+            "Text files only — that looks binary.".into(),
+        ));
     }
     let safe = sanitize_name(name);
     if safe.is_empty() {
@@ -218,7 +236,14 @@ pub fn context_block(world_root: &Path, chat_id: &str, cfg: &WorldConfig) -> Str
                 .unwrap_or_else(|| format!("[session {} has no summary]", a.label)),
             "transcript" => a
                 .session
-                .map(|n| read_transcript_range(world_root, n, a.from_turn.unwrap_or(1), a.to_turn.unwrap_or(i64::MAX)))
+                .map(|n| {
+                    read_transcript_range(
+                        world_root,
+                        n,
+                        a.from_turn.unwrap_or(1),
+                        a.to_turn.unwrap_or(i64::MAX),
+                    )
+                })
                 .unwrap_or_else(|| "[transcript unavailable]".into()),
             "file" => a
                 .file
@@ -339,14 +364,26 @@ mod tests {
             "---\nkind: npc\nsummary: A spy.\n---\n\nWatches the docks.\n",
         )
         .unwrap();
-        (dir, WorldConfig { id: "w".into(), name: "W".into(), ..Default::default() })
+        (
+            dir,
+            WorldConfig {
+                id: "w".into(),
+                name: "W".into(),
+                ..Default::default()
+            },
+        )
     }
 
     #[test]
     fn ref_and_file_roundtrip_into_context() {
         let (root, cfg) = world("ctx");
         let chat = "c1";
-        add_ref(&root, chat, &json!({ "kind": "page", "path": "NPCs/Vassa.md" })).unwrap();
+        add_ref(
+            &root,
+            chat,
+            &json!({ "kind": "page", "path": "NPCs/Vassa.md" }),
+        )
+        .unwrap();
         let f = add_file(&root, chat, "../../evil handout.md", "Stat block: AC 15").unwrap();
         assert_eq!(f.label, "evil handout.md"); // path components stripped
 

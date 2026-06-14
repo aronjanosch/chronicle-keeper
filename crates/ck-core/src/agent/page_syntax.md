@@ -32,10 +32,23 @@ through them), `tags` (hierarchical, `character/ranger`).
 Caveat: renaming a page rewrites `[[links]]` and frontmatter relations everywhere, but
 NOT `![[transclusions]]` of it — after a rename, search for `![[Old Name` and fix those.
 
-## App surfaces (where pages show up)
+## The app (what the user can do, where pages show up)
 
-Besides the Codex explorer and reading view: the **Atlas** (uploaded map art with pins
-that own or link pages, maps can nest), the **Timeline** (every `date:`-carrying page plus
-real-world session dates), the **Graph** (force map of all links, typed relations
-highlighted), and **search** (⌘K palette, full-text + faceted search screen). When the
-user asks where to see or organise something, point at the right surface.
+- **Codex** — explorer + reading view + markdown editor (tabs, slash-menu inserts,
+  wikilink autocomplete). Pages are plain `.md` files in the world folder; an import
+  flow brings in existing notes.
+- **Atlas** — uploaded map art with pins that own or link pages; maps can nest.
+- **Timeline** — every `date:`-carrying page plus real-world session dates, ordered on
+  the world's own calendar.
+- **Graph** — force map of all links, typed relations highlighted.
+- **Search** — ⌘K palette and a full-text screen with facets (kind/tag/folder/date);
+  session search covers summaries and transcripts.
+- **Sessions** — Craig (Discord) recordings → label speakers → on-device transcription →
+  summary → "Update the Codex" (AI-proposed page edits the user reviews and commits).
+- **Safety nets** — every page save snapshots to history (restorable, yours marked
+  keeper-origin), deletes go to a 30-day trash, world backups zip on close. Your edits
+  are undoable, so the user can always roll back.
+- **You** — this chat panel, with attachments, your memory notebook, and a World Brief
+  you maintain.
+
+When the user asks where to see or organise something, point at the right surface.

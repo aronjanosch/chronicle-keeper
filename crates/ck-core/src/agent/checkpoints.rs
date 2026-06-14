@@ -43,7 +43,10 @@ pub fn record(world_root: &Path, chat_id: &str, vault_root: &Path, rel: &str) ->
     std::fs::create_dir_all(&dir)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("create checkpoints dir: {e}")))?;
     let existing = entries_sorted(&dir);
-    for old in existing.iter().take((existing.len() + 1).saturating_sub(MAX_PER_CHAT)) {
+    for old in existing
+        .iter()
+        .take((existing.len() + 1).saturating_sub(MAX_PER_CHAT))
+    {
         let _ = std::fs::remove_file(old);
     }
     let seq = existing
@@ -51,7 +54,10 @@ pub fn record(world_root: &Path, chat_id: &str, vault_root: &Path, rel: &str) ->
         .and_then(|p| p.file_stem()?.to_str()?.parse::<u64>().ok())
         .map_or(1, |n| n + 1);
     let content = vault::read_page(vault_root, rel).ok().map(|p| p.content);
-    let cp = Checkpoint { path: rel.to_string(), content };
+    let cp = Checkpoint {
+        path: rel.to_string(),
+        content,
+    };
     let json = serde_json::to_string(&cp)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("serialize checkpoint: {e}")))?;
     std::fs::write(dir.join(format!("{seq:05}.json")), json)
@@ -130,7 +136,10 @@ mod tests {
 
         let restored = undo(&root, "chat1", &vault, true).unwrap();
         assert_eq!(restored, ["A.md"]);
-        assert_eq!(std::fs::read_to_string(vault.join("A.md")).unwrap(), "old body\n");
+        assert_eq!(
+            std::fs::read_to_string(vault.join("A.md")).unwrap(),
+            "old body\n"
+        );
         assert_eq!(count(&root, "chat1"), 0);
 
         delete_for_chat(&root, "chat1");

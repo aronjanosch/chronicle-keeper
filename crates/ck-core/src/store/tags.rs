@@ -204,9 +204,12 @@ mod tests {
     fn add_session(conn: &Connection, n: i64, tags: &[&str]) {
         crate::store::sessions::create_campaign_session(conn, "c1", Some(n), None, None).unwrap();
         let root = campaigns::world_root_for_id(conn, "c1").unwrap().unwrap();
-        let dir = root.join("Sessions").join(crate::session_files::padded_number(n));
-        let mut st: SessionToml =
-            crate::session_files::read_session_toml(&dir).unwrap().unwrap();
+        let dir = root
+            .join("Sessions")
+            .join(crate::session_files::padded_number(n));
+        let mut st: SessionToml = crate::session_files::read_session_toml(&dir)
+            .unwrap()
+            .unwrap();
         st.metadata = SessionMetadata {
             tags: tags.iter().map(|s| s.to_string()).collect(),
             ..Default::default()
@@ -215,8 +218,14 @@ mod tests {
     }
     fn tags_for(conn: &Connection, n: i64) -> Vec<String> {
         let root = campaigns::world_root_for_id(conn, "c1").unwrap().unwrap();
-        let dir = root.join("Sessions").join(crate::session_files::padded_number(n));
-        crate::session_files::read_session_toml(&dir).unwrap().unwrap().metadata.tags
+        let dir = root
+            .join("Sessions")
+            .join(crate::session_files::padded_number(n));
+        crate::session_files::read_session_toml(&dir)
+            .unwrap()
+            .unwrap()
+            .metadata
+            .tags
     }
 
     #[test]

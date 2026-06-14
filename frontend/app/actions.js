@@ -1,6 +1,6 @@
 // All data operations. Thin wrappers over the HTTP client that update the store.
 // Ported 1:1 from the legacy app.js so the backend contract is unchanged.
-import { store, setState, setOp, navigate, apiFetch, apiJson, apiText, apiStream, apiUrl, slugify, toneFor, initials } from './core.js';
+import { store, setState, setOp, navigate, apiFetch, apiJson, apiText, apiStream, apiUrl, slugify, toneFor, initials, loadWorldTabs, remapTabs, pruneTabs } from './core.js';
 
 // ── Campaigns ─────────────────────────────────────────────────────
 export async function loadCampaigns() {
@@ -22,21 +22,21 @@ export async function openCampaign(id) {
   setState({ loading: true, error: null });
   try {
     const campaign = decorateCampaign(await apiFetch(`/campaigns/${id}`));
-    const [sessions, codexEntries, vaultTree] = await Promise.all([
+    const [sessions, vaultTree] = await Promise.all([
       apiFetch(`/campaigns/${id}/sessions`).catch(() => []),
-      apiFetch(`/campaigns/${id}/codex/entries`).catch(() => []),
       campaign.vault_path
-        ? apiFetch(`/campaigns/${id}/vault/tree`).catch(() => ({ folders: [], pages: [] }))
-        : Promise.resolve({ folders: [], pages: [] }),
+        ? apiFetch(`/campaigns/${id}/vault/tree`).catch(() => null)
+        : Promise.resolve(null),
     ]);
     setState({
       campaign,
       campaignSessions: sessions || [],
-      codexEntries: codexEntries || [],
-      vaultPages: vaultTree.pages || [],
-      vaultFolders: vaultTree.folders || [],
+      vaultPages: vaultTree?.pages || [],
+      vaultFolders: vaultTree?.folders || [],
       loading: false,
     });
+    loadWorldTabs(id);
+    if (vaultTree) pruneTabs(vaultTree.pages || []);
     if (campaign.vault_path) { loadVaultLinks(id); loadKindSchemas(id); loadAtlasMaps(id); }
     navigate('campaign', { id });
   } catch (e) { setState({ error: e.message, loading: false }); }
@@ -91,8 +91,6 @@ export async function updateCampaign(patch) {
   const updated = decorateCampaign(await apiJson(`/campaigns/${id}`, 'PUT', patch));
   setState({ campaign: updated });
   await loadCampaigns();
-  // Roster edits auto-create `pc` codex entries server-side — refresh so they show.
-  if (patch && patch.players) await loadCodexEntries(id);
 }
 
 // Build/rebuild the campaign "story so far" recap from existing session
@@ -110,39 +108,9 @@ export async function generateRecap() {
 
 export async function deleteCampaign(id) {
   await apiFetch(`/campaigns/${id}`, { method: 'DELETE' });
-  setState({ campaign: null, campaignSessions: [], codexEntries: [] });
+  setState({ campaign: null, campaignSessions: [] });
   await loadCampaigns();
   navigate('library');
-}
-
-// ── Codex entries ─────────────────────────────────────────────────
-export async function loadCodexEntries(campaignId) {
-  const id = campaignId || store.campaign?.campaign_id;
-  if (!id) return [];
-  const entries = await apiFetch(`/campaigns/${id}/codex/entries`).catch((e) => {
-    console.warn('loadCodexEntries failed:', e);
-    return [];
-  });
-  setState({ codexEntries: entries || [] });
-  return entries || [];
-}
-
-export async function createCodexEntry({ name, kind, body, detail }) {
-  const id = store.campaign.campaign_id;
-  await apiJson(`/campaigns/${id}/codex/entries`, 'POST', { name, kind, body: body || '', detail: detail || '' });
-  await loadCodexEntries(id);
-}
-
-export async function updateCodexEntry(entryId, patch) {
-  const id = store.campaign.campaign_id;
-  await apiJson(`/campaigns/${id}/codex/entries/${entryId}`, 'PUT', patch);
-  await loadCodexEntries(id);
-}
-
-export async function deleteCodexEntry(entryId) {
-  const id = store.campaign.campaign_id;
-  await apiFetch(`/campaigns/${id}/codex/entries/${entryId}`, { method: 'DELETE' });
-  await loadCodexEntries(id);
 }
 
 // ── Campaign tags ─────────────────────────────────────────────────
@@ -173,21 +141,6 @@ export async function deleteCampaignTag(tag) {
   await refreshCampaignSessions();
 }
 
-// Sessions whose saved metadata (characters/locations/items) name this entry.
-// Pure client-side over already-loaded campaignSessions — no telemetry, no new
-// backend. Case-insensitive exact match on a metadata value.
-export function mentionsOf(name) {
-  const needle = String(name || '').trim().toLowerCase();
-  if (!needle) return [];
-  return (store.campaignSessions || [])
-    .filter((s) => {
-      const md = s.metadata || {};
-      return ['characters', 'locations', 'items'].some((k) =>
-        (md[k] || []).some((v) => String(v).trim().toLowerCase() === needle));
-    })
-    .map((s) => ({ session_id: s.session_id, session_number: s.session_number, title: s.title }));
-}
-
 // Distill pasted notes into proposed entries (not saved yet — the user reviews).
 export async function importCodex(text) {
   const id = store.campaign.campaign_id;
@@ -195,11 +148,11 @@ export async function importCodex(text) {
   return r.entries || [];
 }
 
-// Save the reviewed entries; returns { created, skipped }.
+// Save the reviewed entries as vault pages; returns { created, skipped }.
 export async function commitCodexImport(entries) {
   const id = store.campaign.campaign_id;
   const r = await apiJson(`/campaigns/${id}/codex/import/commit`, 'POST', { entries });
-  await loadCodexEntries(id);
+  await loadVaultTree(id);
   return r;
 }
 
@@ -234,8 +187,8 @@ export async function sniffVault(path) {
   }
 }
 
-// Copy-in import: .md pages from a folder (e.g. an Obsidian vault) into this
-// world's Codex. Returns { imported, renamed }.
+// Copy-in import: .md pages + media assets from a folder (e.g. an Obsidian
+// vault) into this world's Codex. Returns { imported, renamed, assets }.
 export async function importVaultFolder(path) {
   const id = store.campaign.campaign_id;
   const r = await apiJson(`/campaigns/${id}/vault/import`, 'POST', { path });
@@ -290,11 +243,14 @@ export async function loadVaultPages(campaignId) {
 export async function loadVaultTree(campaignId) {
   const id = campaignId || store.campaign?.campaign_id;
   if (!id) return { folders: [], pages: [] };
+  let failed = false;
   const r = await apiFetch(`/campaigns/${id}/vault/tree`).catch((e) => {
     console.warn('loadVaultTree failed:', e);
+    failed = true;
     return { folders: [], pages: [] };
   });
   setState({ vaultFolders: r.folders || [], vaultPages: r.pages || [] });
+  if (!failed && id === store.campaign?.campaign_id) pruneTabs(r.pages || []);
   loadVaultLinks(id);
   return r;
 }
@@ -384,6 +340,7 @@ export async function createVaultFolder(path) {
 export async function moveVaultEntry(from, to) {
   const id = store.campaign.campaign_id;
   await apiJson(`/campaigns/${id}/vault/move`, 'POST', { from, to });
+  remapTabs(from, to);
   await loadVaultTree(id);
 }
 
@@ -409,6 +366,7 @@ export async function readVaultPage(path) {
 export async function saveVaultPage(path, content) {
   const id = store.campaign.campaign_id;
   const page = await apiJson(`/campaigns/${id}/vault/pages/${encodeURI(path)}`, 'PUT', { content });
+  if (page.path && page.path !== path) remapTabs(path, page.path);
   setState({
     currentPage: store.currentPage?.path === path ? page : store.currentPage,
     vaultPages: (store.vaultPages || []).map((p) => (p.path === path
@@ -523,6 +481,15 @@ export async function createVaultPage(title, kind, folder) {
   return page;
 }
 
+// Phase 16: capture → kinded page. Sets kind, fills missing infobox fields,
+// drops #inbox, appends the kind's template headings, optionally moves.
+export async function promoteVaultPage(path, kind, folder) {
+  const id = store.campaign.campaign_id;
+  const page = await apiJson(`/campaigns/${id}/vault/promote`, 'POST', { page: path, kind, folder: folder ?? null });
+  await loadVaultTree(id);
+  return page;
+}
+
 // Copy of a page next to the original, first free "Title (copy [n])" name.
 export async function duplicateVaultPage(path) {
   const id = store.campaign.campaign_id;
@@ -577,14 +544,16 @@ export async function pickMapImage() {
 export async function saveAtlasMap(map) {
   const id = store.campaign.campaign_id;
   const saved = await apiJson(`/campaigns/${id}/atlas/maps/${encodeURIComponent(map.id)}`, 'PUT', map);
-  setState({ atlasMaps: (store.atlasMaps || []).map((m) => (m.id === saved.id ? saved : m)) });
+  setState({ atlasMaps: (store.atlasMaps || []).map((m) => (m.id === saved.id ? { ...saved, art_seq: m.art_seq } : m)) });
   return saved;
 }
 
 export async function replaceAtlasMapArt(mapId, imagePath) {
   const id = store.campaign.campaign_id;
   const saved = await apiJson(`/campaigns/${id}/atlas/maps/${encodeURIComponent(mapId)}/image`, 'PUT', { image_path: imagePath });
-  setState({ atlasMaps: (store.atlasMaps || []).map((m) => (m.id === saved.id ? saved : m)) });
+  // art_seq (client-only): same-extension replace keeps doc.image identical,
+  // so viewers need another signal to refetch the blob.
+  setState({ atlasMaps: (store.atlasMaps || []).map((m) => (m.id === saved.id ? { ...saved, art_seq: Date.now() } : m)) });
   return saved;
 }
 
@@ -609,10 +578,9 @@ export async function loadSession(id) {
     // Don't swallow artifact-load failures: an empty list from a real error
     // would render a misleading red "not transcribed" badge. Surface it.
     let loadErr = null;
-    const [transcripts, summaries, codexEntries] = await Promise.all([
+    const [transcripts, summaries] = await Promise.all([
       apiFetch(`/sessions/${id}/transcripts`).catch((e) => { loadErr = e; return []; }),
       apiFetch(`/sessions/${id}/summaries`).catch((e) => { loadErr = e; return []; }),
-      campId ? apiFetch(`/campaigns/${campId}/codex/entries`).catch(() => []) : Promise.resolve([]),
     ]);
     let summaryPreview = null;
     if ((summaries || []).length) {
@@ -622,7 +590,7 @@ export async function loadSession(id) {
     const codexUpdate = (summaries || []).length
       ? await apiFetch(`/sessions/${id}/codex-update`).catch(() => null)
       : null;
-    setState({ session, campaign, transcripts: transcripts || [], summaries: summaries || [], summaryPreview, codexEntries: codexEntries || [], codexUpdate, loading: false });
+    setState({ session, campaign, transcripts: transcripts || [], summaries: summaries || [], summaryPreview, codexUpdate, loading: false });
     if (loadErr) setOp(`Couldn't load this session's artifacts: ${loadErr.message}`, 'err');
     navigate('session', { id });
   } catch (e) { setState({ error: e.message, loading: false }); }
@@ -796,9 +764,9 @@ export async function runSummarize({ transcriptId, provider, model, title, conte
     if (failure) throw new Error(failure);
     await loadSession(sid);
     await refreshCampaignSessions();
-    // Auto-extract may have grown the codex; refresh so a later codex visit
-    // shows the new entries without a manual reload.
-    await loadCodexEntries(store.campaign?.campaign_id);
+    // Auto-extract may have created stub pages; refresh so a later codex visit
+    // shows them without a manual reload.
+    await loadVaultTree(store.campaign?.campaign_id);
     setOp('Summary complete', 'done');
   } catch (e) {
     setState({ summaryStreaming: null });

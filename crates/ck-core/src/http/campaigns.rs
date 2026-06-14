@@ -205,8 +205,9 @@ pub async fn export_world(
     let root = state
         .with_db(|conn| campaigns::world_root_for_id(conn, &campaign_id))?
         .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))?;
-    let path = tokio::task::spawn_blocking(move || crate::export::export_world(&root, req.include_audio))
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("export task: {e}")))??;
+    let path =
+        tokio::task::spawn_blocking(move || crate::export::export_world(&root, req.include_audio))
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("export task: {e}")))??;
     Ok(Json(json!({ "path": path })))
 }

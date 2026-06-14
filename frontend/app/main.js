@@ -15,7 +15,6 @@ import { CodexUpdateScreen } from './screens/codexUpdate.js';
 import { SettingsScreen } from './screens/settings.js';
 import { CodexScreen } from './screens/codex.js';
 import { SearchScreen } from './screens/search.js';
-import { CodexEntryScreen } from './screens/codexEntry.js';
 import { PageScreen } from './screens/page.js';
 import { SessionsScreen } from './screens/sessions.js';
 import { NewWorldScreen } from './screens/newWorld.js';
@@ -72,7 +71,6 @@ function App() {
     case 'codex': screen = html`<${CodexScreen} store=${store} />`; break;
     case 'search': screen = html`<${SearchScreen} store=${store} />`; break;
     case 'sessions': screen = html`<${SessionsScreen} store=${store} />`; break;
-    case 'codexEntry': screen = html`<${CodexEntryScreen} store=${store} />`; break;
     case 'page': screen = html`<${PageScreen} store=${store} />`; break;
     case 'newWorld': screen = html`<${NewWorldScreen} store=${store} />`; break;
     case 'atlas': screen = html`<${AtlasScreen} store=${store} />`; break;

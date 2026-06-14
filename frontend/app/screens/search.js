@@ -8,6 +8,7 @@ import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Input, Empty } from '../ui.js';
 import { searchVault, searchSessions, loadVaultTree, loadVaultTags, refreshCampaignSessions } from '../actions.js';
 import { KINDS, iconForKind, dirOf } from './codex.js';
+import { openPageEvt } from '../tabs.js';
 
 const SCOPES = [
   { value: 'pages', label: 'Pages', icon: 'book' },
@@ -80,7 +81,7 @@ export function SearchScreen() {
         .catch(() => { setResults([]); setLoading(false); });
     }, 220);
     return () => { if (timer.current) clearTimeout(timer.current); };
-  }, [query, facetKey, scope, cid]);
+  }, [query, facetKey, scope, cid, store.dirty_vault]);
 
   if (!c) { navigate('library'); return null; }
 
@@ -154,7 +155,7 @@ export function SearchScreen() {
             : html`<div>
                 <div style=${{ fontSize: 11.5, color: 'var(--ink-faint)', marginBottom: 10 }}>${results.length}${results.length >= 50 ? '+' : ''} result${results.length === 1 ? '' : 's'}</div>
                 ${scope === 'pages'
-                  ? results.map((h) => html`<div key=${h.path} onClick=${() => navigate('page', { path: h.path })}
+                  ? results.map((h) => html`<div key=${h.path} onClick=${(e) => openPageEvt(h.path, e)}
                       style=${{ padding: '11px 14px', border: '1px solid var(--rule)', borderRadius: 8, marginBottom: 8, cursor: 'pointer', background: 'var(--surface)' }}
                       onMouseEnter=${(e) => { e.currentTarget.style.borderColor = 'var(--rule-strong)'; }}
                       onMouseLeave=${(e) => { e.currentTarget.style.borderColor = 'var(--rule)'; }}>

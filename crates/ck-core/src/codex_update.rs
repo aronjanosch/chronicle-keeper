@@ -161,8 +161,11 @@ pub async fn generate_streamed<F: FnMut(UpdateProgress) + Send>(
     mut emit: F,
 ) -> AppResult<ProposalRun> {
     let sid = session_id.to_string();
-    let (provider_o, model_o, base_o) =
-        (req.provider.clone(), req.model.clone(), req.base_url.clone());
+    let (provider_o, model_o, base_o) = (
+        req.provider.clone(),
+        req.model.clone(),
+        req.base_url.clone(),
+    );
     let prep = state.with_db(move |conn| -> AppResult<_> {
         let loc = sessions::locate(conn, &sid)?
             .ok_or_else(|| AppError::NotFound(format!("Session not found: {sid}")))?;
@@ -208,16 +211,36 @@ pub async fn generate_streamed<F: FnMut(UpdateProgress) + Send>(
             .collect();
         let number = loc.st.number;
         let world_ctx = crate::agent::context::world_context(&root, &world_cfg);
-        Ok((loc.dir, vault_root, summary, transcript, resolved, language, pages, rel_fields, number, world_ctx))
+        Ok((
+            loc.dir, vault_root, summary, transcript, resolved, language, pages, rel_fields,
+            number, world_ctx,
+        ))
     })?;
-    let (session_dir, vault_root, summary, transcript, resolved, language, pages, rel_fields, number, world_ctx) =
-        prep;
+    let (
+        session_dir,
+        vault_root,
+        summary,
+        transcript,
+        resolved,
+        language,
+        pages,
+        rel_fields,
+        number,
+        world_ctx,
+    ) = prep;
 
     // Stage 1 — candidate pass (summary-scoped).
     emit(UpdateProgress::Candidates);
     let lang_name = crate::codex_import::language_name(&language);
     let stage1 = crate::agent::context::apply_world_context(
-        &build_candidate_prompt(&summary, &pages, &vault_root, &rel_fields, number, &lang_name),
+        &build_candidate_prompt(
+            &summary,
+            &pages,
+            &vault_root,
+            &rel_fields,
+            number,
+            &lang_name,
+        ),
         &world_ctx,
     );
     let raw = llm::chat(&chat_req(&resolved, &stage1), true)
@@ -254,7 +277,10 @@ pub async fn generate_streamed<F: FnMut(UpdateProgress) + Send>(
         Err(e) => {
             // Grounding is what makes proposals trustworthy — don't ship
             // unverified claims as accepted; flag everything instead.
-            tracing::warn!("grounding pass failed, marking all proposals ungrounded: {}", e.0);
+            tracing::warn!(
+                "grounding pass failed, marking all proposals ungrounded: {}",
+                e.0
+            );
             HashMap::new()
         }
     };
@@ -346,7 +372,9 @@ fn build_candidate_prompt(
             rel_lines.push_str(&format!("  {kind}: {}\n", fields.join(", ")));
         }
     }
-    let session_label = session_number.map(|n| format!("S{n}")).unwrap_or_else(|| "S?".into());
+    let session_label = session_number
+        .map(|n| format!("S{n}"))
+        .unwrap_or_else(|| "S?".into());
     format!(
         "You maintain a tabletop-RPG campaign wiki (\"codex\"). A new session was \
 summarized. Propose codex updates the wiki keeper should review.\n\n\
@@ -421,7 +449,7 @@ fn parse_candidates(
         };
         let Some(title) = s("title") else { continue };
         let kind = s("kind").unwrap_or_else(|| "lore".into()).to_lowercase();
-        if !crate::store::codex::KINDS.contains(&kind.as_str()) {
+        if !crate::vault::KINDS.contains(&kind.as_str()) {
             continue;
         }
         let existing = by_title.get(&crate::store::index::normalize_name(&title));
@@ -442,7 +470,10 @@ fn parse_candidates(
                 }
             }
             if let Some(text) = s("body_append") {
-                changes.push(Change::Body { anchor: "## Notes".into(), text });
+                changes.push(Change::Body {
+                    anchor: "## Notes".into(),
+                    text,
+                });
             }
         }
         if let Some(rels) = obj.get("rels").and_then(Value::as_array) {
@@ -484,9 +515,7 @@ fn parse_candidates(
             id,
             page: existing.map(|p| p.path.clone()),
             title,
-            kind: existing
-                .and_then(|p| p.kind.clone())
-                .unwrap_or(kind),
+            kind: existing.and_then(|p| p.kind.clone()).unwrap_or(kind),
             folder: if is_new { s("folder") } else { None },
             changes,
             rationale: s("rationale").unwrap_or_default(),
@@ -565,9 +594,7 @@ fn changes_digest(p: &Proposal) -> String {
             Change::Summary { new, .. } => parts.push(format!("new summary: {new}")),
             Change::Body { text, .. } => parts.push(format!("note: {text}")),
             Change::Rel { field, add, .. } => parts.push(format!("relationship {field}: {add}")),
-            Change::New { summary, body } => {
-                parts.push(format!("new page: {summary} {body}"))
-            }
+            Change::New { summary, body } => parts.push(format!("new page: {summary} {body}")),
         }
     }
     parts.join(" | ")
@@ -622,8 +649,13 @@ fn parse_verdicts(raw: &str) -> HashMap<String, (bool, (usize, usize))> {
     let mut out = HashMap::new();
     for v in &arr {
         let Some(obj) = v.as_object() else { continue };
-        let Some(id) = obj.get("id").and_then(Value::as_str) else { continue };
-        let grounded = obj.get("grounded").and_then(Value::as_bool).unwrap_or(false);
+        let Some(id) = obj.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let grounded = obj
+            .get("grounded")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let num = |k: &str| obj.get(k).and_then(Value::as_u64).map(|n| n as usize);
         let start = num("start").unwrap_or(0);
         let end = num("end").unwrap_or(start);
@@ -722,15 +754,15 @@ pub struct CommitReport {
     pub files: Vec<String>,
 }
 
-pub fn commit(
-    session_dir: &Path,
-    vault_root: &Path,
-    ids: &[String],
-) -> AppResult<CommitReport> {
+pub fn commit(session_dir: &Path, vault_root: &Path, ids: &[String]) -> AppResult<CommitReport> {
     let world_root = vault::world_root_of(vault_root);
     let mut run = read_run(session_dir)?
         .ok_or_else(|| AppError::NotFound("No codex-update run for this session.".into()))?;
-    let mut report = CommitReport { applied: 0, stale: Vec::new(), files: Vec::new() };
+    let mut report = CommitReport {
+        applied: 0,
+        stale: Vec::new(),
+        files: Vec::new(),
+    };
 
     for id in ids {
         let Some(p) = run.proposals.iter_mut().find(|x| &x.id == id) else {
@@ -831,7 +863,13 @@ mod tests {
     #[test]
     fn matching_turns_adds_context_and_caps() {
         let turns: Vec<String> = (0..100)
-            .map(|i| if i == 50 { "Ulric appears".into() } else { format!("line {i}") })
+            .map(|i| {
+                if i == 50 {
+                    "Ulric appears".into()
+                } else {
+                    format!("line {i}")
+                }
+            })
             .collect();
         let hits = matching_turns(&turns, &["ulric".into()]);
         assert_eq!(hits, vec![49, 50, 51]);
@@ -902,9 +940,19 @@ mod tests {
                     kind: "npc".into(),
                     folder: None,
                     changes: vec![
-                        Change::Summary { old: "Old liner.".into(), new: "New liner.".into() },
-                        Change::Body { anchor: "## Notes".into(), text: "S14 — new note.".into() },
-                        Change::Rel { field: "allies".into(), add: "[[Vassa]]".into(), note: String::new() },
+                        Change::Summary {
+                            old: "Old liner.".into(),
+                            new: "New liner.".into(),
+                        },
+                        Change::Body {
+                            anchor: "## Notes".into(),
+                            text: "S14 — new note.".into(),
+                        },
+                        Change::Rel {
+                            field: "allies".into(),
+                            add: "[[Vassa]]".into(),
+                            note: String::new(),
+                        },
                     ],
                     rationale: String::new(),
                     grounding: None,
@@ -917,7 +965,10 @@ mod tests {
                     title: "The Bronze Sigil".into(),
                     kind: "lore".into(),
                     folder: Some("Lore".into()),
-                    changes: vec![Change::New { summary: "A sigil.".into(), body: "S14 — found.".into() }],
+                    changes: vec![Change::New {
+                        summary: "A sigil.".into(),
+                        body: "S14 — found.".into(),
+                    }],
                     rationale: String::new(),
                     grounding: None,
                     ungrounded: false,
@@ -968,7 +1019,10 @@ mod tests {
                 title: "Thing".into(),
                 kind: "lore".into(),
                 folder: None,
-                changes: vec![Change::New { summary: String::new(), body: String::new() }],
+                changes: vec![Change::New {
+                    summary: String::new(),
+                    body: String::new(),
+                }],
                 rationale: String::new(),
                 grounding: None,
                 ungrounded: false,
@@ -979,7 +1033,10 @@ mod tests {
         let report = commit(&sess, &vault_root, &["p1".into()]).unwrap();
         assert_eq!(report.applied, 0);
         assert_eq!(report.stale, vec!["p1".to_string()]);
-        assert_eq!(read_run(&sess).unwrap().unwrap().proposals[0].decision, "stale");
+        assert_eq!(
+            read_run(&sess).unwrap().unwrap().proposals[0].decision,
+            "stale"
+        );
         for d in [&vault_root, &sess] {
             std::fs::remove_dir_all(d).ok();
         }
@@ -1001,7 +1058,10 @@ mod tests {
                 title: "X".into(),
                 kind: "lore".into(),
                 folder: None,
-                changes: vec![Change::New { summary: "a".into(), body: String::new() }],
+                changes: vec![Change::New {
+                    summary: "a".into(),
+                    body: String::new(),
+                }],
                 rationale: String::new(),
                 grounding: None,
                 ungrounded: false,
@@ -1014,13 +1074,18 @@ mod tests {
             proposals: vec![ProposalPatch {
                 id: "p1".into(),
                 decision: Some("edited".into()),
-                changes: Some(vec![Change::New { summary: "edited".into(), body: String::new() }]),
+                changes: Some(vec![Change::New {
+                    summary: "edited".into(),
+                    body: String::new(),
+                }]),
             }],
         };
         let updated = apply_decisions(&sess, &patch).unwrap();
         assert_eq!(updated.status, "skipped");
         assert_eq!(updated.proposals[0].decision, "edited");
-        assert!(matches!(&updated.proposals[0].changes[0], Change::New { summary, .. } if summary == "edited"));
+        assert!(
+            matches!(&updated.proposals[0].changes[0], Change::New { summary, .. } if summary == "edited")
+        );
         std::fs::remove_dir_all(&sess).ok();
     }
 }

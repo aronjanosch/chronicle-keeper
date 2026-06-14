@@ -1,7 +1,7 @@
 // Shared atoms ported from the design's atoms.jsx + a few form/primitive helpers.
 import { html, useState, useEffect, useLayoutEffect, useRef, useCallback } from '../vendor/htm-preact-standalone.mjs';
 import { marked } from '../vendor/marked.esm.js';
-import { navigate, store, apiBlob, apiFetch } from './core.js';
+import { navigate, store, apiBlob, apiFetch, openInNewTab } from './core.js';
 
 // ── Icon — monoline 16-grid SVGs ──────────────────────────────────
 const PATHS = {
@@ -23,6 +23,7 @@ const PATHS = {
   'chev-r': 'm6 3 5 5-5 5',
   'chev-l': 'm10 3-5 5 5 5',
   'chev-d': 'm3 6 5 5 5-5',
+  'chev-u': 'm3 10 5-5 5 5',
   'arrow-r':'M3 8h10M9 4l4 4-4 4',
   upload:   'M8 11V3M5 6l3-3 3 3M3 13h10',
   download: 'M8 3v8M5 8l3 3 3-3M3 13h10',
@@ -431,33 +432,33 @@ export function Empty({ icon = 'scroll', title, children }) {
 }
 
 // ── Tiny markdown → vnode renderer (summaries) ────────────────────
-// `codex` (optional): [{ name, entry_id }] — occurrences of these names in the
-// rendered prose are wrapped as clickable links to the entry-detail view.
+// `codex` (optional): [{ name, page }] — occurrences of these names in the
+// rendered prose are wrapped as clickable links to the vault page.
 export function Markdown({ text, codex }) {
   let out = mdToHtml(text || '');
   const hasCodex = Array.isArray(codex) && codex.length;
   if (hasCodex) out = linkifyCodex(out, codex);
   const onClick = hasCodex ? (e) => {
     const a = e.target && e.target.closest && e.target.closest('.ck-codex-link');
-    if (a && a.dataset.entry) { e.preventDefault(); navigate('codexEntry', { entryId: a.dataset.entry }); }
+    if (a && a.dataset.page) { e.preventDefault(); navigate('page', { page: a.dataset.page }); }
   } : undefined;
   return html`<div class="ck-prose" onClick=${onClick} dangerouslySetInnerHTML=${{ __html: out }} />`;
 }
 
 function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-// Wrap codex name occurrences in <a class="ck-codex-link" data-entry="ID">.
+// Wrap codex name occurrences in <a class="ck-codex-link" data-page="PATH">.
 // Longest-name-first (avoid partial overlaps), unicode word boundaries, and a
 // tag-aware walk that skips text already inside <a>/<code>. Best-effort: if the
 // engine lacks lookbehind/unicode props, return the prose unchanged.
 function linkifyCodex(htmlStr, codex) {
-  const entries = codex.filter((e) => e && e.name && e.name.trim());
+  const entries = codex.filter((e) => e && e.name && e.name.trim() && e.page);
   if (!entries.length) return htmlStr;
   const sorted = [...entries].sort((a, b) => b.name.trim().length - a.name.trim().length);
   const byLower = new Map();
   for (const e of sorted) {
     const k = e.name.trim().toLowerCase();
-    if (!byLower.has(k)) byLower.set(k, e.entry_id);
+    if (!byLower.has(k)) byLower.set(k, e.page);
   }
   let re;
   try {
@@ -475,8 +476,8 @@ function linkifyCodex(htmlStr, codex) {
     }
     if (skip > 0 || !t) continue;
     tokens[i] = t.replace(re, (m) => {
-      const id = byLower.get(m.toLowerCase());
-      return id ? `<a class="ck-codex-link" data-entry="${id}">${m}</a>` : m;
+      const page = byLower.get(m.toLowerCase());
+      return page ? `<a class="ck-codex-link" data-page="${escapeHtml(page)}">${m}</a>` : m;
     });
   }
   return tokens.join('');
@@ -629,20 +630,36 @@ export function renderBlockHtml(text, pages) {
   return resolveWikilinks(markHighlights(ckPostprocess(marked.parse(text || '', { gfm: true }))), pages);
 }
 
-// Click handler shared by reading view + live preview: navigate resolved wikilinks,
-// hand unresolved ones to onBroken (e.g. create a page). Also folds/unfolds callouts.
+// Click handler shared by reading view + live preview: navigate resolved wikilinks
+// (⌘-click → background tab, 15B), hand unresolved ones to onBroken (e.g. create
+// a page). Also folds/unfolds callouts.
 export function wikilinkClick(onBroken) {
   return (e) => {
     const a = e.target && e.target.closest && e.target.closest('.ck-wikilink');
     if (a) {
       e.preventDefault();
-      if (a.dataset.path) navigate('page', { path: a.dataset.path });
-      else if (a.dataset.name && onBroken) onBroken(a.dataset.name);
+      if (a.dataset.path) {
+        if (e.metaKey || e.ctrlKey) openInNewTab(a.dataset.path, { background: true });
+        else navigate('page', { path: a.dataset.path });
+      } else if (a.dataset.name && onBroken) onBroken(a.dataset.name);
       return;
     }
     const head = e.target && e.target.closest && e.target.closest('.ck-callout-head');
     if (head) head.closest('blockquote').classList.toggle('ck-collapsed');
   };
+}
+
+// Right-click on a resolved wikilink → open / open-in-new-tab (15B). Falls
+// through (returns false) elsewhere so callers can layer their own menus.
+export function wikilinkContextMenu(e) {
+  const a = e.target && e.target.closest && e.target.closest('.ck-wikilink[data-path]');
+  if (!a) return false;
+  const path = a.dataset.path;
+  openContextMenu(e, [
+    { label: 'Open', icon: 'book', onClick: () => navigate('page', { path }) },
+    { label: 'Open in new tab', icon: 'plus', onClick: () => openInNewTab(path) },
+  ]);
+  return true;
 }
 
 // ── Prose hydration: callout fold structure, ![[Page]] embeds, image blobs ──
@@ -858,6 +875,7 @@ export function PageBody({ text, pages, onBroken }) {
   }, []);
   return html`<div style=${{ position: 'relative' }}>
     <div ref=${ref} class="ck-prose" onClick=${wikilinkClick(onBroken)}
+      onContextMenu=${(e) => wikilinkContextMenu(e)}
       onMouseOver=${onMouseOver} onMouseLeave=${() => setHover(null)}
       dangerouslySetInnerHTML=${{ __html: htmlStr }} />
     ${hover && html`<${WikilinkHoverCard} path=${hover.path} pages=${pages} x=${hover.x} y=${hover.y} />`}

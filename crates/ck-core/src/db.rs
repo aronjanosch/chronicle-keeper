@@ -203,12 +203,12 @@ fn migrate(conn: &Connection) -> Result<()> {
         [],
     )?;
 
-    // Files are truth (Phase 2): sessions/artifacts are merge-compat shells —
-    // nothing reads or writes them. Clear rows left behind by pre-Phase-2 code
-    // so the settings DB stays settings-only. codex_entries is NOT cleared:
-    // legacy content there feeds the Phase 5 import.
+    // Files are truth (Phase 2): sessions/artifacts/codex_entries are
+    // merge-compat shells — nothing reads or writes them. Clear rows left
+    // behind by older code so the settings DB stays settings-only.
     conn.execute("DELETE FROM artifacts", [])?;
     conn.execute("DELETE FROM sessions", [])?;
+    conn.execute("DELETE FROM codex_entries", [])?;
 
     // Summary prompt templates: the user-managed library of system prompts shown
     // in the Summarize template picker. Two builtins (EN/DE) are seeded on first

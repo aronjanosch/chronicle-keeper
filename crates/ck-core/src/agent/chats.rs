@@ -26,7 +26,9 @@ fn chats_dir(world_root: &Path) -> PathBuf {
 fn chat_path(world_root: &Path, chat_id: &str) -> AppResult<PathBuf> {
     let ok = !chat_id.is_empty()
         && chat_id.len() <= 64
-        && chat_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+        && chat_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-');
     if !ok {
         return Err(AppError::BadRequest(format!("Invalid chat id: {chat_id}")));
     }
@@ -268,7 +270,15 @@ mod tests {
     fn chat_lifecycle() {
         let root = tmp_world("life");
         let chat = create_chat(&root).unwrap();
-        append(&root, &chat.id, &user_event("Who rules Thornhold and why does it matter for the party right now?", &[])).unwrap();
+        append(
+            &root,
+            &chat.id,
+            &user_event(
+                "Who rules Thornhold and why does it matter for the party right now?",
+                &[],
+            ),
+        )
+        .unwrap();
         append(&root, &chat.id, &assistant_event("Baron Aldric.", &[])).unwrap();
 
         let list = list_chats(&root).unwrap();
@@ -298,8 +308,18 @@ mod tests {
             arguments: json!({ "query": "x" }),
         };
         append(&root, &chat.id, &user_event("q", &[])).unwrap();
-        append(&root, &chat.id, &assistant_event("", std::slice::from_ref(&call))).unwrap();
-        append(&root, &chat.id, &tool_result_event("c1", "search_pages", "hit", false, None)).unwrap();
+        append(
+            &root,
+            &chat.id,
+            &assistant_event("", std::slice::from_ref(&call)),
+        )
+        .unwrap();
+        append(
+            &root,
+            &chat.id,
+            &tool_result_event("c1", "search_pages", "hit", false, None),
+        )
+        .unwrap();
         append(&root, &chat.id, &error_event("boom")).unwrap();
 
         let msgs = events_to_msgs(&load_chat(&root, &chat.id).unwrap());

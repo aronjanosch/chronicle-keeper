@@ -68,11 +68,7 @@ fn map_path(world_root: &Path, id: &str) -> AppResult<PathBuf> {
 /// Absolute path of a map's image file, validated to stay inside `Atlas/`.
 pub fn image_path(world_root: &Path, doc: &MapDoc) -> AppResult<PathBuf> {
     let name = &doc.image;
-    if name.is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name.starts_with('.')
-    {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name.starts_with('.') {
         return Err(AppError::BadRequest("invalid map image".into()));
     }
     Ok(world_root.join(ATLAS_DIR).join(name))
@@ -89,7 +85,9 @@ pub fn list_maps(world_root: &Path) -> AppResult<Vec<MapDoc>> {
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         if let Ok(doc) = serde_json::from_str::<MapDoc>(&text) {
             maps.push(doc);
         }
@@ -151,7 +149,11 @@ pub fn create_map(
     let ext = validate_art(image_src)?;
     let base = {
         let s = slugify(name);
-        if s.is_empty() { "map".to_string() } else { s }
+        if s.is_empty() {
+            "map".to_string()
+        } else {
+            s
+        }
     };
     let mut id = base.clone();
     let mut n = 2;
@@ -287,8 +289,13 @@ mod tests {
         let doc = create_map(&dir, "Vale", &src, None, None).unwrap();
         let mut with_pin = read_map(&dir, &doc.id).unwrap();
         with_pin.pins.push(Pin {
-            id: "p1".into(), name: "X".into(), kind: "place".into(),
-            x: 0.5, y: 0.5, page: None, to: None,
+            id: "p1".into(),
+            name: "X".into(),
+            kind: "place".into(),
+            x: 0.5,
+            y: 0.5,
+            page: None,
+            to: None,
         });
         write_map(&dir, &with_pin).unwrap();
 
@@ -313,14 +320,22 @@ mod tests {
         let leaf = create_map(&dir, "Town", &src, Some(mid.id.clone()), None).unwrap();
         let mut r = read_map(&dir, &root.id).unwrap();
         r.pins.push(Pin {
-            id: "p1".into(), name: "Region".into(), kind: "place".into(),
-            x: 0.3, y: 0.3, page: None, to: Some(mid.id.clone()),
+            id: "p1".into(),
+            name: "Region".into(),
+            kind: "place".into(),
+            x: 0.3,
+            y: 0.3,
+            page: None,
+            to: Some(mid.id.clone()),
         });
         write_map(&dir, &r).unwrap();
 
         delete_map(&dir, &mid.id).unwrap();
         assert!(read_map(&dir, &mid.id).is_err());
-        assert_eq!(read_map(&dir, &leaf.id).unwrap().parent.as_deref(), Some(root.id.as_str()));
+        assert_eq!(
+            read_map(&dir, &leaf.id).unwrap().parent.as_deref(),
+            Some(root.id.as_str())
+        );
         assert!(read_map(&dir, &root.id).unwrap().pins[0].to.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }

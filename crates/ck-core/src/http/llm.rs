@@ -53,15 +53,31 @@ pub async fn put_provider(
     let p = llm::get(&provider_id)
         .ok_or_else(|| AppError::NotFound(format!("Unknown provider: {provider_id}")))?;
     state.with_db(|conn| {
+        // Partial update: a null field keeps its saved value (the settings
+        // modal leaves key/base blank unless the user retypes them).
+        let prev = llm::get_key(conn, &provider_id)?.unwrap_or_default();
         llm::upsert_key(
             conn,
             &provider_id,
-            req.api_key.as_deref().unwrap_or(""),
-            req.api_base.as_deref().unwrap_or(""),
-            req.default_model.as_deref().unwrap_or(""),
+            req.api_key.as_deref().unwrap_or(&prev.api_key),
+            req.api_base.as_deref().unwrap_or(&prev.api_base),
+            req.default_model.as_deref().unwrap_or(&prev.default_model),
         )?;
         let saved = llm::get_key(conn, &provider_id)?;
         Ok(Json(provider_info(p, saved.as_ref())))
+    })
+}
+
+// Test/ping/models must target exactly what generation will target — same
+// resolution (saved key/base, config fallbacks) as summarize and the Keeper.
+fn resolve_target(
+    state: &AppState,
+    provider_id: &str,
+    model: Option<&str>,
+) -> AppResult<llm::Resolved> {
+    state.with_db(|conn| {
+        let cfg = crate::config::get_config_map(conn)?;
+        llm::resolve(conn, &cfg, Some(provider_id), model, None)
     })
 }
 
@@ -72,28 +88,24 @@ pub async fn test_provider(
 ) -> AppResult<Json<ProviderTestResult>> {
     let p = llm::get(&provider_id)
         .ok_or_else(|| AppError::NotFound(format!("Unknown provider: {provider_id}")))?;
-    let saved = state
-        .with_db(|conn| llm::get_key(conn, &provider_id))?
-        .unwrap_or_default();
-
-    let api_base = if !saved.api_base.is_empty() {
-        saved.api_base.clone()
-    } else {
-        p.default_api_base.unwrap_or("").to_string()
+    let resolved = match resolve_target(&state, &provider_id, req.model.as_deref()) {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(Json(ProviderTestResult {
+                ok: false,
+                latency_ms: 0,
+                error: Some(e.to_string()),
+            }))
+        }
     };
-    let model = req
-        .model
-        .filter(|s| !s.is_empty())
-        .or_else(|| Some(saved.default_model.clone()).filter(|s| !s.is_empty()))
-        .unwrap_or_else(|| p.default_model.to_string());
 
     let start = Instant::now();
     let result = llm::chat(
         &llm::ChatRequest {
             transport: p.transport,
-            api_base: &api_base,
-            api_key: &saved.api_key,
-            model: &model,
+            api_base: &resolved.api_base,
+            api_key: &resolved.api_key,
+            model: &resolved.model,
             prompt: "Hi",
             timeout_secs: 15,
             num_ctx_max: None,
@@ -125,15 +137,17 @@ pub async fn ping_provider(
 ) -> AppResult<Json<ProviderTestResult>> {
     let p = llm::get(&provider_id)
         .ok_or_else(|| AppError::NotFound(format!("Unknown provider: {provider_id}")))?;
-    let saved = state
-        .with_db(|conn| llm::get_key(conn, &provider_id))?
-        .unwrap_or_default();
-    let api_base = if !saved.api_base.is_empty() {
-        saved.api_base.clone()
-    } else {
-        p.default_api_base.unwrap_or("").to_string()
+    let resolved = match resolve_target(&state, &provider_id, None) {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(Json(ProviderTestResult {
+                ok: false,
+                latency_ms: 0,
+                error: Some(e.to_string()),
+            }))
+        }
     };
-    let result = llm::ping(p.transport, &api_base, &saved.api_key, 4).await;
+    let result = llm::ping(p.transport, &resolved.api_base, &resolved.api_key, 4).await;
     Ok(Json(match result {
         Ok(()) => ProviderTestResult {
             ok: true,
@@ -155,15 +169,10 @@ pub async fn list_provider_models(
 ) -> AppResult<Json<serde_json::Value>> {
     let p = llm::get(&provider_id)
         .ok_or_else(|| AppError::NotFound(format!("Unknown provider: {provider_id}")))?;
-    let saved = state
-        .with_db(|conn| llm::get_key(conn, &provider_id))?
-        .unwrap_or_default();
-    let api_base = if !saved.api_base.is_empty() {
-        saved.api_base.clone()
-    } else {
-        p.default_api_base.unwrap_or("").to_string()
+    let Ok(resolved) = resolve_target(&state, &provider_id, None) else {
+        return Ok(Json(json!({ "models": [] })));
     };
-    let models = llm::list_models(p.transport, &api_base, &saved.api_key, 4)
+    let models = llm::list_models(p.transport, &resolved.api_base, &resolved.api_key, 4)
         .await
         .unwrap_or_default();
     Ok(Json(json!({ "models": models })))

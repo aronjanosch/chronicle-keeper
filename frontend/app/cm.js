@@ -536,17 +536,38 @@ function slashSource(cm, getSnippets) {
   };
 }
 
-// Build the editor. `host` = parent element. Returns { destroy, view }.
-export async function mountEditor(host, opts) {
-  const cm = await loadCM();
+// ── Singleton view + per-tab state cache (Phase 15C) ─────────────
+// One EditorView lives for the whole session; mountEditor() re-parents its DOM
+// and swaps EditorStates, so cursor, selection, and undo history survive tab
+// switches. Extensions are built once and read the current mount's callbacks
+// through `ed.opts`, never through closures over a particular mount.
+let ed = null;                 // { cm, view, opts, pending, saveTimer, flush, cmdRuns, extensions }
+const stateCache = new Map();  // opts.cacheKey → EditorState
+const CACHE_CAP = 16;
+
+function cacheSet(key, state) {
+  stateCache.delete(key);
+  stateCache.set(key, state);
+  if (stateCache.size > CACHE_CAP) stateCache.delete(stateCache.keys().next().value);
+}
+
+function createSingleton(cm) {
   const {
     EditorState, EditorView, keymap, highlightActiveLine, drawSelection, dropCursor,
     history, historyKeymap, defaultKeymap, indentWithTab, indentMore, indentLess, Prec,
-    foldGutter, foldKeymap, codeFolding, indentOnInput, bracketMatching, syntaxHighlighting: _sh,
+    foldGutter, foldKeymap, codeFolding, indentOnInput, bracketMatching,
     markdown, markdownLanguage, insertNewlineContinueMarkup, deleteMarkupBackward,
     search, searchKeymap, highlightSelectionMatches,
     autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap,
   } = cm;
+
+  const s = { cm, opts: {}, pending: { dirty: false, doc: '' }, saveTimer: null };
+  // Mount-independent views of the current callbacks for the event-time readers.
+  const live = {
+    get onUploadAsset() { return s.opts.onUploadAsset; },
+    get onExtract() { return s.opts.onExtract; },
+    get onQuote() { return s.opts.onQuote; },
+  };
 
   const listKeys = Prec.high(keymap.of([
     { key: 'Enter', run: insertNewlineContinueMarkup },
@@ -559,10 +580,9 @@ export async function mountEditor(host, opts) {
     { key: 'Mod-l', run: wrapLink(cm) },
   ]));
 
-  let saveTimer = null;
-  const pending = { dirty: false, doc: opts.doc };
-  const flush = () => {
-    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  s.flush = () => {
+    if (s.saveTimer) { clearTimeout(s.saveTimer); s.saveTimer = null; }
+    const { pending, opts } = s;
     if (!pending.dirty) return;
     if (opts.onState) opts.onState('saving');
     Promise.resolve(opts.onSave(pending.doc))
@@ -571,58 +591,88 @@ export async function mountEditor(host, opts) {
   };
   const onDoc = EditorView.updateListener.of((u) => {
     if (!u.docChanged) return;
-    pending.doc = u.state.doc.toString();
-    pending.dirty = true;
-    if (opts.onState) opts.onState('dirty');
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(flush, 800);
+    s.pending.doc = u.state.doc.toString();
+    s.pending.dirty = true;
+    if (s.opts.onState) s.opts.onState('dirty');
+    if (s.saveTimer) clearTimeout(s.saveTimer);
+    s.saveTimer = setTimeout(s.flush, 800);
   });
 
-  const view = new EditorView({
-    parent: host,
-    state: EditorState.create({
-      doc: opts.doc,
-      extensions: [
-        foldGutter(), codeFolding(),
-        history(), drawSelection(), dropCursor(),
-        EditorState.allowMultipleSelections.of(true),
-        indentOnInput(), bracketMatching(), closeBrackets(),
-        highlightActiveLine(), highlightSelectionMatches(),
-        markdown({ base: markdownLanguage }),
-        autocompletion({ override: [wikilinkSource(cm, opts.getPages, opts.onCreatePage), tagSource(opts.getPages), slashSource(cm, opts.getSnippets)], icons: false }),
-        pasteDrop(cm, opts),
-        selectionMenu(cm, opts),
-        search({ top: true }),
-        buildTheme(cm),
-        inkDecorations(cm),
-        EditorView.lineWrapping,
-        formatKeys, listKeys,
-        keymap.of([...closeBracketsKeymap, ...searchKeymap, ...completionKeymap, ...foldKeymap, ...historyKeymap, indentWithTab, ...defaultKeymap]),
-        onDoc,
+  s.extensions = [
+    foldGutter(), codeFolding(),
+    history(), drawSelection(), dropCursor(),
+    EditorState.allowMultipleSelections.of(true),
+    indentOnInput(), bracketMatching(), closeBrackets(),
+    highlightActiveLine(), highlightSelectionMatches(),
+    markdown({ base: markdownLanguage }),
+    autocompletion({
+      override: [
+        wikilinkSource(cm, () => s.opts.getPages && s.opts.getPages(), (name, kind) => s.opts.onCreatePage && s.opts.onCreatePage(name, kind)),
+        tagSource(() => s.opts.getPages && s.opts.getPages()),
+        slashSource(cm, () => s.opts.getSnippets && s.opts.getSnippets()),
       ],
+      icons: false,
     }),
-  });
-  view.focus();
-  const bubble = bubbleToolbar(cm, view, opts);
+    pasteDrop(cm, live),
+    selectionMenu(cm, live),
+    search({ top: true }),
+    buildTheme(cm),
+    inkDecorations(cm),
+    EditorView.lineWrapping,
+    formatKeys, listKeys,
+    keymap.of([...closeBracketsKeymap, ...searchKeymap, ...completionKeymap, ...foldKeymap, ...historyKeymap, indentWithTab, ...defaultKeymap]),
+    onDoc,
+  ];
+  s.view = new EditorView({ state: EditorState.create({ doc: '', extensions: s.extensions }) });
 
   // 14 D+E: commands routed from the native menu / global shortcuts.
-  const cmdRuns = {
+  s.cmdRuns = {
     'fmt-bold': wrapWith(cm, '**', '**'), 'fmt-italic': wrapWith(cm, '*', '*'),
     'fmt-code': wrapWith(cm, '`', '`'), 'fmt-highlight': wrapWith(cm, '==', '=='),
     'fmt-wikilink': wrapLink(cm),
     'fmt-h1': turnInto('h1'), 'fmt-h2': turnInto('h2'), 'fmt-h3': turnInto('h3'),
     'fmt-list': turnInto('list'), 'fmt-quote': turnInto('quote'), 'fmt-callout': turnInto('callout'),
   };
+  return s;
+}
+
+// Mount the editor into `host`. `opts.cacheKey` (world:path) keys the per-tab
+// EditorState cache — a hit restores cursor/undo, but only while the cached
+// doc still matches `opts.doc` (external edits and history restores miss).
+// Returns { destroy, view }.
+export async function mountEditor(host, opts) {
+  const cm = await loadCM();
+  if (!ed) ed = createSingleton(cm);
+  ed.flush();
+  ed.opts = opts;
+  ed.pending = { dirty: false, doc: opts.doc };
+  host.appendChild(ed.view.dom);
+  const cached = opts.cacheKey ? stateCache.get(opts.cacheKey) : null;
+  ed.view.setState(cached && cached.doc.toString() === opts.doc
+    ? cached
+    : cm.EditorState.create({ doc: opts.doc, extensions: ed.extensions }));
+  ed.view.focus();
+  const bubble = bubbleToolbar(cm, ed.view, opts);
+
   const onCmd = (e) => {
     const id = e.detail;
-    if (id === 'save') flush();
-    else if (id === 'find') { cm.openSearchPanel(view); }
-    else if (cmdRuns[id]) { cmdRuns[id](view); view.focus(); }
+    if (id === 'save') ed.flush();
+    else if (id === 'find') { cm.openSearchPanel(ed.view); }
+    else if (ed.cmdRuns[id]) { ed.cmdRuns[id](ed.view); ed.view.focus(); }
   };
   window.addEventListener('ck:cmd', onCmd);
 
+  let dead = false;
   return {
-    view,
-    destroy() { window.removeEventListener('ck:cmd', onCmd); flush(); bubble.destroy(); view.destroy(); },
+    view: ed.view,
+    destroy() {
+      if (dead) return;
+      dead = true;
+      window.removeEventListener('ck:cmd', onCmd);
+      ed.flush();
+      if (opts.cacheKey) cacheSet(opts.cacheKey, ed.view.state);
+      bubble.destroy();
+      if (ed.view.dom.parentNode === host) host.removeChild(ed.view.dom);
+    },
   };
 }

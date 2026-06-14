@@ -155,7 +155,12 @@ pub fn read_session_toml(session_path: &Path) -> AppResult<Option<SessionToml>> 
     let raw = match std::fs::read_to_string(&path) {
         Ok(r) => r,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(AppError::Internal(anyhow::anyhow!("read {}: {e}", path.display()))),
+        Err(e) => {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "read {}: {e}",
+                path.display()
+            )))
+        }
     };
     let parsed = toml::from_str(&raw)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("parse {}: {e}", path.display())))?;
@@ -247,7 +252,9 @@ pub fn write_summary_md(
     if let Some(t) = title.filter(|s| !s.is_empty()) {
         content.push_str(&format!("title: \"{}\"\n", yaml_escape(t)));
     }
-    content.push_str(&format!("provider: {provider}\nmodel: {model}\ngenerated_at: {generated_at}\n---\n\n"));
+    content.push_str(&format!(
+        "provider: {provider}\nmodel: {model}\ngenerated_at: {generated_at}\n---\n\n"
+    ));
     content.push_str(text.trim());
     content.push('\n');
     std::fs::write(summary_md_path(session_path), content.as_bytes())
@@ -326,10 +333,16 @@ mod tests {
 
     #[test]
     fn is_vault_session_path_works() {
-        assert!(is_vault_session_path("/home/aron/Chronicle Keeper/Ashfall/Sessions/001"));
-        assert!(is_vault_session_path("/home/aron/Chronicle Keeper/Ashfall/Sessions/42"));
+        assert!(is_vault_session_path(
+            "/home/aron/Chronicle Keeper/Ashfall/Sessions/001"
+        ));
+        assert!(is_vault_session_path(
+            "/home/aron/Chronicle Keeper/Ashfall/Sessions/42"
+        ));
         assert!(!is_vault_session_path("/home/aron/ck/ashfall/1"));
-        assert!(!is_vault_session_path("/home/aron/Sessions-backup/ashfall/1")); // parent not exactly "Sessions"
+        assert!(!is_vault_session_path(
+            "/home/aron/Sessions-backup/ashfall/1"
+        )); // parent not exactly "Sessions"
     }
 
     #[test]
@@ -348,7 +361,16 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let tracks = serde_json::json!([{"id": "track-aria", "filename": "track-aria.flac"}]);
         let speakers = serde_json::json!([{"track_id": "track-aria", "player_name": "Aron", "character_name": "Lyra", "pronouns": "she/her"}]);
-        write_session_toml(&dir, Some(1), Some("The Iron Crown"), Some("2025-01-15"), "en", &tracks, &speakers).unwrap();
+        write_session_toml(
+            &dir,
+            Some(1),
+            Some("The Iron Crown"),
+            Some("2025-01-15"),
+            "en",
+            &tracks,
+            &speakers,
+        )
+        .unwrap();
         let content = std::fs::read_to_string(session_toml_path(&dir)).unwrap();
         assert!(content.contains("number = 1"));
         assert!(content.contains("title = \"The Iron Crown\""));
@@ -391,7 +413,16 @@ mod tests {
 
         // DB-shaped rewrite keeps metadata + notes (read-modify-write).
         let tracks = serde_json::json!([{"id": "track-aria", "filename": "track-aria.flac"}]);
-        write_session_toml(&dir, Some(7), Some("Tomb"), None, "de", &tracks, &serde_json::json!([])).unwrap();
+        write_session_toml(
+            &dir,
+            Some(7),
+            Some("Tomb"),
+            None,
+            "de",
+            &tracks,
+            &serde_json::json!([]),
+        )
+        .unwrap();
         let back2 = read_session_toml(&dir).unwrap().unwrap();
         assert_eq!(back2.notes, st.notes);
         assert_eq!(back2.metadata, st.metadata);

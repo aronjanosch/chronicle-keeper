@@ -228,7 +228,10 @@ async fn run_summarize(
     })?;
 
     // Write summary.md for vault sessions (best-effort).
-    let session_path = session.get("session_path").and_then(Value::as_str).unwrap_or_default();
+    let session_path = session
+        .get("session_path")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if crate::session_files::is_vault_session_path(session_path) {
         let campaign = session.get("campaign").cloned().unwrap_or_default();
         let number = campaign.get("session_number").and_then(Value::as_i64);
@@ -518,7 +521,10 @@ mod tests {
         .unwrap();
 
         let loc = sessions::locate(&conn, &sid).unwrap().unwrap();
-        assert_eq!(loc.st.metadata.events, vec!["Party fought their way over the bridge"]);
+        assert_eq!(
+            loc.st.metadata.events,
+            vec!["Party fought their way over the bridge"]
+        );
         assert_eq!(loc.st.metadata.tags, vec!["combat"]);
         std::fs::remove_dir_all(&tmp).ok();
     }

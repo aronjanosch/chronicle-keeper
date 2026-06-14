@@ -4,10 +4,10 @@
 // 6.4: structural/shell permission cards, attachments (picker + drag-drop),
 // [[ autocomplete in the composer.
 import { html, useState, useEffect, useRef } from '../vendor/htm-preact-standalone.mjs';
-import { apiFetch, apiJson, apiStream, setOp, setState, store } from './core.js';
+import { apiFetch, apiJson, apiStream, bump, setOp, setState, store } from './core.js';
 import { Icon, Spinner, renderBlockHtml, wikilinkClick, openContextMenu } from './ui.js';
 import { caretCoords } from './screens/page.js';
-import { loadLlmProviders, fetchLlmModels, copyText } from './actions.js';
+import { loadLlmProviders, fetchLlmModels, loadVaultTree, copyText } from './actions.js';
 
 // store.keeper = { open, chatId, campaignId, events[], attachments[],
 //                  live: {text, tools[], ask}|null, error, mode }
@@ -71,7 +71,8 @@ export async function openPanel() {
   if (k.chatId) return;
   try {
     const { chats } = await apiFetch(`/campaigns/${cid}/agent/chats`);
-    const chat = chats[0] || (await apiJson(`/campaigns/${cid}/agent/chats`, 'POST', {}));
+    let chat = chats[0];
+    if (!chat) { chat = await apiJson(`/campaigns/${cid}/agent/chats`, 'POST', {}); bump('keeper'); }
     await fetchChatInto(chat.id);
   } catch (e) {
     patchKeeper({ error: String(e.message || e) });
@@ -84,6 +85,7 @@ export async function newChat() {
   try {
     const chat = await apiJson(`/campaigns/${cid}/agent/chats`, 'POST', {});
     patchKeeper({ chatId: chat.id, events: [], attachments: [], live: null, error: null, ...defaultPick() });
+    bump('keeper');
     return chat.id;
   } catch (e) {
     patchKeeper({ error: String(e.message || e) });
@@ -96,6 +98,7 @@ export async function sendMessage(text, images = []) {
   if (!cid || !k.chatId || k.live) return;
   const events = [...k.events, { type: 'user', text, images }];
   patchKeeper({ events, live: { text: '', tools: [] }, error: null });
+  let toolsRan = false;
   try {
     const body = { text, mode: k.mode };
     if (images.length) body.images = images.map((i) => ({ media_type: i.media_type, data: i.data }));
@@ -109,6 +112,7 @@ export async function sendMessage(text, images = []) {
       } else if (ev.type === 'permission_request') {
         patchKeeper({ live: { ...live, ask: { requestId: ev.request_id, name: ev.name, diff: ev.diff } } });
       } else if (ev.type === 'tool_start') {
+        toolsRan = true;
         patchKeeper({ live: { ...live, ask: null, tools: [...live.tools, { name: ev.name, args: ev.args_summary, diff: ev.diff, running: true }] } });
       } else if (ev.type === 'tool_result') {
         const tools = live.tools.slice();
@@ -138,6 +142,8 @@ export async function sendMessage(text, images = []) {
   } catch (_) {
     patchKeeper({ live: null });
   }
+  bump('keeper'); // chat list title/count, brief staleness, memories
+  if (toolsRan) { loadVaultTree(cid); bump('vault'); } // tools may have touched pages
 }
 
 export async function abortRun() {
@@ -171,6 +177,7 @@ export async function undoLast() {
   try {
     const { restored } = await apiJson(`/campaigns/${cid}/agent/chats/${k.chatId}/undo`, 'POST', { scope: 'last' });
     setOp(restored.length ? `Restored ${restored.join(', ')}` : 'Nothing to undo', restored.length ? 'done' : '');
+    if (restored.length) { loadVaultTree(cid); bump('vault'); }
   } catch (e) {
     patchKeeper({ error: String(e.message || e) });
   }

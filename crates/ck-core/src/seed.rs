@@ -41,7 +41,9 @@ pub fn seed_example_if_first(conn: &Connection) -> AppResult<()> {
 /// already exists.
 pub fn seed_example(conn: &Connection) -> AppResult<crate::models::CampaignDetail> {
     if campaigns::get_campaign(conn, CAMPAIGN_ID)?.is_some() {
-        return Err(AppError::Conflict("The example world already exists".into()));
+        return Err(AppError::Conflict(
+            "The example world already exists".into(),
+        ));
     }
     let tx = conn.unchecked_transaction()?;
     seed_inner(&tx)?;
@@ -52,10 +54,17 @@ pub fn seed_example(conn: &Connection) -> AppResult<crate::models::CampaignDetai
 }
 
 fn seed_inner(conn: &Connection) -> AppResult<()> {
-    campaigns::create_campaign(conn, CAMPAIGN_ID, "The Ashfall Compact", 1, None, false, false)?;
+    campaigns::create_campaign(
+        conn,
+        CAMPAIGN_ID,
+        "The Ashfall Compact",
+        1,
+        None,
+        false,
+        false,
+    )?;
 
-    // Setting + party. Passing `players` makes update_campaign auto-create the
-    // `pc` codex entries via codex::sync_pc_entries, so we don't add them here.
+    // Setting + party.
     let update = CampaignUpdateRequest {
         system: Some("D&D 5e".into()),
         gm: Some("The Keeper".into()),
@@ -271,7 +280,10 @@ mod tests {
         let pages = vault::list_pages(&vault).unwrap();
         assert_eq!(pages.len(), 5);
         let oren = vault::read_page(&vault, "Mayor Teller Oren.md").unwrap();
-        assert_eq!(oren.summary, "Anxious mayor of Cinderhold who hired the party.");
+        assert_eq!(
+            oren.summary,
+            "Anxious mayor of Cinderhold who hired the party."
+        );
         assert!(oren.content.contains("[[Cinderhold]]"));
 
         let sessions = crate::store::sessions::list_campaign_sessions(&conn, CAMPAIGN_ID).unwrap();

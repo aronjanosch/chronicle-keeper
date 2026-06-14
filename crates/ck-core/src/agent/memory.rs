@@ -64,11 +64,21 @@ fn parse(slug: &str, raw: &str) -> Memory {
                 }
             }
             body = rest[end + 4..].trim_start_matches('\n').to_string();
-            return Memory { slug: slug.to_string(), description, mtype, body };
+            return Memory {
+                slug: slug.to_string(),
+                description,
+                mtype,
+                body,
+            };
         }
     }
     body = raw.to_string();
-    Memory { slug: slug.to_string(), description, mtype, body }
+    Memory {
+        slug: slug.to_string(),
+        description,
+        mtype,
+        body,
+    }
 }
 
 fn load_all(world_root: &Path) -> Vec<Memory> {
@@ -101,7 +111,11 @@ fn rebuild_index(world_root: &Path) {
         body.push_str("_(empty)_\n");
     } else {
         for m in &mems {
-            let desc = if m.description.is_empty() { "(no description)" } else { &m.description };
+            let desc = if m.description.is_empty() {
+                "(no description)"
+            } else {
+                &m.description
+            };
             body.push_str(&format!("- **{}** — {}\n", m.slug, desc));
         }
     }
@@ -120,7 +134,11 @@ pub fn index_block(world_root: &Path) -> String {
          Call read_memory to read one in full when an entry looks relevant.\n\n",
     );
     for m in &mems {
-        let desc = if m.description.is_empty() { "(no description)" } else { &m.description };
+        let desc = if m.description.is_empty() {
+            "(no description)"
+        } else {
+            &m.description
+        };
         s.push_str(&format!("- {} — {}\n", m.slug, desc));
     }
     s
@@ -156,9 +174,12 @@ pub fn write_memory(
             "Memory is full ({MAX_MEMORIES}) — consolidate or delete_memory before adding more."
         ));
     }
-    let mtype = if VALID_TYPES.contains(&mtype) { mtype } else { "preference" };
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("create memory dir: {e}"))?;
+    let mtype = if VALID_TYPES.contains(&mtype) {
+        mtype
+    } else {
+        "preference"
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create memory dir: {e}"))?;
     let file = format!(
         "---\nname: {slug}\ndescription: {}\ntype: {mtype}\n---\n\n{}\n",
         description.trim(),
@@ -217,7 +238,14 @@ mod tests {
     #[test]
     fn write_read_delete_roundtrip() {
         let root = tmp("rt");
-        write_memory(&root, "Terse summaries", "Keep summaries short", "preference", "User likes short scene-structured summaries.").unwrap();
+        write_memory(
+            &root,
+            "Terse summaries",
+            "Keep summaries short",
+            "preference",
+            "User likes short scene-structured summaries.",
+        )
+        .unwrap();
         let body = read_memory(&root, "terse-summaries").unwrap();
         assert!(body.contains("description: Keep summaries short"));
         assert!(body.contains("scene-structured"));
@@ -237,7 +265,9 @@ mod tests {
     fn unknown_type_falls_back_and_cap_enforced() {
         let root = tmp("cap");
         write_memory(&root, "x", "d", "bogus", "c").unwrap();
-        assert!(read_memory(&root, "x").unwrap().contains("type: preference"));
+        assert!(read_memory(&root, "x")
+            .unwrap()
+            .contains("type: preference"));
         for i in 0..MAX_MEMORIES {
             let _ = write_memory(&root, &format!("m{i}"), "d", "task", "c");
         }

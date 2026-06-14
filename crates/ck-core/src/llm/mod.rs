@@ -324,8 +324,10 @@ pub fn resolve(
         .map(str::to_string)
         .filter(|s| !s.is_empty())
         .or_else(|| Some(saved.api_base.clone()).filter(|s| !s.is_empty()))
+        // Legacy config key points at the local daemon — it must not hijack
+        // other Ollama-transport providers (ollama-cloud has its own base).
         .or_else(|| {
-            (p.transport == Transport::Ollama)
+            (p.id == "ollama")
                 .then(|| cfg.get("ollama_base_url").cloned())
                 .flatten()
         })
@@ -659,8 +661,8 @@ pub async fn chat_stream<F: FnMut(&str)>(
         .map_err(|e| LlmError(e.to_string()))?;
 
     // Build the per-transport streaming request.
-    let is_local_ollama = *transport == Transport::Ollama
-        && !model.to_lowercase().contains("cloud");
+    let is_local_ollama =
+        *transport == Transport::Ollama && !model.to_lowercase().contains("cloud");
     let num_ctx = if is_local_ollama {
         num_ctx_max.map(|max| fit_num_ctx(prompt.len(), max))
     } else {

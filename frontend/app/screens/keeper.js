@@ -2,7 +2,7 @@
 // the full conversation (right), reusing the docked panel's Conversation over
 // the same store.keeper state (ask-the-keeper-ux-spec.md).
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, apiFetch, apiJson, fmtDate } from '../core.js';
+import { navigate, apiFetch, apiJson, bump, fmtDate } from '../core.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Spinner } from '../ui.js';
 import {
@@ -26,7 +26,7 @@ export function KeeperScreen({ store }) {
   const [brief, setBrief] = useState(null);
   const k = keeperState();
 
-  useEffect(() => { if (cid) fetchBriefStatus(cid).then(setBrief); }, [cid, view]);
+  useEffect(() => { if (cid) fetchBriefStatus(cid).then(setBrief); }, [cid, view, store.dirty_keeper]);
 
   async function reload(select) {
     if (!cid) return;
@@ -37,18 +37,18 @@ export function KeeperScreen({ store }) {
     } catch (_) { setChats([]); }
   }
 
-  useEffect(() => { reload('first'); }, [cid]);
+  useEffect(() => { reload('first'); }, [cid, store.dirty_keeper]);
 
   if (!c) return html`<div />`;
 
-  const onNew = async () => { setView('chat'); const id = await newChat(); await reload(); if (id) openChat(id); };
+  const onNew = async () => { setView('chat'); await newChat(); };
   const pickChat = (id) => { setView('chat'); openChat(id); };
   const onDelete = async (id, e) => {
     e.stopPropagation();
     try {
       await apiJson(`/campaigns/${cid}/agent/chats/${id}`, 'DELETE', {});
       if (keeperState().chatId === id) openChat((chats || []).find((x) => x.id !== id)?.id);
-      reload();
+      bump('keeper');
     } catch (_) {}
   };
 

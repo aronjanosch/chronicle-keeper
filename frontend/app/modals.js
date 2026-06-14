@@ -3,6 +3,7 @@ import { html, useState, useEffect } from '../vendor/htm-preact-standalone.mjs';
 import { store, closeModal, navigate, setOp, openModal, apiFetch, fmtDateTime } from './core.js';
 import { Icon, Btn, Field, Input, Textarea, Select, Spinner } from './ui.js';
 import { CommandPalette } from './screens/palette.js';
+import { kindForFolder } from './folderKinds.js';
 import {
   createCampaign, updateCampaign, saveSessionMetadata, loadSession,
   runExport,
@@ -10,7 +11,7 @@ import {
   importCodex, commitCodexImport,
   createPromptTemplate, updatePromptTemplate,
   enhanceVaultPages, loadVaultDiagnostics, exportWorld, revealPath,
-  createVaultPage, saveVaultPage,
+  createVaultPage, saveVaultPage, promoteVaultPage,
   loadPageHistory, readPageVersion, restorePageVersion, loadWorldHistory,
   loadTrash, restoreTrash, emptyTrash,
 } from './actions.js';
@@ -204,7 +205,7 @@ function ProviderModal({ id }) {
       <${Input} value=${model} onInput=${setModel} mono list=${suggestions.length ? 'ck-prov-models' : undefined} />
       ${suggestions.length ? html`<datalist id="ck-prov-models">${suggestions.map((m, i) => html`<option key=${i} value=${m} />`)}</datalist>` : ''}
     </${Field}>
-    <${Field} label=${`API base${p.default_api_base ? '' : ' (optional)'}`}><${Input} value=${apiBase} onInput=${setApiBase} placeholder=${p.default_api_base ? `Default: ${p.default_api_base}` : 'Provider default'} mono /></${Field}>
+    <${Field} label=${`API base${p.has_custom_base ? ' (saved — enter to replace)' : (p.default_api_base ? '' : ' (optional)')}`}><${Input} value=${apiBase} onInput=${setApiBase} placeholder=${p.has_custom_base ? 'Custom base saved' : (p.default_api_base ? `Default: ${p.default_api_base}` : 'Provider default')} mono /></${Field}>
     ${p.needs_key && html`<${Field} label=${`API key${p.has_key ? ' (saved — enter to replace)' : ''}`}><${Input} type="password" value=${apiKey} onInput=${setApiKey} placeholder=${p.has_key ? '••••••••' : 'Paste API key'} autocomplete="off" /></${Field}>`}
   </${ModalShell}>`;
 }
@@ -277,7 +278,7 @@ function QuickCaptureModal() {
     } catch (e) { setErr(e.message); setBusy(false); }
   }
   return html`<${ModalShell} title="Quick capture" footer=${html`
-    <span style=${{ flex: 1, fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>First line becomes the title · lands in Inbox/</span>
+    <span style=${{ flex: 1, fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>First line becomes the title · lands in Inbox/ · promote it to a kind later</span>
     <${Btn} kind="ghost" disabled=${busy} onClick=${closeModal}>Cancel</${Btn}>
     <${Btn} kind="primary" disabled=${busy} onClick=${go}>${busy ? 'Saving…' : 'Capture'}</${Btn}>`}>
     ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
@@ -294,14 +295,18 @@ const SHORTCUT_GROUPS = [
     ['⌘K', 'Command palette'], ['⌘P', 'Quick-open a page'], ['⌘[ / ⌘]', 'Back / forward'],
     ['⌘⇧F', 'Search the world'], ['⌘,', 'Settings'],
   ] },
+  { head: 'Tabs', keys: [
+    ['⌘-click', 'Open page in new tab'], ['⌘W', 'Close tab'], ['⌘⇧T', 'Reopen closed tab'],
+    ['⌘⇧[ / ⌘⇧]', 'Previous / next tab'], ['⌘1–9', 'Jump to tab (9 = last)'],
+  ] },
   { head: 'Create', keys: [
     ['⌘N', 'New page'], ['⌘⇧J', 'Quick capture'],
   ] },
   { head: 'Page', keys: [
-    ['⌘⇧K', 'Toggle the side panel'], ['⌘S', 'Save now'], ['⌘/', 'This cheat sheet'],
+    ['⌘F', 'Find in page'], ['⌘⇧K', 'Toggle the side panel'], ['⌘S', 'Save now'], ['⌘/', 'This cheat sheet'],
   ] },
   { head: 'Editor', keys: [
-    ['⌘B / ⌘I', 'Bold / italic'], ['⌘L', 'Wrap as [[wikilink]]'], ['⌘F', 'Find in page'],
+    ['⌘B / ⌘I', 'Bold / italic'], ['⌘L', 'Wrap as [[wikilink]]'],
     ['[[', 'Link a page'], ['/', 'Slash menu (on an empty line)'], ['Tab / ⇧Tab', 'Indent list item'],
   ] },
 ];
@@ -443,6 +448,86 @@ function MovePageModal({ name, folders = [], current = '', onSubmit }) {
     ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
     <${Field} label="Destination folder">
       <${Select} value=${dest} onChange=${setDest} options=${options} />
+    </${Field}>
+  </${ModalShell}>`;
+}
+
+// World kinds for a select: schema-driven (incl. custom kinds), built-ins as fallback.
+function kindOptions() {
+  const schemas = store.kindSchemas || [];
+  if (!schemas.length) return CODEX_KINDS;
+  return schemas.map(({ kind }) => ({
+    value: kind,
+    label: (CODEX_KINDS.find((k) => k.value === kind) || {}).label || kind.charAt(0).toUpperCase() + kind.slice(1),
+  }));
+}
+
+// ── New page (Phase 16): title + kind — the kind picks the template ─
+function NewPageModal({ folder = '', kind: presetKind = 'npc', onCreated }) {
+  const [title, setTitle] = useState('');
+  const [kind, setKind] = useState(presetKind);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  async function go() {
+    const t = title.trim();
+    if (!t) { setErr('Title is required'); return; }
+    setBusy(true); setErr(null);
+    try {
+      const page = await createVaultPage(t, kind, folder);
+      closeModal();
+      if (onCreated) onCreated(page); else navigate('page', { path: page.path });
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+  return html`<${ModalShell} title="New page" footer=${html`
+    <span style=${{ flex: 1, fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>${folder ? `In ${folder}/ · ` : ''}Starts from the kind's template</span>
+    <${Btn} kind="ghost" disabled=${busy} onClick=${closeModal}>Cancel</${Btn}>
+    <${Btn} kind="primary" disabled=${busy} onClick=${go}>${busy ? 'Creating…' : 'Create page'}</${Btn}>`}>
+    ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
+    <${Field} label="Title">
+      <${Input} value=${title} onInput=${setTitle} placeholder="Lord Ulric Tannerheim" autofocus
+        onKeydown=${(e) => { if (e.key === 'Enter') go(); }} />
+    </${Field}>
+    <${Field} label="Kind">
+      <${Select} value=${kind} onChange=${setKind} options=${kindOptions()} />
+    </${Field}>
+  </${ModalShell}>`;
+}
+
+// ── Promote (Phase 16): capture → kinded page with template applied ─
+function PromotePageModal({ page, folders = [] }) {
+  const currentDir = page.path.includes('/') ? page.path.slice(0, page.path.lastIndexOf('/')) : '';
+  const [kind, setKind] = useState('npc');
+  const [dest, setDest] = useState(() => folderForKind('npc', folders) ?? currentDir);
+  const [touched, setTouched] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  function folderForKind(k, all) {
+    return all.find((f) => kindForFolder(f.split('/').pop()) === k) ?? null;
+  }
+  function pickKind(k) {
+    setKind(k);
+    if (!touched) setDest(folderForKind(k, folders) ?? currentDir);
+  }
+  const options = [{ value: '', label: 'Vault root' }, ...folders.map((f) => ({ value: f, label: f }))];
+  async function go() {
+    setBusy(true); setErr(null);
+    try {
+      const moved = await promoteVaultPage(page.path, kind, dest);
+      setOp(`Promoted to ${moved.path}`, 'done');
+      closeModal();
+      navigate('page', { path: moved.path });
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+  return html`<${ModalShell} title=${html`Promote <em style=${{ fontStyle: 'italic' }}>${page.title}</em>`} footer=${html`
+    <span style=${{ flex: 1, fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>Keeps your text — adds the kind's fields and headings</span>
+    <${Btn} kind="ghost" disabled=${busy} onClick=${closeModal}>Cancel</${Btn}>
+    <${Btn} kind="primary" disabled=${busy} onClick=${go}>${busy ? 'Promoting…' : 'Promote'}</${Btn}>`}>
+    ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
+    <${Field} label="Kind">
+      <${Select} value=${kind} onChange=${pickKind} options=${kindOptions()} />
+    </${Field}>
+    <${Field} label="Move to">
+      <${Select} value=${dest} onChange=${(v) => { setTouched(true); setDest(v); }} options=${options} />
     </${Field}>
   </${ModalShell}>`;
 }
@@ -1036,6 +1121,8 @@ export function ModalHost({ modal }) {
     case 'confirm': return html`<${ConfirmModal} ...${modal.props} />`;
     case 'textPrompt': return html`<${TextPromptModal} ...${modal.props} />`;
     case 'movePage': return html`<${MovePageModal} ...${modal.props} />`;
+    case 'newPage': return html`<${NewPageModal} ...${modal.props} />`;
+    case 'promotePage': return html`<${PromotePageModal} ...${modal.props} />`;
     case 'enhanceFolder': return html`<${EnhanceFolderModal} />`;
     case 'vaultDiag': return html`<${VaultDiagnosticsModal} />`;
     case 'pageHistory': return html`<${PageHistoryModal} ...${modal.props} />`;

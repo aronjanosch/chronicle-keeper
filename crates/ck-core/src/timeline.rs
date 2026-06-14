@@ -36,7 +36,14 @@ pub fn parse_world_date(raw: &str, eras: &[String]) -> Option<WorldDate> {
         let lower = s.to_lowercase();
         let el = e.to_lowercase();
         if lower == el {
-            return Some(WorldDate { era_idx: i, era: Some(e.clone()), year: None, month: 0, day: 0, circa });
+            return Some(WorldDate {
+                era_idx: i,
+                era: Some(e.clone()),
+                year: None,
+                month: 0,
+                day: 0,
+                circa,
+            });
         }
         if let Some(rest) = lower.strip_suffix(&el) {
             if rest.ends_with(' ') {
@@ -65,7 +72,14 @@ pub fn parse_world_date(raw: &str, eras: &[String]) -> Option<WorldDate> {
     if parts.next().is_some() {
         return None;
     }
-    Some(WorldDate { era_idx, era, year: Some(year), month, day, circa })
+    Some(WorldDate {
+        era_idx,
+        era,
+        year: Some(year),
+        month,
+        day,
+        circa,
+    })
 }
 
 pub fn display(d: &WorldDate, months: &[String]) -> String {
@@ -144,8 +158,8 @@ pub fn world_events(
             let raw = fm_str(&fm, "date");
             let d = raw.as_deref().and_then(|r| parse_world_date(r, &cal.eras));
             let order = fm_int(&fm, &["order", "seq"]);
-            let gm_only = fm_bool(&fm, "gm_only") == Some(true)
-                || fm_bool(&fm, "publish") == Some(false);
+            let gm_only =
+                fm_bool(&fm, "gm_only") == Some(true) || fm_bool(&fm, "publish") == Some(false);
             let mut entry = json!({
                 "path": path,
                 "title": title,
@@ -173,8 +187,7 @@ pub fn world_events(
                     entry["year"] = json!(d.year);
                     entry["month"] = json!(d.month);
                     entry["day"] = json!(d.day);
-                    if let Some(end_raw) =
-                        fm_str(&fm, "end_date").or_else(|| fm_str(&fm, "until"))
+                    if let Some(end_raw) = fm_str(&fm, "end_date").or_else(|| fm_str(&fm, "until"))
                     {
                         if let Some(ed) = parse_world_date(&end_raw, &cal.eras) {
                             entry["end"] = json!(end_raw);
@@ -184,7 +197,14 @@ pub fn world_events(
                             entry["end_day"] = json!(ed.day);
                         }
                     }
-                    (d.era_idx, 1, d.year.unwrap_or(i64::MIN), d.month, d.day, o.unwrap_or(0))
+                    (
+                        d.era_idx,
+                        1,
+                        d.year.unwrap_or(i64::MIN),
+                        d.month,
+                        d.day,
+                        o.unwrap_or(0),
+                    )
                 }
                 (None, Some(o)) => {
                     entry["order"] = json!(o);
@@ -196,9 +216,7 @@ pub fn world_events(
             Some((key, entry))
         })
         .collect();
-    dated.sort_by(|(a, av), (b, bv)| {
-        (a, av["title"].as_str()).cmp(&(b, bv["title"].as_str()))
-    });
+    dated.sort_by(|(a, av), (b, bv)| (a, av["title"].as_str()).cmp(&(b, bv["title"].as_str())));
     dated.into_iter().map(|(_, v)| v).collect()
 }
 
@@ -249,10 +267,25 @@ mod tests {
     fn events_sort_on_era_then_date() {
         let c = cal(&[], &["DR", "NR"]);
         let rows = vec![
-            ("a.md".into(), "Late".into(), Some("event".into()), r#"{"date":"5 NR"}"#.into()),
-            ("b.md".into(), "Early".into(), Some("event".into()), r#"{"date":"1374-08 DR"}"#.into()),
+            (
+                "a.md".into(),
+                "Late".into(),
+                Some("event".into()),
+                r#"{"date":"5 NR"}"#.into(),
+            ),
+            (
+                "b.md".into(),
+                "Early".into(),
+                Some("event".into()),
+                r#"{"date":"1374-08 DR"}"#.into(),
+            ),
             ("c.md".into(), "Undated".into(), None, r#"{}"#.into()),
-            ("d.md".into(), "Mid".into(), Some("event".into()), r#"{"date":"1374-09-01 DR"}"#.into()),
+            (
+                "d.md".into(),
+                "Mid".into(),
+                Some("event".into()),
+                r#"{"date":"1374-09-01 DR"}"#.into(),
+            ),
         ];
         let ev = world_events(rows, &c);
         let titles: Vec<&str> = ev.iter().map(|e| e["title"].as_str().unwrap()).collect();
@@ -263,25 +296,71 @@ mod tests {
     fn order_fallback_negative_years_and_ranges() {
         let c = cal(&[], &["DR"]);
         let rows = vec![
-            ("a.md".into(), "Dated".into(), None, r#"{"date":"1374 DR"}"#.into()),
-            ("b.md".into(), "Beat 2".into(), None, r#"{"order":2}"#.into()),
-            ("c.md".into(), "Beat 1".into(), None, r#"{"seq":"1"}"#.into()),
-            ("d.md".into(), "Ancient".into(), None, r#"{"date":"-500 DR"}"#.into()),
-            ("e.md".into(), "War".into(), None, r#"{"date":"1300 DR","end_date":"1310 DR"}"#.into()),
+            (
+                "a.md".into(),
+                "Dated".into(),
+                None,
+                r#"{"date":"1374 DR"}"#.into(),
+            ),
+            (
+                "b.md".into(),
+                "Beat 2".into(),
+                None,
+                r#"{"order":2}"#.into(),
+            ),
+            (
+                "c.md".into(),
+                "Beat 1".into(),
+                None,
+                r#"{"seq":"1"}"#.into(),
+            ),
+            (
+                "d.md".into(),
+                "Ancient".into(),
+                None,
+                r#"{"date":"-500 DR"}"#.into(),
+            ),
+            (
+                "e.md".into(),
+                "War".into(),
+                None,
+                r#"{"date":"1300 DR","end_date":"1310 DR"}"#.into(),
+            ),
             // the index stores frontmatter scalars as strings; raw bools work too
-            ("f.md".into(), "Secret".into(), None, r#"{"date":"1380 DR","gm_only":"true"}"#.into()),
-            ("g.md".into(), "Hidden".into(), None, r#"{"date":"1381 DR","publish":false}"#.into()),
-            ("h.md".into(), "Pictured".into(), None, r#"{"date":"1390-02-05 DR","image":"![[banner.png]]"}"#.into()),
+            (
+                "f.md".into(),
+                "Secret".into(),
+                None,
+                r#"{"date":"1380 DR","gm_only":"true"}"#.into(),
+            ),
+            (
+                "g.md".into(),
+                "Hidden".into(),
+                None,
+                r#"{"date":"1381 DR","publish":false}"#.into(),
+            ),
+            (
+                "h.md".into(),
+                "Pictured".into(),
+                None,
+                r#"{"date":"1390-02-05 DR","image":"![[banner.png]]"}"#.into(),
+            ),
         ];
         let ev = world_events(rows, &c);
         let titles: Vec<&str> = ev.iter().map(|e| e["title"].as_str().unwrap()).collect();
-        assert_eq!(titles, ["Beat 1", "Beat 2", "Ancient", "War", "Dated", "Secret", "Hidden", "Pictured"]);
+        assert_eq!(
+            titles,
+            ["Beat 1", "Beat 2", "Ancient", "War", "Dated", "Secret", "Hidden", "Pictured"]
+        );
         assert_eq!(ev[0]["order"], 1);
         assert!(ev[0]["year"].is_null());
         assert_eq!(ev[3]["end_display"], "1310 DR");
         assert_eq!(ev[3]["end_year"], 1310);
         assert_eq!(ev[7]["image"], "banner.png");
-        assert_eq!((ev[7]["month"].as_u64(), ev[7]["day"].as_u64()), (Some(2), Some(5)));
+        assert_eq!(
+            (ev[7]["month"].as_u64(), ev[7]["day"].as_u64()),
+            (Some(2), Some(5))
+        );
         assert_eq!(ev[5]["gm_only"], true);
         assert_eq!(ev[6]["gm_only"], true);
         assert_eq!(ev[4]["gm_only"], false);

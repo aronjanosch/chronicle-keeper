@@ -57,7 +57,10 @@ pub(crate) fn session_dirs(world_root: &Path) -> Vec<PathBuf> {
 
 /// session.toml of a dir; tolerates a missing file (bare upload before any write).
 fn toml_of(dir: &Path) -> SessionToml {
-    session_files::read_session_toml(dir).ok().flatten().unwrap_or_default()
+    session_files::read_session_toml(dir)
+        .ok()
+        .flatten()
+        .unwrap_or_default()
 }
 
 /// Back-fill a missing `id` (pre-Phase-2 session.toml) so the session is addressable.
@@ -80,14 +83,22 @@ pub(crate) fn locate(conn: &Connection, session_id: &str) -> AppResult<Option<Se
             st.id = Some(session_id.to_string());
             let _ = session_files::write_session_toml_file(&bare, &st);
         }
-        return Ok(Some(SessionLoc { dir: bare, st, world: None }));
+        return Ok(Some(SessionLoc {
+            dir: bare,
+            st,
+            world: None,
+        }));
     }
     for (root, cfg) in campaigns::worlds(conn)? {
         for dir in session_dirs(&root) {
             let mut st = toml_of(&dir);
             ensure_id(&dir, &mut st);
             if st.id.as_deref() == Some(session_id) {
-                return Ok(Some(SessionLoc { dir, st, world: Some((root, cfg)) }));
+                return Ok(Some(SessionLoc {
+                    dir,
+                    st,
+                    world: Some((root, cfg)),
+                }));
             }
         }
     }
@@ -174,7 +185,12 @@ pub(crate) fn metadata_from_value(v: &Value) -> SessionMetadata {
     let list = |key: &str| {
         v.get(key)
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default()
     };
     SessionMetadata {
@@ -253,9 +269,10 @@ pub fn world_dated_session_rows(
             continue;
         };
         ensure_id(&dir, &mut st);
-        let title = st.title.clone().unwrap_or_else(|| {
-            format!("Session {:02}", st.number.unwrap_or(0))
-        });
+        let title = st
+            .title
+            .clone()
+            .unwrap_or_else(|| format!("Session {:02}", st.number.unwrap_or(0)));
         let fm = serde_json::json!({ "date": wd, "end_date": st.world_date_end });
         out.push((
             format!("session:{}", st.id.clone().unwrap_or_default()),
@@ -362,7 +379,9 @@ pub fn get_speakers(conn: &Connection, session_id: &str) -> AppResult<Value> {
 // ── Writes ────────────────────────────────────────────────────────
 
 fn number_dir(world_root: &Path, number: i64) -> PathBuf {
-    world_root.join("Sessions").join(session_files::padded_number(number))
+    world_root
+        .join("Sessions")
+        .join(session_files::padded_number(number))
 }
 
 pub fn create_campaign_session(
@@ -373,7 +392,9 @@ pub fn create_campaign_session(
     date: Option<&str>,
 ) -> AppResult<CampaignSessionInfo> {
     let Some(campaign) = campaigns::get_campaign(conn, campaign_id)? else {
-        return Err(AppError::NotFound(format!("Campaign not found: {campaign_id}")));
+        return Err(AppError::NotFound(format!(
+            "Campaign not found: {campaign_id}"
+        )));
     };
     let root = campaigns::world_root_for_id(conn, campaign_id)?
         .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))?;
@@ -429,7 +450,10 @@ pub fn resolve_for_upload(
     let dir = output_root(conn)?.join("_sessions").join(&sid);
     std::fs::create_dir_all(&dir)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("create session dir: {e}")))?;
-    let st = SessionToml { id: Some(sid.clone()), ..Default::default() };
+    let st = SessionToml {
+        id: Some(sid.clone()),
+        ..Default::default()
+    };
     let _ = session_files::write_session_toml_file(&dir, &st);
     Ok((sid, dir))
 }
@@ -512,7 +536,9 @@ pub fn set_campaign_metadata(conn: &Connection, req: &SessionMetadataRequest) ->
         let want = number_dir(root, n);
         if want != dir {
             if want.exists() {
-                return Err(AppError::Conflict(format!("Session number already exists: {n}")));
+                return Err(AppError::Conflict(format!(
+                    "Session number already exists: {n}"
+                )));
             }
             if let Some(parent) = want.parent() {
                 std::fs::create_dir_all(parent)

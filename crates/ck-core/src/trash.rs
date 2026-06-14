@@ -95,7 +95,11 @@ pub fn trash_paths(
     for (rel, is_folder) in items {
         let rel_path = safe_rel(rel)?;
         let src = vault_root.join(&rel_path);
-        let ok = if *is_folder { src.is_dir() } else { src.is_file() };
+        let ok = if *is_folder {
+            src.is_dir()
+        } else {
+            src.is_file()
+        };
         if !ok {
             return Err(AppError::NotFound(format!("Not found: {rel}")));
         }
@@ -107,11 +111,19 @@ pub fn trash_paths(
         std::fs::rename(&src, &dst).map_err(io_err("move to trash"))?;
         meta_items.push(TrashItem {
             rel: rel.clone(),
-            kind: if *is_folder { "folder".into() } else { "page".into() },
+            kind: if *is_folder {
+                "folder".into()
+            } else {
+                "page".into()
+            },
             pages,
         });
     }
-    let meta = TrashGroup { id: id.clone(), deleted_at: now_secs(), items: meta_items };
+    let meta = TrashGroup {
+        id: id.clone(),
+        deleted_at: now_secs(),
+        items: meta_items,
+    };
     let json = serde_json::to_string(&meta)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("serialize trash meta: {e}")))?;
     std::fs::write(dir.join(&id).join("meta.json"), json).map_err(io_err("write trash meta"))?;
@@ -143,8 +155,15 @@ fn unique_dest(vault_root: &Path, rel: &Path) -> PathBuf {
     if !dst.exists() {
         return dst;
     }
-    let parent = dst.parent().map(Path::to_path_buf).unwrap_or_else(|| vault_root.to_path_buf());
-    let stem = dst.file_stem().and_then(|s| s.to_str()).unwrap_or("Untitled").to_string();
+    let parent = dst
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| vault_root.to_path_buf());
+    let stem = dst
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Untitled")
+        .to_string();
     let ext = dst
         .extension()
         .and_then(|e| e.to_str())
@@ -290,8 +309,12 @@ mod tests {
         std::fs::write(vault.join("Old/Deep/B.md"), "b\n").unwrap();
         std::fs::write(vault.join("C.md"), "c\n").unwrap();
 
-        let id =
-            trash_paths(&root, &vault, &[("Old".into(), true), ("C.md".into(), false)]).unwrap();
+        let id = trash_paths(
+            &root,
+            &vault,
+            &[("Old".into(), true), ("C.md".into(), false)],
+        )
+        .unwrap();
         assert!(!vault.join("Old").exists());
         let g = &list(&root)[0];
         assert_eq!(g.items.len(), 2);

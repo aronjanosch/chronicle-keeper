@@ -35,7 +35,11 @@ pub enum Tier {
 pub fn tier_of(name: &str) -> Tier {
     match name {
         "read_memory" | "write_memory" | "delete_memory" => Tier::Memory,
-        "create_page" | "edit_page" | "multi_edit_page" | "append_to_page" | "insert_under_heading"
+        "create_page"
+        | "edit_page"
+        | "multi_edit_page"
+        | "append_to_page"
+        | "insert_under_heading"
         | "write_page" => Tier::Write,
         "rename_page" | "move_page" | "delete_page" | "create_folder" => Tier::Structural,
         "run_command" => Tier::Shell,
@@ -338,9 +342,20 @@ fn parse_edits(args: &Value) -> Vec<EditOp> {
         .map(|arr| {
             arr.iter()
                 .map(|e| EditOp {
-                    old: e.get("old_str").and_then(Value::as_str).unwrap_or("").to_string(),
-                    new: e.get("new_str").and_then(Value::as_str).unwrap_or("").to_string(),
-                    all: e.get("replace_all").and_then(Value::as_bool).unwrap_or(false),
+                    old: e
+                        .get("old_str")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    new: e
+                        .get("new_str")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    all: e
+                        .get("replace_all")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
                 })
                 .collect()
         })
@@ -360,10 +375,18 @@ fn apply_edits(content: &str, edits: &[EditOp]) -> Result<String, String> {
             return Err(format!("edit {n}: old_str is empty"));
         }
         match (cur.matches(&e.old).count(), e.all) {
-            (0, _) => return Err(format!("edit {n}: old_str not found — read the page and copy the exact text.")),
+            (0, _) => {
+                return Err(format!(
+                    "edit {n}: old_str not found — read the page and copy the exact text."
+                ))
+            }
             (_, true) => cur = cur.replace(&e.old, &e.new),
             (1, false) => cur = cur.replacen(&e.old, &e.new, 1),
-            (m, false) => return Err(format!("edit {n}: old_str matches {m} times — set replace_all or add surrounding context.")),
+            (m, false) => {
+                return Err(format!(
+                "edit {n}: old_str matches {m} times — set replace_all or add surrounding context."
+            ))
+            }
         }
     }
     Ok(cur)
@@ -389,7 +412,11 @@ pub fn gate_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value
         Tier::Write => write_preview(ctx, name, args),
         Tier::Structural => structural_preview(ctx, name, args),
         Tier::Shell => {
-            let cmd = args.get("command").and_then(Value::as_str).unwrap_or("").trim();
+            let cmd = args
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
             if cmd.is_empty() {
                 return Err("empty command".into());
             }
@@ -400,7 +427,12 @@ pub fn gate_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value
 }
 
 fn write_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, String> {
-    let str_arg = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let str_arg = |k: &str| {
+        args.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
     let path = norm_md_path(&str_arg("path"));
     if path == ".md" {
         return Err("missing 'path'".into());
@@ -409,7 +441,9 @@ fn write_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, S
     match name {
         "create_page" => {
             if vault::read_page(&vault_root, &path).is_ok() {
-                return Err(format!("Page already exists: {path} — use edit_page or write_page."));
+                return Err(format!(
+                    "Page already exists: {path} — use edit_page or write_page."
+                ));
             }
             Ok(json!({ "path": path, "old": Value::Null, "new": cap_preview(&str_arg("content")) }))
         }
@@ -419,7 +453,10 @@ fn write_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, S
             let op = EditOp {
                 old: str_arg("old_str"),
                 new: str_arg("new_str"),
-                all: args.get("replace_all").and_then(Value::as_bool).unwrap_or(false),
+                all: args
+                    .get("replace_all")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             };
             apply_edits(&page.content, std::slice::from_ref(&op))?;
             Ok(json!({ "path": path, "old": cap_preview(&op.old), "new": cap_preview(&op.new) }))
@@ -430,9 +467,15 @@ fn write_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, S
             let edits = parse_edits(args);
             apply_edits(&page.content, &edits)?;
             let join = |pick: fn(&EditOp) -> &String| {
-                edits.iter().map(|e| pick(e).as_str()).collect::<Vec<_>>().join("\n\n")
+                edits
+                    .iter()
+                    .map(|e| pick(e).as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
             };
-            Ok(json!({ "path": path, "old": cap_preview(&join(|e| &e.old)), "new": cap_preview(&join(|e| &e.new)) }))
+            Ok(
+                json!({ "path": path, "old": cap_preview(&join(|e| &e.old)), "new": cap_preview(&join(|e| &e.new)) }),
+            )
         }
         "append_to_page" => {
             vault::read_page(&vault_root, &path)
@@ -451,7 +494,9 @@ fn write_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, S
             if heading.trim().is_empty() || text.trim().is_empty() {
                 return Err("heading and text are required".into());
             }
-            Ok(json!({ "path": path, "old": Value::Null, "new": cap_preview(&format!("{}\n\n{}", heading.trim(), text.trim())) }))
+            Ok(
+                json!({ "path": path, "old": Value::Null, "new": cap_preview(&format!("{}\n\n{}", heading.trim(), text.trim())) }),
+            )
         }
         "write_page" => {
             let old = vault::read_page(&vault_root, &path)
@@ -464,7 +509,12 @@ fn write_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, S
 }
 
 fn structural_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, String> {
-    let str_arg = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let str_arg = |k: &str| {
+        args.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
     let vault_root = ctx.cfg.codex_dir(ctx.world_root);
     match name {
         "create_folder" => {
@@ -473,21 +523,25 @@ fn structural_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Val
             if p.is_empty() {
                 return Err("missing 'path'".into());
             }
-            Ok(json!({ "path": p, "action": "create_folder", "summary": format!("Create folder {p}/") }))
+            Ok(
+                json!({ "path": p, "action": "create_folder", "summary": format!("Create folder {p}/") }),
+            )
         }
         "delete_page" => {
             let path = norm_md_path(&str_arg("path"));
-            vault::read_page(&vault_root, &path)
-                .map_err(|_| format!("Page not found: {path}"))?;
+            vault::read_page(&vault_root, &path).map_err(|_| format!("Page not found: {path}"))?;
             Ok(json!({ "path": path, "action": "delete", "summary": format!("Delete {path}") }))
         }
         "rename_page" => {
             let path = norm_md_path(&str_arg("path"));
-            vault::read_page(&vault_root, &path)
-                .map_err(|_| format!("Page not found: {path}"))?;
+            vault::read_page(&vault_root, &path).map_err(|_| format!("Page not found: {path}"))?;
             let to = rename_target(&path, &str_arg("new_name"))?;
             let n = backlink_count(ctx, &vault_root, &path);
-            let links = if n == 0 { String::new() } else { format!(" and rewrite {n} link{}", if n == 1 { "" } else { "s" }) };
+            let links = if n == 0 {
+                String::new()
+            } else {
+                format!(" and rewrite {n} link{}", if n == 1 { "" } else { "s" })
+            };
             Ok(json!({
                 "path": path, "to": to, "action": "rename",
                 "summary": format!("Rename {} → {}{}", stem(&path), stem(&to), links),
@@ -495,8 +549,7 @@ fn structural_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Val
         }
         "move_page" => {
             let path = norm_md_path(&str_arg("path"));
-            vault::read_page(&vault_root, &path)
-                .map_err(|_| format!("Page not found: {path}"))?;
+            vault::read_page(&vault_root, &path).map_err(|_| format!("Page not found: {path}"))?;
             let to = move_target(&path, &str_arg("new_folder"));
             Ok(json!({
                 "path": path, "to": to, "action": "move",
@@ -522,10 +575,16 @@ fn rename_target(path: &str, new_name: &str) -> Result<String, String> {
         return Err("missing 'new_name'".into());
     }
     let file = norm_md_path(new_name);
-    Ok(match std::path::Path::new(path).parent().and_then(|p| p.to_str()).filter(|s| !s.is_empty()) {
-        Some(dir) => format!("{dir}/{file}"),
-        None => file,
-    })
+    Ok(
+        match std::path::Path::new(path)
+            .parent()
+            .and_then(|p| p.to_str())
+            .filter(|s| !s.is_empty())
+        {
+            Some(dir) => format!("{dir}/{file}"),
+            None => file,
+        },
+    )
 }
 
 /// New vault path for a move: new folder, same filename.
@@ -554,7 +613,12 @@ fn backlink_count(ctx: &ToolCtx<'_>, vault_root: &std::path::Path, path: &str) -
 /// Run one read-tier tool. `Err` content goes back to the model as a
 /// `ToolResult { is_error: true }` — it is conversational, not an HTTP error.
 pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, String> {
-    let str_arg = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let str_arg = |k: &str| {
+        args.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
     let int_arg = |k: &str| args.get(k).and_then(Value::as_i64);
     match name {
         "search_pages" => {
@@ -596,7 +660,12 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
                     } else {
                         format!("\n  summary: {summary}")
                     };
-                    format!("- {} ({}){summary}\n  …{}…", h.path, h.title, strip_b(&h.snippet))
+                    format!(
+                        "- {} ({}){summary}\n  …{}…",
+                        h.path,
+                        h.title,
+                        strip_b(&h.snippet)
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join("\n"))
@@ -616,7 +685,11 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
                 .filter(|p| folder.is_empty() || p.path.starts_with(&format!("{folder}/")))
                 .map(|p| {
                     let kind = p.kind.as_deref().unwrap_or("");
-                    let kind = if kind.is_empty() { String::new() } else { format!(" [{kind}]") };
+                    let kind = if kind.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{kind}]")
+                    };
                     let summary = if p.summary.trim().is_empty() {
                         String::new()
                     } else {
@@ -656,8 +729,16 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             Ok(entries
                 .iter()
                 .map(|(n, title, date)| {
-                    let title = if title.is_empty() { String::new() } else { format!(" — {title}") };
-                    let date = if date.is_empty() { String::new() } else { format!(" ({date})") };
+                    let title = if title.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" — {title}")
+                    };
+                    let date = if date.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({date})")
+                    };
                     format!("- Session {n}{title}{date}")
                 })
                 .collect::<Vec<_>>()
@@ -667,8 +748,7 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             let n = int_arg("session").ok_or("missing 'session'")?;
             let dir = session_dir(ctx, n)?;
             let path = session_files::summary_md_path(&dir);
-            std::fs::read_to_string(&path)
-                .map_err(|_| format!("Session {n} has no summary yet."))
+            std::fs::read_to_string(&path).map_err(|_| format!("Session {n} has no summary yet."))
         }
         "search_summaries" => {
             let query = str_arg("query").to_lowercase();
@@ -682,8 +762,13 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             // Whole-phrase pass, then any-token fallback (same shape as transcripts).
             for pass in 0..2 {
                 for (n, title, _) in &sessions {
-                    let Some(dir) = session_dir(ctx, *n).ok() else { continue };
-                    let Ok(text) = std::fs::read_to_string(session_files::summary_md_path(&dir)) else { continue };
+                    let Some(dir) = session_dir(ctx, *n).ok() else {
+                        continue;
+                    };
+                    let Ok(text) = std::fs::read_to_string(session_files::summary_md_path(&dir))
+                    else {
+                        continue;
+                    };
                     let lower = text.to_lowercase();
                     let hit = if pass == 0 {
                         lower.find(&query)
@@ -691,8 +776,15 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
                         tokens.iter().find_map(|t| lower.find(t))
                     };
                     if let Some(at) = hit {
-                        let title = if title.is_empty() { String::new() } else { format!(" — {title}") };
-                        out.push(format!("- session {n}{title}: …{}…", snippet_around(&text, at, 220)));
+                        let title = if title.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" — {title}")
+                        };
+                        out.push(format!(
+                            "- session {n}{title}: …{}…",
+                            snippet_around(&text, at, 220)
+                        ));
                         if out.len() >= MAX_SEARCH_HITS {
                             break;
                         }
@@ -725,7 +817,9 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
                     if only.is_some_and(|o| o != n) {
                         continue;
                     }
-                    let Ok(turns) = transcript_of(ctx, n) else { continue };
+                    let Ok(turns) = transcript_of(ctx, n) else {
+                        continue;
+                    };
                     for (i, t) in turns.iter().enumerate() {
                         let lower = t.to_lowercase();
                         let hit = if pass == 0 {
@@ -783,19 +877,31 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             if !d.broken_links.is_empty() {
                 out.push_str(&format!("Broken wikilinks ({}):\n", d.broken_links.len()));
                 for b in d.broken_links.iter().take(40) {
-                    out.push_str(&format!("- {} links to [[{}]] (no such page)\n", b.source_path, b.link_text));
+                    out.push_str(&format!(
+                        "- {} links to [[{}]] (no such page)\n",
+                        b.source_path, b.link_text
+                    ));
                 }
             }
             if !d.orphans.is_empty() {
-                out.push_str(&format!("\nOrphan pages — no backlinks ({}):\n", d.orphans.len()));
+                out.push_str(&format!(
+                    "\nOrphan pages — no backlinks ({}):\n",
+                    d.orphans.len()
+                ));
                 for o in d.orphans.iter().take(40) {
                     out.push_str(&format!("- {}\n", o.path));
                 }
             }
             if !d.broken_media.is_empty() {
-                out.push_str(&format!("\nBroken media embeds ({}):\n", d.broken_media.len()));
+                out.push_str(&format!(
+                    "\nBroken media embeds ({}):\n",
+                    d.broken_media.len()
+                ));
                 for m in d.broken_media.iter().take(40) {
-                    out.push_str(&format!("- {} embeds {} (missing)\n", m.source_path, m.target));
+                    out.push_str(&format!(
+                        "- {} embeds {} (missing)\n",
+                        m.source_path, m.target
+                    ));
                 }
             }
             if !d.scan_errors.is_empty() {
@@ -811,7 +917,10 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
                 }
             }
             if out.is_empty() {
-                return Ok("The Codex is clean — no broken links, orphans, media, errors or conflicts.".into());
+                return Ok(
+                    "The Codex is clean — no broken links, orphans, media, errors or conflicts."
+                        .into(),
+                );
             }
             Ok(out.trim_end().to_string())
         }
@@ -852,7 +961,11 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             if hits.is_empty() {
                 return Ok(format!("No pages tagged #{want}."));
             }
-            Ok(hits.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n"))
+            Ok(hits
+                .iter()
+                .map(|p| format!("- {p}"))
+                .collect::<Vec<_>>()
+                .join("\n"))
         }
         "page_kinds" => {
             let schemas = ctx.cfg.kind_schemas();
@@ -898,7 +1011,10 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             let op = EditOp {
                 old: str_arg("old_str"),
                 new: str_arg("new_str"),
-                all: args.get("replace_all").and_then(Value::as_bool).unwrap_or(false),
+                all: args
+                    .get("replace_all")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             };
             let content = apply_edits(&page.content, std::slice::from_ref(&op))?;
             vault::write_page(&vault_root, &path, &content).map_err(app_err)?;
@@ -929,7 +1045,8 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             let path = norm_md_path(&str_arg("path"));
             let vault_root = ctx.cfg.codex_dir(ctx.world_root);
             let page = vault::read_page(&vault_root, &path).map_err(app_err)?;
-            let content = vault::append_under_heading(&page.content, &str_arg("heading"), &str_arg("text"));
+            let content =
+                vault::append_under_heading(&page.content, &str_arg("heading"), &str_arg("text"));
             vault::write_page(&vault_root, &path, &content).map_err(app_err)?;
             reindex(ctx, &vault_root, &path);
             Ok(format!("Updated {path}."))
@@ -957,7 +1074,9 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             let _ = ctx.state.with_index(&vault_root, |conn| {
                 let _ = index::remove_path(conn, &path);
             });
-            Ok(format!("Moved {path} to the world trash (restorable from the Trash view)."))
+            Ok(format!(
+                "Moved {path} to the world trash (restorable from the Trash view)."
+            ))
         }
         "rename_page" => {
             let path = norm_md_path(&str_arg("path"));
@@ -1006,8 +1125,11 @@ fn move_with_links(ctx: &ToolCtx<'_>, from: &str, to: &str) -> Result<(), String
             if !seen.insert(src.clone()) {
                 continue;
             }
-            let Ok(page) = vault::read_page(&vault_root, &src) else { continue };
-            if let Some(updated) = index::rewrite_link_names(&page.content, &old_title, &new_title) {
+            let Ok(page) = vault::read_page(&vault_root, &src) else {
+                continue;
+            };
+            if let Some(updated) = index::rewrite_link_names(&page.content, &old_title, &new_title)
+            {
                 let _ = crate::history::record(ctx.world_root, &vault_root, &src, "keeper");
                 if vault::write_page(&vault_root, &src, &updated).is_ok() {
                     reindex(ctx, &vault_root, &src);
@@ -1101,10 +1223,16 @@ fn run_command(ctx: &ToolCtx<'_>, command: &str) -> Result<String, String> {
 
     let mut body = String::new();
     if status.is_none() {
-        body.push_str(&format!("[timed out after {}s — killed]\n", SHELL_TIMEOUT.as_secs()));
+        body.push_str(&format!(
+            "[timed out after {}s — killed]\n",
+            SHELL_TIMEOUT.as_secs()
+        ));
     } else if let Some(s) = status {
         if !s.success() {
-            body.push_str(&format!("[exit status: {}]\n", s.code().map_or("signal".into(), |c| c.to_string())));
+            body.push_str(&format!(
+                "[exit status: {}]\n",
+                s.code().map_or("signal".into(), |c| c.to_string())
+            ));
         }
     }
     if !stdout.is_empty() {
@@ -1162,7 +1290,10 @@ fn snippet_around(text: &str, at: usize, window: usize) -> String {
     while end < text.len() && !text.is_char_boundary(end) {
         end += 1;
     }
-    text[start..end].split_whitespace().collect::<Vec<_>>().join(" ")
+    text[start..end]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn session_dir(ctx: &ToolCtx<'_>, number: i64) -> Result<std::path::PathBuf, String> {
@@ -1238,7 +1369,11 @@ mod tests {
     #[test]
     fn read_tier_tools_roundtrip() {
         let (state, root, cfg) = fixture_world("rt");
-        let ctx = ToolCtx { state: &state, world_root: &root, cfg: &cfg };
+        let ctx = ToolCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+        };
 
         let pages = call(&ctx, "list_pages", json!({})).unwrap();
         assert!(pages.contains("Thornhold.md [place] — A fortified town."));
@@ -1252,7 +1387,12 @@ mod tests {
         let hits = call(&ctx, "search_pages", json!({ "query": "fortified" })).unwrap();
         assert!(hits.contains("Thornhold.md"));
 
-        let back = call(&ctx, "get_backlinks", json!({ "path": "NPCs/Baron Aldric.md" })).unwrap();
+        let back = call(
+            &ctx,
+            "get_backlinks",
+            json!({ "path": "NPCs/Baron Aldric.md" }),
+        )
+        .unwrap();
         assert!(back.contains("Thornhold.md"));
 
         let sessions = call(&ctx, "list_sessions", json!({})).unwrap();
@@ -1264,9 +1404,12 @@ mod tests {
         let found = call(&ctx, "search_transcripts", json!({ "query": "knock" })).unwrap();
         assert!(found.contains("session 1, turn 3: Lyra: I knock loudly."));
 
-        let slice =
-            call(&ctx, "read_transcript", json!({ "session": 1, "from_turn": 1, "to_turn": 2 }))
-                .unwrap();
+        let slice = call(
+            &ctx,
+            "read_transcript",
+            json!({ "session": 1, "from_turn": 1, "to_turn": 2 }),
+        )
+        .unwrap();
         assert!(slice.contains("1: GM: You arrive at Thornhold."));
         assert!(!slice.contains("knock"));
 
@@ -1275,7 +1418,11 @@ mod tests {
 
         let sum = call(&ctx, "search_summaries", json!({ "query": "Thornhold" })).unwrap();
         assert!(sum.contains("session 1") && sum.contains("Thornhold"));
-        assert!(call(&ctx, "search_summaries", json!({ "query": "dragons" })).unwrap().contains("No summary matches"));
+        assert!(
+            call(&ctx, "search_summaries", json!({ "query": "dragons" }))
+                .unwrap()
+                .contains("No summary matches")
+        );
 
         std::fs::remove_dir_all(&root).ok();
     }
@@ -1291,9 +1438,15 @@ mod tests {
         )
         .unwrap();
         state
-            .with_index(&vault_root, |conn| { index::rebuild(conn, &vault_root).ok(); })
+            .with_index(&vault_root, |conn| {
+                index::rebuild(conn, &vault_root).ok();
+            })
             .unwrap();
-        let ctx = ToolCtx { state: &state, world_root: &root, cfg: &cfg };
+        let ctx = ToolCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+        };
 
         let diag = call(&ctx, "vault_diagnostics", json!({})).unwrap();
         assert!(diag.contains("[[Nobody Here]]"));
@@ -1303,14 +1456,20 @@ mod tests {
 
         let tagged = call(&ctx, "find_by_tag", json!({ "tag": "#crown" })).unwrap();
         assert!(tagged.contains("NPCs/Reeve.md"));
-        assert!(call(&ctx, "find_by_tag", json!({ "tag": "nope" })).unwrap().contains("No pages tagged"));
+        assert!(call(&ctx, "find_by_tag", json!({ "tag": "nope" }))
+            .unwrap()
+            .contains("No pages tagged"));
         std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn write_tools_replace_all_multi_append_insert() {
         let (state, root, cfg) = fixture_world("writes");
-        let ctx = ToolCtx { state: &state, world_root: &root, cfg: &cfg };
+        let ctx = ToolCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+        };
         std::fs::write(
             root.join("Codex/Argent.md"),
             "---\nkind: place\nsummary: A city.\n---\n\nThe [[Argent]] gate. Visit [[Argent]] again.\n\n## Notes\n\nStub.\n",
@@ -1318,28 +1477,53 @@ mod tests {
         .unwrap();
 
         // replace_all: the n>1 trap that used to force write_page.
-        assert!(gate_preview(&ctx, "edit_page", &json!({ "path": "Argent.md", "old_str": "[[Argent]]", "new_str": "[[Argent City]]" })).is_err());
+        assert!(gate_preview(
+            &ctx,
+            "edit_page",
+            &json!({ "path": "Argent.md", "old_str": "[[Argent]]", "new_str": "[[Argent City]]" })
+        )
+        .is_err());
         call(&ctx, "edit_page", json!({ "path": "Argent.md", "old_str": "[[Argent]]", "new_str": "[[Argent City]]", "replace_all": true })).unwrap();
         let c = std::fs::read_to_string(root.join("Codex/Argent.md")).unwrap();
         assert_eq!(c.matches("[[Argent City]]").count(), 2);
 
         // multi_edit: all-or-nothing — a bad later edit reverts nothing.
-        assert!(call(&ctx, "multi_edit_page", json!({ "path": "Argent.md", "edits": [
+        assert!(call(
+            &ctx,
+            "multi_edit_page",
+            json!({ "path": "Argent.md", "edits": [
             { "old_str": "A city.", "new_str": "A silver city." },
             { "old_str": "NOPE", "new_str": "x" }
-        ] })).is_err());
+        ] })
+        )
+        .is_err());
         let c = std::fs::read_to_string(root.join("Codex/Argent.md")).unwrap();
         assert!(c.contains("A city.")); // first edit not committed
-        call(&ctx, "multi_edit_page", json!({ "path": "Argent.md", "edits": [
+        call(
+            &ctx,
+            "multi_edit_page",
+            json!({ "path": "Argent.md", "edits": [
             { "old_str": "A city.", "new_str": "A silver city." },
             { "old_str": "Stub.", "new_str": "Founded long ago." }
-        ] })).unwrap();
+        ] }),
+        )
+        .unwrap();
         let c = std::fs::read_to_string(root.join("Codex/Argent.md")).unwrap();
         assert!(c.contains("A silver city.") && c.contains("Founded long ago."));
 
         // append + insert under heading.
-        call(&ctx, "append_to_page", json!({ "path": "Argent.md", "text": "Tail line." })).unwrap();
-        call(&ctx, "insert_under_heading", json!({ "path": "Argent.md", "heading": "## Notes", "text": "A fresh note." })).unwrap();
+        call(
+            &ctx,
+            "append_to_page",
+            json!({ "path": "Argent.md", "text": "Tail line." }),
+        )
+        .unwrap();
+        call(
+            &ctx,
+            "insert_under_heading",
+            json!({ "path": "Argent.md", "heading": "## Notes", "text": "A fresh note." }),
+        )
+        .unwrap();
         let c = std::fs::read_to_string(root.join("Codex/Argent.md")).unwrap();
         assert!(c.contains("Tail line."));
         let notes = c.split("## Notes").nth(1).unwrap();
@@ -1350,7 +1534,11 @@ mod tests {
     #[test]
     fn structural_tools_move_rename_delete() {
         let (state, root, cfg) = fixture_world("struct");
-        let ctx = ToolCtx { state: &state, world_root: &root, cfg: &cfg };
+        let ctx = ToolCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+        };
         // Seed the index so backlink rewrite has something to follow.
         let vault_root = cfg.codex_dir(&root);
         state
@@ -1360,10 +1548,20 @@ mod tests {
             .unwrap();
 
         // Rename rewrites the [[Baron Aldric]] link in Thornhold.md.
-        let prev = gate_preview(&ctx, "rename_page", &json!({ "path": "NPCs/Baron Aldric.md", "new_name": "Baroness Mira" })).unwrap();
+        let prev = gate_preview(
+            &ctx,
+            "rename_page",
+            &json!({ "path": "NPCs/Baron Aldric.md", "new_name": "Baroness Mira" }),
+        )
+        .unwrap();
         assert_eq!(prev["to"], "NPCs/Baroness Mira.md");
         assert!(prev["summary"].as_str().unwrap().contains("rewrite 1 link"));
-        call(&ctx, "rename_page", json!({ "path": "NPCs/Baron Aldric.md", "new_name": "Baroness Mira" })).unwrap();
+        call(
+            &ctx,
+            "rename_page",
+            json!({ "path": "NPCs/Baron Aldric.md", "new_name": "Baroness Mira" }),
+        )
+        .unwrap();
         assert!(root.join("Codex/NPCs/Baroness Mira.md").is_file());
         assert!(!root.join("Codex/NPCs/Baron Aldric.md").exists());
         let thornhold = std::fs::read_to_string(root.join("Codex/Thornhold.md")).unwrap();
@@ -1372,11 +1570,21 @@ mod tests {
         // Move into a new folder.
         call(&ctx, "create_folder", json!({ "path": "Rulers" })).unwrap();
         assert!(root.join("Codex/Rulers").is_dir());
-        call(&ctx, "move_page", json!({ "path": "NPCs/Baroness Mira.md", "new_folder": "Rulers" })).unwrap();
+        call(
+            &ctx,
+            "move_page",
+            json!({ "path": "NPCs/Baroness Mira.md", "new_folder": "Rulers" }),
+        )
+        .unwrap();
         assert!(root.join("Codex/Rulers/Baroness Mira.md").is_file());
 
         // Delete.
-        call(&ctx, "delete_page", json!({ "path": "Rulers/Baroness Mira.md" })).unwrap();
+        call(
+            &ctx,
+            "delete_page",
+            json!({ "path": "Rulers/Baroness Mira.md" }),
+        )
+        .unwrap();
         assert!(!root.join("Codex/Rulers/Baroness Mira.md").exists());
         // Deleting a missing page is a conversational error.
         assert!(call(&ctx, "delete_page", json!({ "path": "Ghost.md" })).is_err());
@@ -1386,7 +1594,11 @@ mod tests {
     #[test]
     fn shell_runs_in_world_folder_and_caps() {
         let (state, root, cfg) = fixture_world("shell");
-        let ctx = ToolCtx { state: &state, world_root: &root, cfg: &cfg };
+        let ctx = ToolCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+        };
         if cfg!(windows) {
             return;
         }
@@ -1403,7 +1615,11 @@ mod tests {
     #[test]
     fn errors_are_conversational() {
         let (state, root, cfg) = fixture_world("err");
-        let ctx = ToolCtx { state: &state, world_root: &root, cfg: &cfg };
+        let ctx = ToolCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+        };
         assert!(call(&ctx, "read_summary", json!({ "session": 99 })).is_err());
         assert!(call(&ctx, "nope", json!({})).is_err());
         assert!(call(&ctx, "read_page", json!({ "path": "../../etc/passwd" })).is_err());

@@ -142,8 +142,9 @@ mod tests {
         assert!(path.contains("Backups"));
         let f = std::fs::File::open(&path).unwrap();
         let mut z = zip::ZipArchive::new(f).unwrap();
-        let names: Vec<String> =
-            (0..z.len()).map(|i| z.by_index(i).unwrap().name().to_string()).collect();
+        let names: Vec<String> = (0..z.len())
+            .map(|i| z.by_index(i).unwrap().name().to_string())
+            .collect();
         assert!(names.contains(&".ck/config.toml".to_string()));
         assert!(names.contains(&"Codex/Page.md".to_string()));
         assert!(!names.iter().any(|n| n.contains("index.db")));
@@ -155,7 +156,10 @@ mod tests {
         for _ in 0..(KEEP + 2) {
             backup_world(&world).unwrap();
         }
-        let count = std::fs::read_dir(world.join("Backups")).unwrap().flatten().count();
+        let count = std::fs::read_dir(world.join("Backups"))
+            .unwrap()
+            .flatten()
+            .count();
         assert_eq!(count, KEEP);
         std::fs::remove_dir_all(&dir).ok();
     }

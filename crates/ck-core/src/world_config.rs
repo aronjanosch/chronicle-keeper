@@ -102,8 +102,15 @@ fn parse_field(spec: &str) -> Option<KindField> {
     if name.is_empty() {
         return None;
     }
-    let ftype = if FIELD_TYPES.contains(&ftype) { ftype } else { "text" };
-    Some(KindField { name: name.to_string(), ftype: ftype.to_string() })
+    let ftype = if FIELD_TYPES.contains(&ftype) {
+        ftype
+    } else {
+        "text"
+    };
+    Some(KindField {
+        name: name.to_string(),
+        ftype: ftype.to_string(),
+    })
 }
 
 impl WorldConfig {
@@ -163,7 +170,12 @@ pub fn read(world_root: &Path) -> AppResult<Option<WorldConfig>> {
     let raw = match std::fs::read_to_string(&path) {
         Ok(r) => r,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(AppError::Internal(anyhow::anyhow!("read {}: {e}", path.display()))),
+        Err(e) => {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "read {}: {e}",
+                path.display()
+            )))
+        }
     };
     let cfg = toml::from_str(&raw)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("parse {}: {e}", path.display())))?;
@@ -194,7 +206,9 @@ pub fn read_recap(world_root: &Path) -> (String, String) {
         return (String::new(), String::new());
     };
     let (fm, body) = crate::vault::split_frontmatter(&raw);
-    let updated = crate::vault::fm_get(&fm, "updated_at").unwrap_or("").to_string();
+    let updated = crate::vault::fm_get(&fm, "updated_at")
+        .unwrap_or("")
+        .to_string();
     (body.trim().to_string(), updated)
 }
 
@@ -287,8 +301,14 @@ mod tests {
         write(&root, &cfg).unwrap();
         let back = read(&root).unwrap().unwrap();
         assert_eq!(back.name, "Z");
-        assert_eq!(back.extra.get("custom_key").and_then(|v| v.as_str()), Some("kept"));
-        assert_eq!(back.kinds.get("npc").map(|o| o.fields.as_slice()), Some(["race".to_string()].as_slice()));
+        assert_eq!(
+            back.extra.get("custom_key").and_then(|v| v.as_str()),
+            Some("kept")
+        );
+        assert_eq!(
+            back.kinds.get("npc").map(|o| o.fields.as_slice()),
+            Some(["race".to_string()].as_slice())
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -297,19 +317,48 @@ mod tests {
         let mut cfg = WorldConfig::default();
         let schemas = cfg.kind_schemas();
         let npc = &schemas.iter().find(|(k, _)| k == "npc").unwrap().1;
-        assert_eq!(npc[0], KindField { name: "race".into(), ftype: "text".into() });
-        assert_eq!(npc[1], KindField { name: "affiliation".into(), ftype: "list".into() });
+        assert_eq!(
+            npc[0],
+            KindField {
+                name: "race".into(),
+                ftype: "text".into()
+            }
+        );
+        assert_eq!(
+            npc[1],
+            KindField {
+                name: "affiliation".into(),
+                ftype: "list".into()
+            }
+        );
         let item = &schemas.iter().find(|(k, _)| k == "item").unwrap().1;
         assert_eq!(item[3].ftype, "checkbox");
-        assert!(schemas.iter().find(|(k, _)| k == "lore").unwrap().1.is_empty());
+        assert!(schemas
+            .iter()
+            .find(|(k, _)| k == "lore")
+            .unwrap()
+            .1
+            .is_empty());
 
-        cfg.kinds.insert("npc".into(), KindOverride { fields: vec!["age:number".into(), "bogus:wat".into()] });
-        cfg.kinds.insert("deity".into(), KindOverride { fields: vec!["domain".into()] });
+        cfg.kinds.insert(
+            "npc".into(),
+            KindOverride {
+                fields: vec!["age:number".into(), "bogus:wat".into()],
+            },
+        );
+        cfg.kinds.insert(
+            "deity".into(),
+            KindOverride {
+                fields: vec!["domain".into()],
+            },
+        );
         let schemas = cfg.kind_schemas();
         let npc = &schemas.iter().find(|(k, _)| k == "npc").unwrap().1;
         assert_eq!(npc.len(), 2);
         assert_eq!(npc[0].ftype, "number");
         assert_eq!(npc[1].ftype, "text"); // unknown type → text
-        assert!(schemas.iter().any(|(k, f)| k == "deity" && f[0].name == "domain"));
+        assert!(schemas
+            .iter()
+            .any(|(k, f)| k == "deity" && f[0].name == "domain"));
     }
 }

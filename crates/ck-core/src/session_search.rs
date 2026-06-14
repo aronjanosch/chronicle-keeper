@@ -29,8 +29,10 @@ fn tokens(query: &str) -> Vec<String> {
 
 /// Sessions newest-first, the order both screens want.
 fn sessions_desc(world_root: &Path) -> Vec<(i64, String)> {
-    let mut s: Vec<(i64, String)> =
-        session_entries(world_root).into_iter().map(|(n, t, _)| (n, t)).collect();
+    let mut s: Vec<(i64, String)> = session_entries(world_root)
+        .into_iter()
+        .map(|(n, t, _)| (n, t))
+        .collect();
     s.sort_by_key(|(n, _)| std::cmp::Reverse(*n));
     s
 }
@@ -58,10 +60,18 @@ pub fn search_summaries(world_root: &Path, query: &str) -> Vec<SessionHit> {
     let mut out = Vec::new();
     for pass in 0..2 {
         for (n, title) in &sessions {
-            let Some(dir) = session_dir(world_root, *n) else { continue };
-            let Ok(text) = std::fs::read_to_string(session_files::summary_md_path(&dir)) else { continue };
+            let Some(dir) = session_dir(world_root, *n) else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(session_files::summary_md_path(&dir)) else {
+                continue;
+            };
             let lower = text.to_lowercase();
-            let hit = if pass == 0 { lower.find(&query) } else { toks.iter().find_map(|t| lower.find(t)) };
+            let hit = if pass == 0 {
+                lower.find(&query)
+            } else {
+                toks.iter().find_map(|t| lower.find(t))
+            };
             if let Some(at) = hit {
                 out.push(SessionHit {
                     session: *n,
@@ -91,11 +101,19 @@ pub fn search_transcripts(world_root: &Path, query: &str) -> Vec<SessionHit> {
     let mut out = Vec::new();
     for pass in 0..2 {
         for (n, title) in &sessions {
-            let Some(dir) = session_dir(world_root, *n) else { continue };
-            let Ok(raw) = std::fs::read_to_string(session_files::transcript_md_path(&dir)) else { continue };
+            let Some(dir) = session_dir(world_root, *n) else {
+                continue;
+            };
+            let Ok(raw) = std::fs::read_to_string(session_files::transcript_md_path(&dir)) else {
+                continue;
+            };
             for (i, t) in transcript_turns(&raw).iter().enumerate() {
                 let lower = t.to_lowercase();
-                let hit = if pass == 0 { lower.find(&query) } else { toks.iter().find_map(|tok| lower.find(tok)) };
+                let hit = if pass == 0 {
+                    lower.find(&query)
+                } else {
+                    toks.iter().find_map(|tok| lower.find(tok))
+                };
                 if let Some(at) = hit {
                     out.push(SessionHit {
                         session: *n,
@@ -117,7 +135,9 @@ pub fn search_transcripts(world_root: &Path, query: &str) -> Vec<SessionHit> {
 }
 
 fn escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Excerpt centered on a byte offset, HTML-escaped, leading/trailing ellipses,
@@ -133,7 +153,10 @@ fn snippet_html(text: &str, at: usize) -> String {
     while end < text.len() && !text.is_char_boundary(end) {
         end += 1;
     }
-    let slice = text[start..end].split_whitespace().collect::<Vec<_>>().join(" ");
+    let slice = text[start..end]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let mut html = escape(&slice);
     // Bold the word the match landed on (best-effort; cosmetic only).
     if let Some(word) = text[at..].split_whitespace().next() {
@@ -160,7 +183,11 @@ mod tests {
     fn write_session(world: &Path, n: i64, title: &str, summary: &str, transcript: &str) {
         let dir = world.join(format!("Sessions/{n:03}"));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("session.toml"), format!("number = {n}\ntitle = \"{title}\"\n")).unwrap();
+        std::fs::write(
+            dir.join("session.toml"),
+            format!("number = {n}\ntitle = \"{title}\"\n"),
+        )
+        .unwrap();
         std::fs::write(session_files::summary_md_path(&dir), summary).unwrap();
         std::fs::write(session_files::transcript_md_path(&dir), transcript).unwrap();
     }
@@ -168,8 +195,20 @@ mod tests {
     #[test]
     fn finds_summary_and_transcript() {
         let world = tmp_world("basic");
-        write_session(&world, 1, "Arrival", "The party reached Thornhold at dusk.", "[Mara]\nWe should ask the baron.\n");
-        write_session(&world, 2, "Cellars", "They explored the cellars.", "[GM]\nThe baron glares at you.\n");
+        write_session(
+            &world,
+            1,
+            "Arrival",
+            "The party reached Thornhold at dusk.",
+            "[Mara]\nWe should ask the baron.\n",
+        );
+        write_session(
+            &world,
+            2,
+            "Cellars",
+            "They explored the cellars.",
+            "[GM]\nThe baron glares at you.\n",
+        );
 
         let s = search_summaries(&world, "Thornhold");
         assert_eq!(s.len(), 1);

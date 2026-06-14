@@ -26,7 +26,10 @@ pub enum Msg {
     System(String),
     User(String),
     /// User turn carrying pasted images alongside (optional) text.
-    UserImages { text: String, images: Vec<Image> },
+    UserImages {
+        text: String,
+        images: Vec<Image>,
+    },
     Assistant {
         text: String,
         tool_calls: Vec<ToolCall>,
@@ -103,7 +106,11 @@ fn anthropic_body(msgs: &[Msg], tools: &[ToolDef], model: &str, stream: bool) ->
             Msg::User(s) => push(&mut messages, "user", json!({ "type": "text", "text": s })),
             Msg::UserImages { text, images } => {
                 if !text.is_empty() {
-                    push(&mut messages, "user", json!({ "type": "text", "text": text }));
+                    push(
+                        &mut messages,
+                        "user",
+                        json!({ "type": "text", "text": text }),
+                    );
                 }
                 for img in images {
                     push(
@@ -361,8 +368,12 @@ impl StreamState {
                     }
                     Some("input_json_delta") => {
                         if let Some(buf) = self.tools.get_mut(&idx) {
-                            buf.args
-                                .push_str(delta.get("partial_json").and_then(Value::as_str).unwrap_or(""));
+                            buf.args.push_str(
+                                delta
+                                    .get("partial_json")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or(""),
+                            );
                         }
                         Ok(None)
                     }
@@ -730,7 +741,10 @@ mod tests {
     fn images_shape_per_transport() {
         let msgs = vec![Msg::UserImages {
             text: "what is this".into(),
-            images: vec![Image { media_type: "image/png".into(), data: "QUJD".into() }],
+            images: vec![Image {
+                media_type: "image/png".into(),
+                data: "QUJD".into(),
+            }],
         }];
 
         let a = anthropic_body(&msgs, &[], "claude", false);

@@ -2,8 +2,9 @@
 // (Tauri `ck-menu` events), and the palette all funnel through runCommand(id).
 // Screen-local commands (editor format, rail/zen toggles, save, find) broadcast
 // a `ck:cmd` window event that the mounted screen or editor listens for.
-import { store, navigate, navigateBack, navigateForward, openModal, closeModal } from './core.js';
-import { createVaultPage, createVaultFolder } from './actions.js';
+import { store, navigate, navigateBack, navigateForward, openModal, closeModal,
+  activePagePath, closeTab, reopenClosedTab, cycleTab, jumpToTab } from './core.js';
+import { createVaultFolder } from './actions.js';
 
 function worldId() { return store.campaign?.campaign_id || null; }
 
@@ -14,10 +15,7 @@ function togglePalette() {
 
 export function promptNewPage() {
   if (!worldId()) return;
-  openModal('textPrompt', {
-    title: 'New page', label: 'Page title', confirmLabel: 'Create',
-    onSubmit: async (title) => { const p = await createVaultPage(title, 'npc', ''); navigate('page', { path: p.path }); },
-  });
+  openModal('newPage', { folder: '' });
 }
 export function promptNewFolder() {
   if (!worldId()) return;
@@ -55,10 +53,16 @@ const COMMANDS = {
   'zen': broadcast('zen'),
   'save': broadcast('save'),
   'find': broadcast('find'),
+  // 15D: tabs. ⌘W only closes when a page tab is active — never the window.
+  'tab-close': () => { const p = activePagePath(); if (p) closeTab(p); },
+  'tab-reopen': reopenClosedTab,
+  'tab-next': () => cycleTab(1),
+  'tab-prev': () => cycleTab(-1),
 };
 for (const k of ['bold', 'italic', 'code', 'highlight', 'wikilink', 'h1', 'h2', 'h3', 'list', 'quote', 'callout']) {
   COMMANDS[`fmt-${k}`] = broadcast(`fmt-${k}`);
 }
+for (let n = 1; n <= 9; n++) COMMANDS[`tab-${n}`] = () => jumpToTab(n);
 
 // The same key can reach us twice on some platforms (native menu accelerator
 // + webview keydown) — drop the echo.
@@ -77,7 +81,7 @@ export function initMenuBridge() {
   window.__TAURI__?.event?.listen('ck-menu', (e) => runCommand(String(e.payload)));
 }
 
-// Tell the shell whether the Format/Find menu items apply (an editor is mounted).
+// Tell the shell whether the Format menu items apply (an editor is mounted).
 export function setEditorActive(active) {
   const invoke = window.__TAURI__?.core?.invoke;
   if (invoke) invoke('set_format_enabled', { enabled: !!active }).catch(() => {});

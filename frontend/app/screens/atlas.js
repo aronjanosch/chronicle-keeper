@@ -25,6 +25,11 @@ export const PIN_KINDS = {
 };
 const PALETTE = ['place', 'npc', 'faction', 'item', 'lore', 'pc'];
 
+// view preferences (per-user, not map data)
+const PIN_SCALES = { small: 0.72, medium: 1, large: 1.35 };
+const readPref = (k, d) => { try { return localStorage.getItem(k) || d; } catch (_) { return d; } };
+const writePref = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
+
 // seal colour ramp per tone: dark rim, body, light sheen, engrave
 const SEAL = {
   burgundy: { dark: '#4E1C12', body: '#7A2E1F', light: '#A8493A', eng: '#F0D2CA' },
@@ -58,7 +63,7 @@ export function SealHead({ kind, size = 38, selected }) {
 
 // full map marker: ground shadow + seal + tip + label.
 // Counter-scales by 1/zoom so pins stay legible at any zoom.
-function PinMarker({ pin, invZoom, selected, hasMap, onHover, onLeave, onClick, onDoubleClick, onMouseDown, onMenu }) {
+function PinMarker({ pin, invZoom, scale = 1, showLabel = true, selected, hasMap, onHover, onLeave, onClick, onDoubleClick, onMouseDown, onMenu }) {
   const size = pin.kind === 'pc' ? 32 : 38;
   const k = PIN_KINDS[pin.kind] || PIN_KINDS.npc;
   const s = SEAL[k.tone] || SEAL.burgundy;
@@ -66,7 +71,7 @@ function PinMarker({ pin, invZoom, selected, hasMap, onHover, onLeave, onClick, 
     <div onMouseEnter=${onHover} onMouseLeave=${onLeave} onClick=${onClick} onDblClick=${onDoubleClick} onMouseDown=${onMouseDown} onContextMenu=${onMenu}
       style=${{
         position: 'absolute', left: 0, bottom: 0,
-        transform: `translateX(-50%) scale(${invZoom})`, transformOrigin: 'bottom center',
+        transform: `translateX(-50%) scale(${invZoom * scale})`, transformOrigin: 'bottom center',
         cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center',
         willChange: 'transform',
       }}>
@@ -87,24 +92,24 @@ function PinMarker({ pin, invZoom, selected, hasMap, onHover, onLeave, onClick, 
         background: 'radial-gradient(circle, rgba(40,20,8,.34), transparent 70%)' }} />
     </div>
 
-    <div style=${{ position: 'absolute', left: 0, top: 6,
-      transform: `translateX(-50%) scale(${invZoom})`, transformOrigin: 'top center', pointerEvents: 'none' }}>
+    ${showLabel && html`<div style=${{ position: 'absolute', left: 0, top: 6,
+      transform: `translateX(-50%) scale(${invZoom * scale})`, transformOrigin: 'top center', pointerEvents: 'none' }}>
       <div style=${{
         whiteSpace: 'nowrap', fontFamily: 'var(--font-display)', fontSize: 12.5, fontWeight: 500,
         color: INK, padding: '1px 7px', borderRadius: 4,
         background: 'rgba(251,246,233,.78)', border: `1px solid ${RULE}`,
         boxShadow: '0 1px 2px rgba(60,40,10,.12)', textShadow: '0 1px 0 rgba(255,255,255,.5)',
       }}>${pin.name}${hasMap && html`<span style=${{ marginLeft: 5, color: s.body, fontWeight: 700 }}>›</span>`}</div>
-    </div>
+    </div>`}
   </div>`;
 }
 
 // floating preview shown on hover, attached to the pin in image space
-function HoverCard({ pin, invZoom, summary }) {
+function HoverCard({ pin, invZoom, scale = 1, summary }) {
   const k = PIN_KINDS[pin.kind] || {};
   const hasMap = !!pin.to;
   return html`<div style=${{ position: 'absolute', left: `${pin.x * 100}%`, top: `${pin.y * 100}%`, zIndex: 70, pointerEvents: 'none' }}>
-    <div style=${{ position: 'absolute', left: 0, bottom: 46, transform: `translateX(-50%) scale(${invZoom})`, transformOrigin: 'bottom center' }}>
+    <div style=${{ position: 'absolute', left: 0, bottom: Math.round(46 * scale), transform: `translateX(-50%) scale(${invZoom})`, transformOrigin: 'bottom center' }}>
       <div style=${{ width: 236, background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', borderRadius: 8, boxShadow: '0 10px 26px rgba(60,40,10,.24)', overflow: 'hidden' }}>
         <div style=${{ padding: '10px 12px', display: 'flex', gap: 9, alignItems: 'flex-start' }}>
           <${SealHead} kind=${pin.kind} size=${30} />
@@ -149,7 +154,7 @@ function CodexPanel({ pagePath, pinName, kind, to, canChart, onEnterMap, onChart
       .then((p) => { if (!dead) setPage(p); })
       .catch((e) => { if (!dead) setErr(e.message); });
     return () => { dead = true; };
-  }, [pagePath]);
+  }, [pagePath, store.dirty_vault]);
 
   const k = PIN_KINDS[kind || page?.kind] || { label: 'Entry' };
   const folder = pagePath ? pagePath.split('/').slice(0, -1).join('/') || '—' : '—';
@@ -286,8 +291,8 @@ function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy }) {
     const pool = q ? pages.filter(hit) : pages.filter((p) => p.kind === kind);
     return [...pool].sort((a, b) =>
       (b.kind === kind) - (a.kind === kind) || a.title.localeCompare(b.title)
-    ).slice(0, 6);
-  }, [q, kind]);
+    ).slice(0, q ? 12 : 6);
+  }, [q, kind, store.vaultPages]);
   return html`<div style=${{ width, flex: `0 0 ${width}px`, height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--rule)', boxShadow: '-12px 0 28px rgba(60,40,10,.10)', display: 'flex', flexDirection: 'column', minHeight: 0, zIndex: 60, position: 'relative' }}>
     <${ResizeHandle} side="left" onMouseDown=${onResize} />
     <div style=${{ padding: '14px 16px', borderBottom: '1px solid var(--rule-soft)', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -312,11 +317,14 @@ function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy }) {
         <${Select} value=${folder} onChange=${setFolder} options=${folderOptions} />
       </div>
 
-      ${matches.length > 0 && html`<div style=${{ marginTop: 14 }}>
+      <div style=${{ marginTop: 14 }}>
         <div style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>
-          ${q ? 'Or link an existing page' : `Existing ${(k.label || '').toLowerCase()} pages`}
+          ${q ? 'Or link an existing page' : `Existing ${(k.label || '').toLowerCase()} pages — type to search all pages`}
         </div>
-        <div style=${{ border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden' }}>
+        ${matches.length === 0 && html`<div style=${{ fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: 12.5, color: 'var(--ink-faint)' }}>
+          ${q ? 'No pages match — Create will mint a new one.' : 'None yet — type a name to search every page, or create one.'}
+        </div>`}
+        ${matches.length > 0 && html`<div style=${{ border: '1px solid var(--rule)', borderRadius: 8, overflow: 'auto', maxHeight: 280 }}>
           ${matches.map((p, i) => html`<div key=${p.path} onClick=${() => !busy && onLink(p)}
             style=${{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 10px', cursor: 'pointer',
               borderBottom: i < matches.length - 1 ? '1px solid var(--rule-soft)' : 'none', background: 'var(--surface-raised)' }}
@@ -329,8 +337,8 @@ function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy }) {
             </div>
             <${Icon} name="link" size=${12} style=${{ color: 'var(--burgundy)' }} />
           </div>`)}
-        </div>
-      </div>`}
+        </div>`}
+      </div>
 
       <div style=${{ marginTop: 18, padding: '11px 13px', background: 'var(--paper-deep)', border: '1px dashed var(--rule-strong)', borderRadius: 8 }}>
         <div style=${{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--burgundy)', display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}><${Icon} name="feather" size=${10} /> The Chronicle will remember</div>
@@ -478,6 +486,9 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const [ghost, setGhost] = useState(null);
   const [mapForm, setMapForm] = useState(null); // { title, name?, parent?, page?, bindPin? }
   const [settings, setSettings] = useState(false);
+  const [viewOpts, setViewOpts] = useState(false);
+  const [pinSize, setPinSizeRaw] = useState(() => readPref('ck_atlas_pin_size', 'medium'));
+  const [showLabels, setShowLabelsRaw] = useState(() => readPref('ck_atlas_labels', '1') !== '0');
   const [busy, setBusy] = useState(false);
   const [pinPos, setPinPos] = useState(null);   // { id, x, y } live override while dragging a pin
 
@@ -542,7 +553,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
       })
       .catch((e) => console.warn('map art failed:', e));
     return () => { dead = true; if (url) URL.revokeObjectURL(url); };
-  }, [map.id, map.image]);
+  }, [map.id, map.image, map.art_seq]);
 
   const fitView = useCallback((s, w, h) => {
     const z = Math.min(s.w / w, s.h / h) * 0.95;
@@ -583,7 +594,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
-      setPlacing(null); setPaletteOpen(false); setGhost(null); setNewEntry(null); setMapForm(null); setSettings(false);
+      setPlacing(null); setPaletteOpen(false); setGhost(null); setNewEntry(null); setMapForm(null); setSettings(false); setViewOpts(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -634,8 +645,13 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     return { x: clamp(((mx - view.tx) / view.zoom) / W, 0, 1), y: clamp(((my - view.ty) / view.zoom) / H, 0, 1) };
   };
 
+  const setPinSize = (s) => { setPinSizeRaw(s); writePref('ck_atlas_pin_size', s); };
+  const setShowLabels = (v) => { setShowLabelsRaw(v); writePref('ck_atlas_labels', v ? '1' : '0'); };
+  const pinScale = PIN_SCALES[pinSize] || 1;
+
   const onDown = (e) => {
     if (e.button !== 0 || !view) return;
+    setViewOpts(false);
     if (placing) {
       const { x, y } = screenToNorm(e.clientX, e.clientY);
       const pin = { id: 'p' + Date.now().toString(36), name: 'Untitled ' + ((PIN_KINDS[placing] || {}).label || 'place'), kind: placing, x, y };
@@ -803,6 +819,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
           style=${{ display: 'block', userSelect: 'none', boxShadow: '0 10px 40px rgba(60,40,10,.28)' }} />
 
         ${pins.map((pin) => html`<${PinMarker} key=${pin.id} pin=${pin} invZoom=${invZoom}
+          scale=${pinScale} showLabel=${showLabels}
           selected=${panel?.pinId === pin.id || newEntry?.pin.id === pin.id}
           hasMap=${!!pin.to}
           onHover=${() => !placing && setHover(pin.id)} onLeave=${() => setHover(null)}
@@ -816,11 +833,11 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
             { label: 'Remove pin', icon: 'trash', danger: true, onClick: () => removePin(pin.id) },
           ])} />`)}
 
-        ${hoverPin && hoverPin.page && html`<${HoverCard} pin=${hoverPin} invZoom=${invZoom} summary=${summaryOf(hoverPin.page)} />`}
+        ${hoverPin && hoverPin.page && html`<${HoverCard} pin=${hoverPin} invZoom=${invZoom} scale=${pinScale} summary=${summaryOf(hoverPin.page)} />`}
       </div>`}
 
       ${placing && ghost && html`<div style=${{ position: 'absolute', left: ghost.x, top: ghost.y, transform: 'translate(-50%,-100%)', pointerEvents: 'none', opacity: 0.7, zIndex: 75 }}>
-        <${SealHead} kind=${placing} size=${38} />
+        <${SealHead} kind=${placing} size=${Math.round(38 * pinScale)} />
       </div>`}
 
       ${''/* descend / ascend dissolve veil */}
@@ -845,8 +862,15 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         `}
       </div>
 
-      ${''/* map settings + new root map (top-right) */}
+      ${''/* view options + map settings + new root map (top-right) */}
       <div style=${{ position: 'absolute', top: 14, right: 16, zIndex: 90, display: 'flex', gap: 8 }}>
+        <button onClick=${() => setViewOpts((o) => !o)} title="View options — pin size, labels" style=${{
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 8,
+          background: viewOpts ? 'var(--burgundy-50)' : 'rgba(251,246,233,.9)', backdropFilter: 'blur(3px)',
+          border: viewOpts ? '1px solid rgba(122,46,31,.25)' : '1px solid var(--rule)',
+          boxShadow: 'var(--shadow-card)', color: viewOpts ? 'var(--burgundy-700)' : 'var(--ink-soft)', cursor: 'pointer' }}>
+          <${Icon} name="eye" size=${14} />
+        </button>
         <button onClick=${() => setSettings(true)} title="Map settings — rename, replace art, delete" style=${{
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 8,
           background: 'rgba(251,246,233,.9)', backdropFilter: 'blur(3px)', border: '1px solid var(--rule)',
@@ -860,6 +884,32 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
           <${Icon} name="upload" size=${13} /> New map
         </button>
       </div>
+
+      ${viewOpts && html`<div onMouseDown=${(e) => e.stopPropagation()} style=${{
+        position: 'absolute', top: 50, right: 16, zIndex: 95, width: 196,
+        background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', borderRadius: 10,
+        boxShadow: 'var(--shadow-raised)', overflow: 'hidden' }}>
+        <div style=${{ padding: '9px 12px 7px', borderBottom: '1px solid var(--rule-soft)', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>View options</div>
+        <div style=${{ padding: '10px 12px 12px', display: 'flex', flexDirection: 'column', gap: 11 }}>
+          <div>
+            <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>Pin size</div>
+            <div style=${{ display: 'flex', border: '1px solid var(--rule)', borderRadius: 6, overflow: 'hidden' }}>
+              ${['small', 'medium', 'large'].map((s, i) => html`<button key=${s} onClick=${() => setPinSize(s)} style=${{
+                flex: 1, padding: '5px 0', fontSize: 11.5, fontWeight: pinSize === s ? 600 : 400, cursor: 'pointer',
+                background: pinSize === s ? 'var(--burgundy)' : 'transparent', color: pinSize === s ? '#FBF6E9' : 'var(--ink-soft)',
+                border: 'none', borderLeft: i ? '1px solid var(--rule-soft)' : 'none' }}>${s[0].toUpperCase() + s.slice(1)}</button>`)}
+            </div>
+          </div>
+          <button onClick=${() => setShowLabels(!showLabels)} style=${{
+            display: 'flex', alignItems: 'center', gap: 8, padding: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
+            <span style=${{ width: 15, height: 15, flex: '0 0 auto', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: showLabels ? 'var(--burgundy)' : 'var(--surface)', border: showLabels ? '1px solid var(--burgundy-700)' : '1px solid var(--rule-strong)', color: '#FBF6E9' }}>
+              ${showLabels && html`<${Icon} name="check" size=${10} />`}
+            </span>
+            <span style=${{ fontSize: 12.5, color: 'var(--ink)' }}>Pin labels</span>
+          </button>
+        </div>
+      </div>`}
 
       ${placing && html`<div style=${{ position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 95,
         display: 'flex', alignItems: 'center', gap: 9, padding: '7px 14px', borderRadius: 999, whiteSpace: 'nowrap',

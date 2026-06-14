@@ -43,7 +43,9 @@ pub async fn diagnostics(
 ) -> AppResult<Json<Value>> {
     let root = vault_root(&state, &campaign_id)?;
     state.with_index(&root, |conn| {
-        Ok(Json(serde_json::to_value(index::diagnostics(conn, &root)?).unwrap()))
+        Ok(Json(
+            serde_json::to_value(index::diagnostics(conn, &root)?).unwrap(),
+        ))
     })?
 }
 
@@ -72,7 +74,9 @@ pub async fn search(
         edited_before: query.edited_before,
     };
     state.with_index(&root, |conn| {
-        Ok(Json(json!({ "results": index::search_faceted(conn, &query.q, &facets)? })))
+        Ok(Json(
+            json!({ "results": index::search_faceted(conn, &query.q, &facets)? }),
+        ))
     })?
 }
 
@@ -146,9 +150,10 @@ pub async fn timeline(
     let (_, cfg) = super::vault::world_cfg(&state, &campaign_id)?;
     let root = vault_root(&state, &campaign_id)?;
     let mut rows = state.with_index(&root, index::all_frontmatter)??;
-    rows.extend(state.with_db(|conn| {
-        crate::store::sessions::world_dated_session_rows(conn, &campaign_id)
-    })?);
+    rows.extend(
+        state
+            .with_db(|conn| crate::store::sessions::world_dated_session_rows(conn, &campaign_id))?,
+    );
     let mut events = crate::timeline::world_events(rows, &cfg.calendar);
     let (meta, relations) = state.with_index(&root, |conn| {
         let meta = index::page_meta(conn)?;
@@ -156,7 +161,9 @@ pub async fn timeline(
         AppResult::Ok((meta, relations))
     })??;
     for ev in &mut events {
-        let Some(path) = ev["path"].as_str().map(str::to_string) else { continue };
+        let Some(path) = ev["path"].as_str().map(str::to_string) else {
+            continue;
+        };
         if let Some((_, tags)) = meta.get(&path) {
             ev["tags"] = json!(tags);
         }

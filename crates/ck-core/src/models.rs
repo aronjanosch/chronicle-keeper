@@ -239,8 +239,10 @@ pub struct SessionMetadataRequest {
     pub notes: Option<String>,
 }
 
-// --- Codex entries (Phase 2) ---
+// --- Codex glossary shapes ---
 
+/// Glossary line fed into summary prompts. Built from vault page `summary:`
+/// frontmatter (files-as-truth) — not a DB row.
 #[derive(Debug, Serialize, Clone)]
 pub struct CodexEntry {
     pub entry_id: String,
@@ -248,13 +250,12 @@ pub struct CodexEntry {
     pub name: String,
     pub kind: String,
     pub body: String,
-    /// Distilled multi-sentence write-up shown in the entry inspector. NOT fed
-    /// into summaries (the one-line `body` still is) — this is for the human.
     pub detail: String,
     pub source: String,
     pub updated_at: String,
 }
 
+/// One proposed entry from paste-import; committed as a vault page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexEntryCreate {
     pub name: String,
@@ -263,14 +264,6 @@ pub struct CodexEntryCreate {
     pub body: String,
     #[serde(default)]
     pub detail: String,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct CodexEntryUpdate {
-    pub name: Option<String>,
-    pub kind: Option<String>,
-    pub body: Option<String>,
-    pub detail: Option<String>,
 }
 
 /// Generate the campaign "story so far" recap. Provider/model optional — falls

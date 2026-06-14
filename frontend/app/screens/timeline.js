@@ -261,6 +261,7 @@ export function TimelineScreen() {
     if (!(store.campaignSessions || []).length) refreshCampaignSessions();
     if (!(store.vaultPages || []).length) loadVaultTree(c.campaign_id); // pickers in the new-event modal
   }, [c?.campaign_id]);
+  useEffect(() => { if (store.dirty_vault) reload(); }, [store.dirty_vault]);
 
   if (!c) { navigate('library'); return null; }
 

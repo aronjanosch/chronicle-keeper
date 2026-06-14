@@ -66,7 +66,10 @@ pub fn start(
     // Events arrive symlink-resolved; strip_prefix needs the canonical root.
     let base = vault.canonicalize().unwrap_or(vault);
     std::thread::spawn(move || debounce_loop(rx, base, index, suppress, seq, stop2));
-    Ok(WatchHandle { _watcher: watcher, stop })
+    Ok(WatchHandle {
+        _watcher: watcher,
+        stop,
+    })
 }
 
 fn debounce_loop(
@@ -82,7 +85,11 @@ fn debounce_loop(
         if stop.load(Ordering::Relaxed) {
             return;
         }
-        let timeout = if pending.is_empty() { Duration::from_millis(500) } else { Duration::from_millis(50) };
+        let timeout = if pending.is_empty() {
+            Duration::from_millis(500)
+        } else {
+            Duration::from_millis(50)
+        };
         match rx.recv_timeout(timeout) {
             Ok(path) => {
                 pending.insert(path, Instant::now());
@@ -118,7 +125,9 @@ fn process(
     for comp in rel.components() {
         match comp {
             Component::Normal(s) => match s.to_str() {
-                Some(s) if !s.starts_with('.') && !crate::vault::is_reserved_dir(s) => parts.push(s),
+                Some(s) if !s.starts_with('.') && !crate::vault::is_reserved_dir(s) => {
+                    parts.push(s)
+                }
                 _ => return,
             },
             _ => return,

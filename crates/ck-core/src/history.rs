@@ -62,7 +62,10 @@ fn page_dir(world_root: &Path, rel: &str) -> AppResult<PathBuf> {
 fn parse_name(path: &Path) -> Option<VersionMeta> {
     let stem = path.file_stem()?.to_str()?;
     let (ts, origin) = stem.split_once('-')?;
-    Some(VersionMeta { ts: ts.parse().ok()?, origin: origin.to_string() })
+    Some(VersionMeta {
+        ts: ts.parse().ok()?,
+        origin: origin.to_string(),
+    })
 }
 
 fn versions_in(dir: &Path) -> Vec<(PathBuf, VersionMeta)> {
@@ -81,7 +84,9 @@ fn versions_in(dir: &Path) -> Vec<(PathBuf, VersionMeta)> {
 
 fn read_snapshot(path: &Path) -> Option<Option<String>> {
     let raw = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str::<Snapshot>(&raw).ok().map(|s| s.content)
+    serde_json::from_str::<Snapshot>(&raw)
+        .ok()
+        .map(|s| s.content)
 }
 
 /// Snapshot `rel`'s current state before a save by `origin`. Must run before
@@ -115,7 +120,9 @@ fn record_inner(
     coalesce: bool,
 ) -> AppResult<()> {
     let dir = page_dir(world_root, rel)?;
-    let current = crate::vault::read_page(vault_root, rel).ok().map(|p| p.content);
+    let current = crate::vault::read_page(vault_root, rel)
+        .ok()
+        .map(|p| p.content);
     let versions = versions_in(&dir);
     if let Some((last_path, last)) = versions.last() {
         if read_snapshot(last_path).as_ref() == Some(&current) {
@@ -140,7 +147,10 @@ fn write_version(
 ) -> AppResult<()> {
     std::fs::create_dir_all(dir)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("create history dir: {e}")))?;
-    for (old, _) in versions.iter().take((versions.len() + 1).saturating_sub(MAX_PER_PAGE)) {
+    for (old, _) in versions
+        .iter()
+        .take((versions.len() + 1).saturating_sub(MAX_PER_PAGE))
+    {
         let _ = std::fs::remove_file(old);
     }
     let mut ts = now_ms();
@@ -174,7 +184,10 @@ pub fn move_history(world_root: &Path, from: &str, to: &str) {
 
 /// Versions for one page, oldest first.
 pub fn list_page(world_root: &Path, rel: &str) -> AppResult<Vec<VersionMeta>> {
-    Ok(versions_in(&page_dir(world_root, rel)?).into_iter().map(|(_, m)| m).collect())
+    Ok(versions_in(&page_dir(world_root, rel)?)
+        .into_iter()
+        .map(|(_, m)| m)
+        .collect())
 }
 
 /// One version's snapshot. `content: None` means the page did not exist yet.
@@ -221,7 +234,11 @@ pub fn recent(world_root: &Path, origin: Option<&str>, limit: usize) -> Vec<Rece
                             .and_then(|d| d.strip_prefix(root).ok())
                             .map(|r| r.to_string_lossy().replace('\\', "/"))
                             .unwrap_or_default();
-                        out.push(RecentVersion { path: rel, ts: m.ts, origin: m.origin });
+                        out.push(RecentVersion {
+                            path: rel,
+                            ts: m.ts,
+                            origin: m.origin,
+                        });
                     }
                 }
             }

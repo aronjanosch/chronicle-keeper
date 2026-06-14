@@ -9,7 +9,7 @@ export const store = {
   apiToken: null,
   shellMode: false,       // true when the Tauri shell injected the API base (browser-dev → false)
 
-  // routing: { name: 'library'|'campaign'|'sessions'|'session'|'newSession'|'summarize'|'settings'|'codex'|'codexEntry'|'page', params }
+  // routing: { name: 'library'|'campaign'|'sessions'|'session'|'newSession'|'summarize'|'settings'|'codex'|'page', params }
   route: { name: 'library', params: {} },
 
   // data
@@ -17,7 +17,6 @@ export const store = {
   campaigns: [],          // [{campaign_id, name, ...detail}]
   campaign: null,         // current campaign detail
   campaignSessions: [],   // sessions of current campaign
-  codexEntries: [],       // structured codex entries for current campaign
   vaultPages: [],
   vaultFolders: [],
   atlasMaps: [],          // [{id, name, kind, seed, parent, page, pins[]}]
@@ -39,6 +38,10 @@ export const store = {
   migrationStatus: null,  // { needs_migration, campaigns } — null = not checked yet
   migrationRunning: false,
   migrationResult: null,  // { ok, campaigns_migrated, sessions_migrated, errors } after run
+
+  // tabs (Phase 15): open codex pages, per world. One tab per path; the
+  // active tab is whichever path the 'page' route currently shows.
+  tabs: [],               // [path]
 
   // transient UI
   op: null,               // { msg, state: ''|'done'|'err' } global op banner
@@ -64,6 +67,13 @@ export function useStore() {
   return store;
 }
 
+// Freshness signals: bump('keeper'|'vault') after a mutation another surface
+// may be showing; screens refetch via a `store.dirty_*` effect dependency.
+export function bump(domain) {
+  const key = `dirty_${domain}`;
+  setState({ [key]: (store[key] || 0) + 1 });
+}
+
 // ── Navigation ────────────────────────────────────────────────────
 const navStack = { back: [], fwd: [] };
 const NAV_CAP = 50;
@@ -76,7 +86,7 @@ export function navigate(name, params = {}) {
     if (navStack.back.length > NAV_CAP) navStack.back.shift();
     navStack.fwd = [];
   }
-  if (name === 'page' && params.path) recordRecentPage(params.path);
+  if (name === 'page' && params.path) { recordRecentPage(params.path); syncTabsForPage(params.path); }
   setState({ route: { name, params }, canNavBack: navStack.back.length > 0, canNavFwd: false });
 }
 
@@ -84,7 +94,7 @@ export function navigateBack() {
   const entry = navStack.back.pop();
   if (!entry) return;
   navStack.fwd.push({ name: store.route.name, params: store.route.params });
-  if (entry.name === 'page' && entry.params.path) recordRecentPage(entry.params.path);
+  if (entry.name === 'page' && entry.params.path) { recordRecentPage(entry.params.path); syncTabsForPage(entry.params.path); }
   setState({ route: entry, canNavBack: navStack.back.length > 0, canNavFwd: navStack.fwd.length > 0 });
 }
 
@@ -92,8 +102,119 @@ export function navigateForward() {
   const entry = navStack.fwd.pop();
   if (!entry) return;
   navStack.back.push({ name: store.route.name, params: store.route.params });
-  if (entry.name === 'page' && entry.params.path) recordRecentPage(entry.params.path);
+  if (entry.name === 'page' && entry.params.path) { recordRecentPage(entry.params.path); syncTabsForPage(entry.params.path); }
   setState({ route: entry, canNavBack: navStack.back.length > 0, canNavFwd: navStack.fwd.length > 0 });
+}
+
+// ── Tabs (Phase 15): per-world page tabs ──────────────────────────
+// Plain navigation re-points the active tab (browser model); ⌘-click and the
+// context menus append background tabs via openInNewTab. Persisted per world.
+const CLOSED_CAP = 20;
+let closedTabs = [];  // reopen stack (paths), reset on world switch
+
+function tabsKey(id) { return `ck_tabs_${id}`; }
+
+export function loadWorldTabs(campaignId) {
+  closedTabs = [];
+  let tabs = [];
+  try { tabs = JSON.parse(localStorage.getItem(tabsKey(campaignId)) || '{}').paths || []; }
+  catch (_) { /* corrupt blob — start fresh */ }
+  setState({ tabs });
+}
+
+function setTabs(tabs) {
+  const id = store.campaign?.campaign_id;
+  if (id) { try { localStorage.setItem(tabsKey(id), JSON.stringify({ paths: tabs })); } catch (_) { /* private mode */ } }
+  setState({ tabs });
+}
+
+export function activePagePath() {
+  return store.route.name === 'page' ? store.route.params.path : null;
+}
+
+// Called before the route flips: re-point the tab we're leaving, or append.
+function syncTabsForPage(path) {
+  const tabs = store.tabs || [];
+  if (tabs.includes(path)) return;
+  const cur = activePagePath();
+  const i = cur ? tabs.indexOf(cur) : -1;
+  setTabs(i >= 0 ? tabs.map((p, j) => (j === i ? path : p)) : [...tabs, path]);
+}
+
+export function openInNewTab(path, { background = false } = {}) {
+  const tabs = store.tabs || [];
+  if (!tabs.includes(path)) setTabs([...tabs, path]);
+  if (!background) navigate('page', { path });
+}
+
+export function closeTab(path) {
+  const tabs = store.tabs || [];
+  const i = tabs.indexOf(path);
+  if (i < 0) return;
+  closedTabs = [...closedTabs.filter((p) => p !== path), path].slice(-CLOSED_CAP);
+  const next = tabs.filter((p) => p !== path);
+  setTabs(next);
+  if (activePagePath() === path) {
+    if (next.length) navigate('page', { path: next[Math.min(i, next.length - 1)] });
+    else navigate('codex', { id: store.campaign?.campaign_id });
+  }
+}
+
+export function closeOtherTabs(path) {
+  const tabs = store.tabs || [];
+  if (!tabs.includes(path)) return;
+  closedTabs = [...closedTabs, ...tabs.filter((p) => p !== path)].slice(-CLOSED_CAP);
+  setTabs([path]);
+  if (activePagePath() && activePagePath() !== path) navigate('page', { path });
+}
+
+export function reopenClosedTab() {
+  const path = closedTabs.pop();
+  if (path) openInNewTab(path);
+}
+
+export function cycleTab(dir) {
+  const tabs = store.tabs || [];
+  if (!tabs.length) return;
+  const i = tabs.indexOf(activePagePath());
+  const next = i < 0 ? (dir > 0 ? 0 : tabs.length - 1) : (i + dir + tabs.length) % tabs.length;
+  navigate('page', { path: tabs[next] });
+}
+
+// ⌘1–⌘8 jump by position; ⌘9 is always the last tab (browser convention).
+export function jumpToTab(n) {
+  const tabs = store.tabs || [];
+  const path = n === 9 ? tabs[tabs.length - 1] : tabs[n - 1];
+  if (path) navigate('page', { path });
+}
+
+export function moveTab(from, to) {
+  const tabs = [...(store.tabs || [])];
+  if (from === to || from < 0 || to < 0 || from >= tabs.length || to >= tabs.length) return;
+  tabs.splice(to, 0, tabs.splice(from, 1)[0]);
+  setTabs(tabs);
+}
+
+// Rename/move cascade: re-point tabs (and the open route) at moved paths.
+// `from`/`to` are either a page path or a folder prefix.
+export function remapTabs(from, to) {
+  const remap = (p) => (p === from ? to : p.startsWith(`${from}/`) ? to + p.slice(from.length) : p);
+  const tabs = (store.tabs || []).map(remap);
+  if (JSON.stringify(tabs) !== JSON.stringify(store.tabs)) setTabs([...new Set(tabs)]);
+  const cur = activePagePath();
+  if (cur && remap(cur) !== cur) {
+    setState({ route: { name: 'page', params: { ...store.route.params, path: remap(cur) } } });
+  }
+}
+
+// Drop tabs whose page no longer exists (delete, trash, bulk, external edits).
+// Called after every vault tree load; never navigates — the page screen shows
+// its own "not found" state if the open page itself vanished.
+export function pruneTabs(pages) {
+  const alive = new Set((pages || []).map((p) => p.path));
+  const tabs = store.tabs || [];
+  const next = tabs.filter((p) => alive.has(p));
+  if (next.length !== tabs.length) setTabs(next);
 }
 
 // ── Recent pages (MRU, per-world, localStorage) ───────────────────

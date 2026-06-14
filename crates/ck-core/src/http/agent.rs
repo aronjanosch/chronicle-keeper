@@ -18,7 +18,10 @@ use futures_util::Stream;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::agent::{self, attachments, brief, chats, checkpoints, memory, AskRequest, Decision, PermissionGate, RealLlm, TurnEvent};
+use crate::agent::{
+    self, attachments, brief, chats, checkpoints, memory, AskRequest, Decision, PermissionGate,
+    RealLlm, TurnEvent,
+};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
@@ -46,7 +49,9 @@ pub async fn get_chat(
     Path((campaign_id, chat_id)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
     let (root, _) = world_cfg(&state, &campaign_id)?;
-    Ok(Json(json!({ "events": chats::load_chat(&root, &chat_id)? })))
+    Ok(Json(
+        json!({ "events": chats::load_chat(&root, &chat_id)? }),
+    ))
 }
 
 pub async fn delete_chat(
@@ -166,7 +171,10 @@ pub async fn add_attachment(
     let (root, _) = world_cfg(&state, &campaign_id)?;
     chats::load_chat(&root, &chat_id)?;
     let att = if let Some(content) = body.get("content").and_then(Value::as_str) {
-        let name = body.get("name").and_then(Value::as_str).unwrap_or("attachment.txt");
+        let name = body
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("attachment.txt");
         attachments::add_file(&root, &chat_id, name, content)?
     } else {
         attachments::add_ref(&root, &chat_id, &body)?
@@ -237,7 +245,9 @@ pub async fn run_brief(
     let st = state.clone();
     tokio::spawn(async move {
         let send = |val: Value| {
-            let ev = Event::default().json_data(&val).unwrap_or_else(|_| Event::default());
+            let ev = Event::default()
+                .json_data(&val)
+                .unwrap_or_else(|_| Event::default());
             let _ = tx.send(ev);
         };
         let llm = RealLlm { resolved };
@@ -288,7 +298,11 @@ impl PermissionGate for SseGate {
     async fn ask(&self, req: AskRequest) -> Decision {
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
-            let mut asks = self.state.agent_asks.lock().unwrap_or_else(|e| e.into_inner());
+            let mut asks = self
+                .state
+                .agent_asks
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             asks.insert(req.id.clone(), (self.campaign_id.clone(), tx));
         }
         let frame = json!({
@@ -298,7 +312,9 @@ impl PermissionGate for SseGate {
             "args": req.args,
             "diff": req.diff,
         });
-        let ev = Event::default().json_data(&frame).unwrap_or_else(|_| Event::default());
+        let ev = Event::default()
+            .json_data(&frame)
+            .unwrap_or_else(|_| Event::default());
         let _ = self.tx.send(ev);
         rx.await.unwrap_or(Decision::Deny)
     }

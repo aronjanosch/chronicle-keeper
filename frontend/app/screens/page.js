@@ -11,6 +11,7 @@ import { Empty, Icon, PageBody, WikilinkHoverCard, splitDoc, joinDoc, parseProps
 import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault, uploadVaultAsset, loadSnippets, loadRelations, copyText } from '../actions.js';
 import { mountEditor } from '../cm.js';
 import { setEditorActive } from '../commands.js';
+import { TabStrip, openPageEvt } from '../tabs.js';
 import { FileTree, buildTree, makeVaultActions, iconForKind, KINDS, dirOf } from './codex.js';
 import { colorForKind } from '../graph.js';
 import { keeperState, openPanel, Conversation } from '../keeperPanel.js';
@@ -41,7 +42,7 @@ function FieldVal({ type, values, pages }) {
     const nl = name.toLowerCase();
     const target = (pages || []).find((p) => p.title.toLowerCase() === nl || (p.aliases || []).includes(nl));
     return html`<span class="ck-prop-tag ${target ? 'ck-prop-link' : ''}" key=${i}
-      onClick=${target ? (e) => { e.stopPropagation(); navigate('page', { path: target.path }); } : null}>${label}</span>`;
+      onClick=${target ? (e) => { e.stopPropagation(); openPageEvt(target.path, e); } : null}>${label}</span>`;
   });
 }
 
@@ -67,6 +68,27 @@ function loadFlag(key, fallback) {
 }
 function saveFlag(key, val) {
   try { localStorage.setItem(key, val ? '1' : '0'); } catch (_) { /* private mode */ }
+}
+
+// Per-tab UI memory (Phase 15C): read/edit mode and scroll offsets per
+// world:path, session-only — the CM6 EditorState cache (cursor, undo) lives
+// in cm.js under the same key.
+const tabUi = new Map();
+function tabUiGet(key) { return tabUi.get(key) || {}; }
+function tabUiSet(key, patch) {
+  const next = { ...tabUiGet(key), ...patch };
+  tabUi.delete(key);
+  tabUi.set(key, next);
+  if (tabUi.size > 40) tabUi.delete(tabUi.keys().next().value);
+}
+function useScrollMemory(uiKey, field) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollTop = tabUiGet(uiKey)[field] || 0;
+    return () => { if (el) tabUiSet(uiKey, { [field]: el.scrollTop }); };
+  }, [uiKey]);
+  return ref;
 }
 
 function RailCard({ icon, title, right, children }) {
@@ -237,7 +259,7 @@ function RelationsCard({ path, pages, relations }) {
         <div style=${{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           ${sources.map((src) => {
             const p = byPath.get(src);
-            return html`<div class="ck-rail-link" key=${src} onClick=${() => navigate('page', { path: src })}>
+            return html`<div class="ck-rail-link" key=${src} onClick=${(e) => openPageEvt(src, e)}>
               <${Icon} name=${iconForKind(p?.kind)} size=${12} className="ck-ink-muted" />
               <span>${p?.title || src}</span>
             </div>`;
@@ -278,7 +300,7 @@ function LocalGraphCard({ path, pages, links, relations }) {
         const x = cx + R * Math.cos(a), y = cy + R * Math.sin(a);
         const p = byPath.get(n.path);
         const label = (p?.title || n.path).slice(0, 14);
-        return html`<g key=${n.path} onClick=${() => navigate('page', { path: n.path })} style=${{ cursor: 'pointer' }}>
+        return html`<g key=${n.path} onClick=${(e) => openPageEvt(n.path, e)} style=${{ cursor: 'pointer' }}>
           <line x1=${cx} y1=${cy} x2=${x} y2=${y}
             stroke=${n.typed ? 'rgba(122,46,31,.5)' : 'rgba(31,24,19,.16)'} stroke-width=${n.typed ? 1.4 : 1} />
           <circle cx=${x} cy=${y} r="4.5" fill=${colorForKind(p?.kind)} />
@@ -307,7 +329,7 @@ function LinkListCard({ title, paths, pages }) {
       onMouseOver=${onMouseOver} onMouseLeave=${() => setHover(null)}>
       ${paths.map((pp) => {
         const p = byPath.get(pp);
-        return html`<div class="ck-rail-link" key=${pp} data-path=${pp} onClick=${() => navigate('page', { path: pp })}>
+        return html`<div class="ck-rail-link" key=${pp} data-path=${pp} onClick=${(e) => openPageEvt(pp, e)}>
           <${Icon} name=${iconForKind(p?.kind)} size=${12} className="ck-ink-muted" />
           <span>${p?.title || pp}</span>
         </div>`;
@@ -371,8 +393,9 @@ export function caretCoords(ta) {
 }
 
 // CodeMirror 6 source editor — edits the whole .md (frontmatter + body) as literal
-// text. Lazy-mounts the vendored bundle into a div; re-keyed on path/reload by parent.
-function CmEditor({ content, pages, snippets, onSave, onCreate, onState, onExtract, onQuote }) {
+// text. The view itself is an app-wide singleton (cm.js); this component just
+// re-parents it and swaps in this tab's cached EditorState (keyed by uiKey).
+function CmEditor({ content, uiKey, pages, snippets, onSave, onCreate, onState, onExtract, onQuote }) {
   const hostRef = useRef(null);
   const pagesRef = useRef(pages); pagesRef.current = pages;
   const snippetsRef = useRef(snippets); snippetsRef.current = snippets;
@@ -380,6 +403,7 @@ function CmEditor({ content, pages, snippets, onSave, onCreate, onState, onExtra
     let ctl = null, dead = false;
     mountEditor(hostRef.current, {
       doc: content,
+      cacheKey: uiKey,
       getPages: () => pagesRef.current,
       getSnippets: () => snippetsRef.current,
       onCreatePage: (name, kind) => onCreate(name, kind),
@@ -434,6 +458,76 @@ function Provenance({ path }) {
   </div>`;
 }
 
+// ⌘F in read mode (edit mode's find is CM's search panel). Marks every match
+// in the rendered page via the CSS Custom Highlight API and steps through
+// them; without the API (old WebKitGTK) it still scrolls match to match.
+function FindBar({ scrollRef, doc, focusTick, onClose }) {
+  const [q, setQ] = useState(() => (window.getSelection()?.toString() || '').split('\n')[0].trim());
+  const [hit, setHit] = useState({ idx: 0, total: 0 });
+  const inputRef = useRef(null);
+  const rangesRef = useRef([]);
+
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, [focusTick]);
+
+  const paint = (ranges, cur) => {
+    if (!window.Highlight || !CSS.highlights) return;
+    CSS.highlights.set('ck-find', new Highlight(...ranges));
+    CSS.highlights.set('ck-find-cur', new Highlight(...(ranges[cur] ? [ranges[cur]] : [])));
+  };
+
+  const goTo = (i) => {
+    const ranges = rangesRef.current;
+    const r = ranges[i];
+    paint(ranges, i);
+    setHit({ idx: i, total: ranges.length });
+    const sc = scrollRef.current;
+    if (!r || !sc) return;
+    const rect = r.getBoundingClientRect();
+    sc.scrollTop += rect.top - sc.getBoundingClientRect().top - sc.clientHeight / 3;
+  };
+
+  useEffect(() => {
+    const sc = scrollRef.current;
+    const needle = q.toLowerCase();
+    const ranges = [];
+    if (sc && needle) {
+      const walker = document.createTreeWalker(sc, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const hay = node.nodeValue.toLowerCase();
+        for (let at = hay.indexOf(needle); at !== -1; at = hay.indexOf(needle, at + needle.length)) {
+          const r = document.createRange();
+          r.setStart(node, at);
+          r.setEnd(node, at + needle.length);
+          ranges.push(r);
+        }
+      }
+    }
+    rangesRef.current = ranges;
+    goTo(0);
+  }, [q, doc]);
+
+  useEffect(() => () => { CSS.highlights?.delete('ck-find'); CSS.highlights?.delete('ck-find-cur'); }, []);
+
+  const step = (dir) => {
+    const n = rangesRef.current.length;
+    if (n) goTo((hit.idx + dir + n) % n);
+  };
+  const onKey = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+  };
+
+  return html`<div class="ck-findbar">
+    <${Icon} name="search" size=${13} className="ck-ink-muted" />
+    <input ref=${inputRef} value=${q} placeholder="Find in page" spellcheck="false"
+      onInput=${(e) => setQ(e.target.value)} onKeyDown=${onKey} />
+    <span class="ck-findbar-count">${q ? `${hit.total ? hit.idx + 1 : 0}/${hit.total}` : ''}</span>
+    <button onClick=${() => step(-1)} title="Previous (⇧↵)"><${Icon} name="chev-u" size=${13} /></button>
+    <button onClick=${() => step(1)} title="Next (↵)"><${Icon} name="chev-d" size=${13} /></button>
+    <button onClick=${onClose} title="Close (esc)"><${Icon} name="x" size=${13} /></button>
+  </div>`;
+}
+
 function ReadView({ page, path, pages, links, relations, schemas, atlasMaps, campaignId, onSave, onBroken, railHidden }) {
   const { fm, body } = splitDoc(page.content);
   const props = parseProps(fm);
@@ -445,7 +539,7 @@ function ReadView({ page, path, pages, links, relations, schemas, atlasMaps, cam
   const words = prose.trim() ? prose.trim().split(/\s+/).length : 0;
   const edited = meta?.modified ? new Date(meta.modified * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : null;
   const outline = useMemo(() => parseOutline(prose), [prose]);
-  const scrollRef = useRef(null);
+  const scrollRef = useScrollMemory(`${campaignId}:${path}`, 'readScroll');
   // navigate('page', { path, rail: 'chat' }) (e.g. "Ask Keeper" in the
   // Explorer) lands with the requested rail tab open.
   const routeRail = useStore().route.params?.rail;
@@ -453,17 +547,29 @@ function ReadView({ page, path, pages, links, relations, schemas, atlasMaps, cam
   useEffect(() => { if (routeRail) setRailTab(routeRail); }, [routeRail]);
   const [railW, onRailResize] = useSidebarWidth('ck_page_rail_w', 300, { min: 240, max: 560, fromRight: true });
 
+  // ⌘F / Edit → Find in Page. The tick refocuses (and reselects) the input
+  // when the bar is already open.
+  const [findTick, setFindTick] = useState(0);
+  useEffect(() => {
+    const onCmd = (e) => { if (e.detail === 'find') setFindTick((t) => t + 1); };
+    window.addEventListener('ck:cmd', onCmd);
+    return () => window.removeEventListener('ck:cmd', onCmd);
+  }, []);
+
   const bannerUrl = useAsset(campaignId, bannerAsset(props));
 
   return html`<div style=${{ flex: 1, display: 'flex', minWidth: 0, minHeight: 0 }}>
-    <div ref=${scrollRef} style=${{ flex: 1, overflow: 'auto', background: 'var(--paper)', padding: '0 0 64px', minWidth: 0 }}>
-      ${bannerUrl && html`<img class="ck-page-banner" src=${bannerUrl} alt="" />`}
-      <div style=${{ maxWidth: 680, margin: '0 auto', padding: `${bannerUrl ? 24 : 34}px 52px 0` }}>
-        <${Provenance} path=${path} />
-        <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--burgundy)', marginTop: 16 }}>${eyebrow}</div>
-        <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 38, fontWeight: 500, letterSpacing: '-0.02em', lineHeight: 1.08, color: 'var(--ink)', marginTop: 6 }}>${page.title}</h1>
-        <div style=${{ height: 1, background: 'var(--rule)', margin: '26px 0' }} />
-        <${PageBody} text=${prose} pages=${pages} onBroken=${onBroken} />
+    <div style=${{ flex: 1, position: 'relative', display: 'flex', minWidth: 0, minHeight: 0 }}>
+      ${findTick > 0 && html`<${FindBar} scrollRef=${scrollRef} doc=${page.content} focusTick=${findTick} onClose=${() => setFindTick(0)} />`}
+      <div ref=${scrollRef} style=${{ flex: 1, overflow: 'auto', background: 'var(--paper)', padding: '0 0 64px', minWidth: 0 }}>
+        ${bannerUrl && html`<img class="ck-page-banner" src=${bannerUrl} alt="" />`}
+        <div style=${{ maxWidth: 680, margin: '0 auto', padding: `${bannerUrl ? 24 : 34}px 52px 0` }}>
+          <${Provenance} path=${path} />
+          <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--burgundy)', marginTop: 16 }}>${eyebrow}</div>
+          <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 38, fontWeight: 500, letterSpacing: '-0.02em', lineHeight: 1.08, color: 'var(--ink)', marginTop: 6 }}>${page.title}</h1>
+          <div style=${{ height: 1, background: 'var(--rule)', margin: '26px 0' }} />
+          <${PageBody} text=${prose} pages=${pages} onBroken=${onBroken} />
+        </div>
       </div>
     </div>
     ${!railHidden && html`<aside style=${{ width: railW, flex: `0 0 ${railW}px`, position: 'relative', borderLeft: '1px solid var(--rule-soft)', background: 'var(--paper)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -513,10 +619,19 @@ function RailChat() {
   return html`<${Conversation} k=${k} />`;
 }
 
+// Edit-mode scroller with per-tab scroll memory (read mode's lives in ReadView).
+function EditScroll({ uiKey, children }) {
+  const ref = useScrollMemory(uiKey, 'editScroll');
+  return html`<div ref=${ref} style=${{ flex: 1, overflow: 'auto', background: 'var(--paper)', padding: '34px 0 64px', minWidth: 0 }}>
+    ${children}
+  </div>`;
+}
+
 export function PageScreen() {
   const store = useStore();
   const c = store.campaign;
   const path = store.route.params.path;
+  const uiKey = `${c?.campaign_id}:${path}`;
 
   const [page, setPage] = useState(null);
   const [missing, setMissing] = useState(false);
@@ -549,36 +664,43 @@ export function PageScreen() {
     if (c.vault_path && !(store.atlasMaps || []).length) loadAtlasMaps(c.campaign_id);
   }, [c?.campaign_id]);
 
+  // Restore this tab's last mode (15C); first visit lands in read mode.
+  const changeMode = (m) => { tabUiSet(uiKey, { mode: m }); setMode(m); };
+
   useEffect(() => {
     let cancelled = false;
-    setPage(null); setMissing(false); setMode('read');
+    setPage(null); setMissing(false); setMode(tabUiGet(uiKey).mode || 'read');
     readVaultPage(path)
       .then((p) => { if (!cancelled) { setPage(p); setSaveState('saved'); } })
       .catch(() => { if (!cancelled) setMissing(true); });
     return () => { cancelled = true; };
   }, [path, c?.campaign_id]);
 
-  // External edits (Obsidian, Finder): refresh the tree, and reload the open
-  // page unless the editor holds unsaved changes.
+  // External edits (Obsidian, Finder) and Keeper writes: reload the open page
+  // unless the editor holds unsaved changes.
+  const refreshFromDisk = async () => {
+    if (saveRef.current !== 'saved') return;
+    try {
+      const p = await readVaultPage(path);
+      const cur = pageRef.current;
+      if (cur && cur.content === p.content) return;
+      setPage(p);
+      setMissing(false);
+      setRev((r) => r + 1);
+    } catch (_) {
+      if (!pageRef.current) return;
+      setPage(null);
+      setMissing(true);
+    }
+  };
   useEffect(() => {
     if (!c?.campaign_id) return undefined;
-    return watchVault(c.campaign_id, async () => {
+    return watchVault(c.campaign_id, () => {
       loadVaultTree(c.campaign_id);
-      if (saveRef.current !== 'saved') return;
-      try {
-        const p = await readVaultPage(path);
-        const cur = pageRef.current;
-        if (cur && cur.content === p.content) return;
-        setPage(p);
-        setMissing(false);
-        setRev((r) => r + 1);
-      } catch (_) {
-        if (!pageRef.current) return;
-        setPage(null);
-        setMissing(true);
-      }
+      refreshFromDisk();
     });
   }, [path, c?.campaign_id]);
+  useEffect(() => { if (store.dirty_vault) refreshFromDisk(); }, [store.dirty_vault]);
 
   if (!c) { navigate('library'); return null; }
 
@@ -603,8 +725,8 @@ export function PageScreen() {
 
   if (missing) {
     return html`<${Shell}
-      sidebar=${html`<${FileTree} campaign=${c} tree=${tree} active=${null} onOpen=${(p) => navigate('page', { path: p.path })} act=${act} />`}
-      topbar=${html`<${Topbar} crumbs=${crumbs} />`} bodyStyle=${{ padding: 40 }}>
+      sidebar=${html`<${FileTree} campaign=${c} tree=${tree} active=${null} onOpen=${(p, e) => openPageEvt(p.path, e)} act=${act} />`}
+      topbar=${html`<${Topbar} crumbs=${crumbs} />`} tabstrip=${html`<${TabStrip} />`} bodyStyle=${{ padding: 40 }}>
       <${Empty} icon="scroll" title="Page not found">
         <a onClick=${() => navigate('codex', { id: c.campaign_id })} style=${{ color: 'var(--burgundy)', cursor: 'pointer' }}>Back to the codex</a>.
       </${Empty}>
@@ -629,10 +751,11 @@ export function PageScreen() {
         style=${{ padding: '6px 8px', color: zen ? 'var(--burgundy)' : 'var(--ink-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
         <${Icon} name="sun" size=${14} />
       </button>`}
-      <${ModeToggle} mode=${mode} onChange=${setMode} />
+      <${ModeToggle} mode=${mode} onChange=${changeMode} />
       ${pageLeaf && html`<${KebabMenu} items=${[
         { icon: 'edit', label: 'Rename', onClick: () => act.renamePage(pageLeaf) },
         { icon: 'folder', label: 'Move…', onClick: () => act.movePage(pageLeaf) },
+        { icon: 'sparkle', label: 'Promote to kind…', onClick: () => act.promotePage(pageLeaf) },
         { icon: 'time', label: 'History', onClick: () => openModal('pageHistory', { path, onRestored: () => readVaultPage(path).then(setPage).catch(() => {}) }) },
         { icon: 'trash', label: 'Move to trash', danger: true, onClick: () => act.deletePage(pageLeaf) },
       ]} />`}
@@ -663,26 +786,26 @@ export function PageScreen() {
       ...(store.keeper || {}), open: true, draft,
     } });
     navigate('page', { path, rail: 'chat' });
-    setMode('read');
+    changeMode('read');
   };
 
   return html`<${Shell}
     sidebar=${mode === 'edit' && zen ? null
-      : html`<${FileTree} campaign=${c} tree=${tree} active=${(page && page.title) || null} onOpen=${(p) => navigate('page', { path: p.path })} act=${act} />`}
-    topbar=${topbar} bodyStyle=${{ padding: 0 }}>
+      : html`<${FileTree} campaign=${c} tree=${tree} active=${(page && page.title) || null} onOpen=${(p, e) => openPageEvt(p.path, e)} act=${act} />`}
+    topbar=${topbar} tabstrip=${html`<${TabStrip} />`} bodyStyle=${{ padding: 0 }}>
     <div style=${{ display: 'flex', height: '100%', minHeight: 0 }}>
       ${page === null
         ? html`<div style=${{ flex: 1, padding: 40, color: 'var(--ink-faint)', fontStyle: 'italic' }}>Loading…</div>`
         : mode === 'read'
           ? html`<${ReadView} page=${page} path=${path} pages=${pages} links=${(store.vaultLinks || {}).links} relations=${store.vaultRelations} schemas=${store.kindSchemas} atlasMaps=${store.atlasMaps} campaignId=${c.campaign_id} onSave=${doSave} onBroken=${openBroken} railHidden=${railHidden} />`
-          : html`<div style=${{ flex: 1, overflow: 'auto', background: 'var(--paper)', padding: '34px 0 64px', minWidth: 0 }}>
+          : html`<${EditScroll} uiKey=${uiKey}>
               <div style=${{ maxWidth: 720, margin: '0 auto', padding: '0 52px' }}>
                 <${Provenance} path=${path} />
-                <${CmEditor} key=${'cm:' + rev + ':' + path} content=${page.content} pages=${pages} snippets=${store.snippets}
+                <${CmEditor} key=${'cm:' + rev + ':' + path} content=${page.content} uiKey=${uiKey} pages=${pages} snippets=${store.snippets}
                   onSave=${doSave} onCreate=${(name, kind) => createVaultPage(name, kind || 'lore', '')} onState=${setSaveState}
                   onExtract=${extractToPage} onQuote=${quoteToKeeper} />
               </div>
-            </div>`}
+            </${EditScroll}>`}
     </div>
   </${Shell}>`;
 }

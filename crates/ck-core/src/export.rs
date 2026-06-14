@@ -230,6 +230,8 @@ mod tests {
     fn zip_names(path: &str) -> Vec<String> {
         let f = std::fs::File::open(path).unwrap();
         let mut z = zip::ZipArchive::new(f).unwrap();
-        (0..z.len()).map(|i| z.by_index(i).unwrap().name().to_string()).collect()
+        (0..z.len())
+            .map(|i| z.by_index(i).unwrap().name().to_string())
+            .collect()
     }
 }

@@ -58,11 +58,9 @@ function NavItem({ icon, label, count, active, indent, onClick }) {
     ${count != null && html`<span style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, color: active ? 'var(--burgundy)' : 'var(--ink-faint)' }}>${count}</span>`}
   </div>`;
 }
-function codexCount(_campaign) {
-  const vaultCount = (store.vaultPages || []).length;
-  if (_campaign?.vault_path) return vaultCount > 0 ? vaultCount : null;
-  const count = (store.codexEntries || []).length;
-  return count > 0 ? count : null;
+function codexCount() {
+  const n = (store.vaultPages || []).length;
+  return n > 0 ? n : null;
 }
 function sessionsCount() {
   const n = (store.campaignSessions || []).length;
@@ -210,10 +208,11 @@ export function Topbar({ crumbs = [], right }) {
   </div>`;
 }
 
-export function Shell({ sidebar, topbar, children, bodyStyle = {} }) {
+export function Shell({ sidebar, topbar, tabstrip, children, bodyStyle = {} }) {
   return html`<div class="ck" style=${{ display: 'flex', width: '100%', height: '100%', background: 'var(--paper)' }}>
     ${sidebar}
     <main style=${{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+      ${tabstrip}
       ${topbar}
       <div style=${{ flex: 1, overflow: 'auto', padding: '24px 28px', ...bodyStyle }}>${children}</div>
     </main>

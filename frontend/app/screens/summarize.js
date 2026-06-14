@@ -151,14 +151,14 @@ export function SummarizeScreen({ store }) {
           </div>
         </div>
 
-        <!-- Codex context — entries are fed into the prompt automatically (see prompts.rs) -->
+        <!-- Codex context — page summaries are fed into the prompt automatically (see prompts.rs) -->
         <div style=${{ marginTop: 22 }}>
           <${Label}>Codex context</${Label}>
           <div style=${{ padding: '12px 14px', background: 'var(--paper-deep)', border: '1px solid var(--rule-soft)', borderRadius: 6, fontSize: 12.5, color: 'var(--ink-muted)', display: 'flex', alignItems: 'center', gap: 10 }}>
             <${Icon} name="book" size=${14} />
-            <span>${(store.codexEntries?.length || 0) > 0
-              ? `${store.codexEntries.length} codex ${store.codexEntries.length === 1 ? 'entry is' : 'entries are'} fed to the summarizer automatically.`
-              : 'Codex entries for this world are fed to the summarizer automatically. None yet.'}</span>
+            <span>${(store.vaultPages?.length || 0) > 0
+              ? `${store.vaultPages.length} codex ${store.vaultPages.length === 1 ? 'page is' : 'pages are'} fed to the summarizer automatically.`
+              : 'Codex pages for this world are fed to the summarizer automatically. None yet.'}</span>
           </div>
         </div>
       </div>

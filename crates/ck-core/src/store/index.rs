@@ -107,7 +107,11 @@ pub fn open_index(vault: &Path) -> AppResult<Connection> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     let version: Option<String> = conn
-        .query_row("SELECT value FROM index_meta WHERE key = 'schema_version'", [], |r| r.get(0))
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'schema_version'",
+            [],
+            |r| r.get(0),
+        )
         .ok();
     if version.as_deref() != Some(SCHEMA_VERSION) {
         recreate(&conn)?;
@@ -139,8 +143,8 @@ fn recreate(conn: &Connection) -> AppResult<()> {
 
 #[derive(Debug)]
 pub struct RawLink {
-    pub link_text: String,   // raw inside [[ ]], incl. #heading and |label
-    pub target_name: String, // normalized name segment
+    pub link_text: String,       // raw inside [[ ]], incl. #heading and |label
+    pub target_name: String,     // normalized name segment
     pub heading: Option<String>, // anchor slug if [[Page#Heading]]
 }
 
@@ -156,7 +160,7 @@ pub struct ParsedPage {
     pub headings: Vec<(i64, String, String)>, // (level, text, anchor)
     pub links: Vec<RawLink>,
     pub relations: Vec<(String, String)>, // typed relations: (predicate, [[link]] inner text)
-    pub media: Vec<String>, // ![[file.ext]] embed targets (name only, no |size)
+    pub media: Vec<String>,               // ![[file.ext]] embed targets (name only, no |size)
     pub content_hash: String,
     pub modified_at: i64,
 }
@@ -174,7 +178,12 @@ fn is_media_target(name: &str) -> bool {
 pub(crate) fn normalize_name(s: &str) -> String {
     use unicode_normalization::UnicodeNormalization;
     // NFC: macOS stores filenames NFD, link text is typically NFC.
-    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase().nfc().collect()
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+        .nfc()
+        .collect()
 }
 
 fn anchor_of(text: &str) -> String {
@@ -292,7 +301,9 @@ pub fn parse_page(vault_root: &Path, abs: &Path, content: &str) -> ParsedPage {
                 let val = if v.len() == 1 {
                     serde_json::Value::String(v[0].clone())
                 } else {
-                    serde_json::Value::Array(v.iter().cloned().map(serde_json::Value::String).collect())
+                    serde_json::Value::Array(
+                        v.iter().cloned().map(serde_json::Value::String).collect(),
+                    )
                 };
                 (k.clone(), val)
             })
@@ -319,7 +330,10 @@ pub fn parse_page(vault_root: &Path, abs: &Path, content: &str) -> ParsedPage {
     // `[[wikilink]]` — the key is the predicate (`located_in: "[[Ashfall]]"`).
     let mut relations: Vec<(String, String)> = Vec::new();
     for (key, values) in &fm {
-        if matches!(key.as_str(), "kind" | "aliases" | "tags" | "summary" | "cssclasses" | "publish" | "permalink") {
+        if matches!(
+            key.as_str(),
+            "kind" | "aliases" | "tags" | "summary" | "cssclasses" | "publish" | "permalink"
+        ) {
             continue;
         }
         for v in values {
@@ -354,7 +368,9 @@ pub fn parse_page(vault_root: &Path, abs: &Path, content: &str) -> ParsedPage {
     ParsedPage {
         path: rel,
         title,
-        kind: vault::fm_get(&fm, "kind").filter(|s| !s.is_empty()).map(str::to_string),
+        kind: vault::fm_get(&fm, "kind")
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
         summary,
         frontmatter_json,
         aliases,
@@ -474,7 +490,11 @@ pub fn rebuild(conn: &Connection, vault_root: &Path) -> AppResult<()> {
         let parsed = parse_page(vault_root, abs, &content);
         seen.push(parsed.path.clone());
         let existing: Option<String> = tx
-            .query_row("SELECT content_hash FROM pages WHERE path = ?1", params![parsed.path], |r| r.get(0))
+            .query_row(
+                "SELECT content_hash FROM pages WHERE path = ?1",
+                params![parsed.path],
+                |r| r.get(0),
+            )
             .ok();
         if existing.as_deref() == Some(parsed.content_hash.as_str()) {
             continue;
@@ -594,16 +614,25 @@ pub struct LinkRow {
 }
 
 pub fn all_links(conn: &Connection) -> AppResult<Vec<LinkRow>> {
-    let mut stmt =
-        conn.prepare("SELECT source_path, target_path, link_text FROM page_links ORDER BY source_path")?;
+    let mut stmt = conn.prepare(
+        "SELECT source_path, target_path, link_text FROM page_links ORDER BY source_path",
+    )?;
     let rows = stmt.query_map([], |r| {
-        Ok(LinkRow { source_path: r.get(0)?, target_path: r.get(1)?, link_text: r.get(2)? })
+        Ok(LinkRow {
+            source_path: r.get(0)?,
+            target_path: r.get(1)?,
+            link_text: r.get(2)?,
+        })
     })?;
     Ok(rows.filter_map(Result::ok).collect())
 }
 
 pub fn unresolved_count(conn: &Connection) -> AppResult<i64> {
-    Ok(conn.query_row("SELECT COUNT(*) FROM page_links WHERE target_path IS NULL", [], |r| r.get(0))?)
+    Ok(conn.query_row(
+        "SELECT COUNT(*) FROM page_links WHERE target_path IS NULL",
+        [],
+        |r| r.get(0),
+    )?)
 }
 
 /// Pages with no inbound resolved link. (Session mentions not yet considered.)
@@ -650,7 +679,11 @@ pub fn search(conn: &Connection, q: &str) -> AppResult<Vec<SearchHit>> {
     search_faceted(conn, q, &SearchFacets::default())
 }
 
-pub fn search_faceted(conn: &Connection, q: &str, facets: &SearchFacets) -> AppResult<Vec<SearchHit>> {
+pub fn search_faceted(
+    conn: &Connection,
+    q: &str,
+    facets: &SearchFacets,
+) -> AppResult<Vec<SearchHit>> {
     let q = q.trim();
     if q.is_empty() {
         return Ok(Vec::new());
@@ -709,9 +742,8 @@ pub fn search_faceted(conn: &Connection, q: &str, facets: &SearchFacets) -> AppR
 }
 
 pub fn tag_counts(conn: &Connection) -> AppResult<Vec<(String, i64)>> {
-    let mut stmt = conn.prepare(
-        "SELECT tag, COUNT(*) FROM page_tags GROUP BY tag ORDER BY COUNT(*) DESC, tag",
-    )?;
+    let mut stmt = conn
+        .prepare("SELECT tag, COUNT(*) FROM page_tags GROUP BY tag ORDER BY COUNT(*) DESC, tag")?;
     let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
     Ok(rows.filter_map(Result::ok).collect())
 }
@@ -775,7 +807,12 @@ pub struct ScanError {
 
 // Non-md vault files (for media resolution) + sync-conflict filenames,
 // in one walk. Same scope rules as collect_md.
-fn collect_diag_files(dir: &Path, root: &Path, media: &mut Vec<String>, conflicts: &mut Vec<String>) {
+fn collect_diag_files(
+    dir: &Path,
+    root: &Path,
+    media: &mut Vec<String>,
+    conflicts: &mut Vec<String>,
+) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -836,7 +873,10 @@ pub struct QueryHit {
 // `[[Ashfall|the city]]` / `"Ashfall"` / `Ashfall` → comparable key.
 fn query_norm(v: &str) -> String {
     let v = v.trim().trim_matches('"').trim();
-    let v = v.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")).unwrap_or(v);
+    let v = v
+        .strip_prefix("[[")
+        .and_then(|s| s.strip_suffix("]]"))
+        .unwrap_or(v);
     let v = v.split('|').next().unwrap_or(v);
     let v = v.split('#').next().unwrap_or(v);
     normalize_name(v)
@@ -847,7 +887,11 @@ type ParsedQuery = (Vec<String>, Vec<String>, Vec<Cond>);
 
 fn parse_query(q: &str) -> Result<ParsedQuery, String> {
     let s = q.trim();
-    let s = if s.len() >= 4 && s[..4].eq_ignore_ascii_case("list") { s[4..].trim() } else { s };
+    let s = if s.len() >= 4 && s[..4].eq_ignore_ascii_case("list") {
+        s[4..].trim()
+    } else {
+        s
+    };
     if s.is_empty() {
         return Err("Empty query — try `LIST FROM #npc`".into());
     }
@@ -885,7 +929,10 @@ fn parse_query(q: &str) -> Result<ParsedQuery, String> {
         let mut rest = part.trim();
         loop {
             let lc = rest.to_lowercase();
-            match lc.find(" and ").filter(|i| rest.get(..*i).is_some() && rest.get(i + 5..).is_some()) {
+            match lc
+                .find(" and ")
+                .filter(|i| rest.get(..*i).is_some() && rest.get(i + 5..).is_some())
+            {
                 Some(i) => {
                     out.push(rest[..i].trim().to_string());
                     rest = &rest[i + 5..];
@@ -963,7 +1010,11 @@ pub fn run_query(conn: &Connection, q: &str) -> AppResult<Result<Vec<QueryHit>, 
     for (path, title, kind, summary, fm_json) in rows.filter_map(Result::ok) {
         let page_tags = tag_map.get(&path).cloned().unwrap_or_default();
         // a page tag matches the query tag or any parent segment (`character/ranger` matches #character)
-        if !tags.iter().all(|t| page_tags.iter().any(|pt| pt == t || pt.starts_with(&format!("{t}/")))) {
+        if !tags.iter().all(|t| {
+            page_tags
+                .iter()
+                .any(|pt| pt == t || pt.starts_with(&format!("{t}/")))
+        }) {
             continue;
         }
         if !kinds.is_empty() && !kinds.iter().any(|k| kind.as_deref() == Some(k)) {
@@ -973,9 +1024,11 @@ pub fn run_query(conn: &Connection, q: &str) -> AppResult<Result<Vec<QueryHit>, 
         let field_vals = |f: &str| -> Vec<String> {
             match &fm[f] {
                 serde_json::Value::String(s) => vec![query_norm(s)],
-                serde_json::Value::Array(a) => {
-                    a.iter().filter_map(|v| v.as_str()).map(query_norm).collect()
-                }
+                serde_json::Value::Array(a) => a
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .map(query_norm)
+                    .collect(),
                 _ => Vec::new(),
             }
         };
@@ -987,7 +1040,12 @@ pub fn run_query(conn: &Connection, q: &str) -> AppResult<Result<Vec<QueryHit>, 
         if !ok {
             continue;
         }
-        hits.push(QueryHit { path, title, kind, summary });
+        hits.push(QueryHit {
+            path,
+            title,
+            kind,
+            summary,
+        });
     }
     Ok(Ok(hits))
 }
@@ -1001,7 +1059,10 @@ pub fn diagnostics(conn: &Connection, vault_root: &Path) -> AppResult<Diagnostic
              ORDER BY source_path, link_text",
         )?;
         let rows = stmt.query_map([], |r| {
-            Ok(BrokenLink { source_path: r.get(0)?, link_text: r.get(1)? })
+            Ok(BrokenLink {
+                source_path: r.get(0)?,
+                link_text: r.get(1)?,
+            })
         })?;
         rows.filter_map(Result::ok).collect()
     };
@@ -1011,13 +1072,22 @@ pub fn diagnostics(conn: &Connection, vault_root: &Path) -> AppResult<Diagnostic
              (SELECT 1 FROM page_links l WHERE l.target_path = p.path) ORDER BY path",
         )?;
         let rows = stmt.query_map([], |r| {
-            Ok(OrphanPage { path: r.get(0)?, title: r.get(1)?, kind: r.get(2)? })
+            Ok(OrphanPage {
+                path: r.get(0)?,
+                title: r.get(1)?,
+                kind: r.get(2)?,
+            })
         })?;
         rows.filter_map(Result::ok).collect()
     };
     let scan_errors = {
         let mut stmt = conn.prepare("SELECT path, error FROM scan_errors ORDER BY path")?;
-        let rows = stmt.query_map([], |r| Ok(ScanError { path: r.get(0)?, error: r.get(1)? }))?;
+        let rows = stmt.query_map([], |r| {
+            Ok(ScanError {
+                path: r.get(0)?,
+                error: r.get(1)?,
+            })
+        })?;
         rows.filter_map(Result::ok).collect()
     };
 
@@ -1031,24 +1101,40 @@ pub fn diagnostics(conn: &Connection, vault_root: &Path) -> AppResult<Diagnostic
         s.to_lowercase().nfc().collect()
     };
     let rel_set: std::collections::HashSet<String> = files.iter().map(|f| norm(f)).collect();
-    let name_set: std::collections::HashSet<String> =
-        files.iter().filter_map(|f| f.rsplit('/').next()).map(norm).collect();
+    let name_set: std::collections::HashSet<String> = files
+        .iter()
+        .filter_map(|f| f.rsplit('/').next())
+        .map(norm)
+        .collect();
     let broken_media = {
-        let mut stmt =
-            conn.prepare("SELECT source_path, target FROM page_media ORDER BY source_path, target")?;
+        let mut stmt = conn
+            .prepare("SELECT source_path, target FROM page_media ORDER BY source_path, target")?;
         let rows = stmt.query_map([], |r| {
-            Ok(BrokenMedia { source_path: r.get(0)?, target: r.get(1)? })
+            Ok(BrokenMedia {
+                source_path: r.get(0)?,
+                target: r.get(1)?,
+            })
         })?;
         rows.filter_map(Result::ok)
             .filter(|m| {
                 let t = norm(&m.target);
                 !rel_set.contains(&t)
-                    && !t.rsplit('/').next().map(|n| name_set.contains(n)).unwrap_or(false)
+                    && !t
+                        .rsplit('/')
+                        .next()
+                        .map(|n| name_set.contains(n))
+                        .unwrap_or(false)
             })
             .collect()
     };
 
-    Ok(Diagnostics { broken_links, orphans, broken_media, scan_errors, conflicts })
+    Ok(Diagnostics {
+        broken_links,
+        orphans,
+        broken_media,
+        scan_errors,
+        conflicts,
+    })
 }
 
 /// Sources linking to `rel` (resolved), with the raw link text — rename uses
@@ -1152,7 +1238,10 @@ mod tests {
         assert_eq!(p.kind.as_deref(), Some("npc"));
         assert_eq!(p.aliases, ["aragorn", "strider"]);
         assert_eq!(p.tags, ["character/ranger"]);
-        assert_eq!(p.headings.iter().map(|h| h.2.as_str()).collect::<Vec<_>>(), ["aragorn", "background"]);
+        assert_eq!(
+            p.headings.iter().map(|h| h.2.as_str()).collect::<Vec<_>>(),
+            ["aragorn", "background"]
+        );
         let names: Vec<&str> = p.links.iter().map(|l| l.target_name.as_str()).collect();
         assert_eq!(names, ["rivendell", "gandalf"]);
         assert_eq!(p.links[0].heading.as_deref(), Some("geography"));
@@ -1164,7 +1253,11 @@ mod tests {
     fn relations_index_resolve_rename_and_query() {
         let dir = tmp_vault("relations");
         write(&dir, "Ashfall.md", "---\nkind: place\n---\n# Ashfall\n");
-        write(&dir, "Kel.md", "---\nkind: npc\nlocation: \"[[Ashfall|the city]]\"\ntags: [npc]\n---\n# Kel\n");
+        write(
+            &dir,
+            "Kel.md",
+            "---\nkind: npc\nlocation: \"[[Ashfall|the city]]\"\ntags: [npc]\n---\n# Kel\n",
+        );
         write(
             &dir,
             "Mara.md",
@@ -1179,9 +1272,22 @@ mod tests {
                 .find(|r| r.source_path == src && r.predicate == pred && r.link_text == txt)
                 .unwrap()
         };
-        assert_eq!(find("Mara.md", "location", "Ashfall").target_path.as_deref(), Some("Ashfall.md"));
-        assert_eq!(find("Kel.md", "location", "Ashfall|the city").target_path.as_deref(), Some("Ashfall.md"));
-        assert_eq!(find("Mara.md", "allies", "Kel").target_path.as_deref(), Some("Kel.md"));
+        assert_eq!(
+            find("Mara.md", "location", "Ashfall")
+                .target_path
+                .as_deref(),
+            Some("Ashfall.md")
+        );
+        assert_eq!(
+            find("Kel.md", "location", "Ashfall|the city")
+                .target_path
+                .as_deref(),
+            Some("Ashfall.md")
+        );
+        assert_eq!(
+            find("Mara.md", "allies", "Kel").target_path.as_deref(),
+            Some("Kel.md")
+        );
         assert_eq!(find("Mara.md", "allies", "Missing").target_path, None);
 
         // rename rewrite picks up frontmatter-only linkers
@@ -1190,13 +1296,19 @@ mod tests {
         assert!(srcs.iter().any(|(s, _)| s == "Kel.md"));
 
         // dataview-lite
-        let hits = run_query(&conn, "LIST FROM #npc WHERE location = [[Ashfall]]").unwrap().unwrap();
+        let hits = run_query(&conn, "LIST FROM #npc WHERE location = [[Ashfall]]")
+            .unwrap()
+            .unwrap();
         let titles: Vec<&str> = hits.iter().map(|h| h.title.as_str()).collect();
         assert_eq!(titles, ["Kel", "Mara"]);
-        let hits = run_query(&conn, "FROM kind:npc WHERE allies contains kel").unwrap().unwrap();
+        let hits = run_query(&conn, "FROM kind:npc WHERE allies contains kel")
+            .unwrap()
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].title, "Mara");
-        let hits = run_query(&conn, "LIST FROM kind:npc WHERE status != alive").unwrap().unwrap();
+        let hits = run_query(&conn, "LIST FROM kind:npc WHERE status != alive")
+            .unwrap()
+            .unwrap();
         assert_eq!(hits[0].title, "Kel"); // absent field passes !=
         assert!(run_query(&conn, "LIST nonsense").unwrap().is_err());
         std::fs::remove_dir_all(&dir).ok();
@@ -1205,20 +1317,37 @@ mod tests {
     #[test]
     fn rebuild_resolves_and_breaks_links() {
         let dir = tmp_vault("rebuild");
-        write(&dir, "Aragorn.md", "---\nkind: npc\naliases:\n  - Strider\n---\nSee [[Rivendell]] and [[Nowhere]].\n");
-        write(&dir, "Rivendell.md", "---\nkind: place\n---\nHome of [[Strider]].\n## Geography\nHills.\n");
+        write(
+            &dir,
+            "Aragorn.md",
+            "---\nkind: npc\naliases:\n  - Strider\n---\nSee [[Rivendell]] and [[Nowhere]].\n",
+        );
+        write(
+            &dir,
+            "Rivendell.md",
+            "---\nkind: place\n---\nHome of [[Strider]].\n## Geography\nHills.\n",
+        );
         let conn = open_index(&dir).unwrap();
         rebuild(&conn, &dir).unwrap();
 
         let links = all_links(&conn).unwrap();
         assert_eq!(links.len(), 3);
         let find = |src: &str, txt: &str| {
-            links.iter().find(|l| l.source_path == src && l.link_text == txt).unwrap()
+            links
+                .iter()
+                .find(|l| l.source_path == src && l.link_text == txt)
+                .unwrap()
         };
-        assert_eq!(find("Aragorn.md", "Rivendell").target_path.as_deref(), Some("Rivendell.md"));
+        assert_eq!(
+            find("Aragorn.md", "Rivendell").target_path.as_deref(),
+            Some("Rivendell.md")
+        );
         assert_eq!(find("Aragorn.md", "Nowhere").target_path, None);
         // alias resolution
-        assert_eq!(find("Rivendell.md", "Strider").target_path.as_deref(), Some("Aragorn.md"));
+        assert_eq!(
+            find("Rivendell.md", "Strider").target_path.as_deref(),
+            Some("Aragorn.md")
+        );
         assert_eq!(unresolved_count(&conn).unwrap(), 1);
 
         // hash-skip rebuild is a no-op; removing a file drops its rows
@@ -1238,7 +1367,11 @@ mod tests {
     fn resolves_nfd_filename_against_nfc_link() {
         // macOS stores filenames NFD; typed link text is NFC.
         let dir = tmp_vault("nfc");
-        write(&dir, "Gefa\u{308}ngnis.md", "---\nkind: place\n---\nA jail.\n"); // NFD ä
+        write(
+            &dir,
+            "Gefa\u{308}ngnis.md",
+            "---\nkind: place\n---\nA jail.\n",
+        ); // NFD ä
         write(&dir, "Source.md", "See [[Gef\u{e4}ngnis]].\n"); // NFC ä
         let conn = open_index(&dir).unwrap();
         rebuild(&conn, &dir).unwrap();
@@ -1265,7 +1398,11 @@ mod tests {
     fn search_and_tags() {
         let dir = tmp_vault("search");
         write(&dir, "Rivendell.md", "---\nkind: place\nsummary: Elf haven.\ntags: [Location/City]\n---\nThe hidden valley of the elves.\n");
-        write(&dir, "Moria.md", "---\ntags: [Location/Dungeon]\n---\nDark dwarven halls.\n");
+        write(
+            &dir,
+            "Moria.md",
+            "---\ntags: [Location/Dungeon]\n---\nDark dwarven halls.\n",
+        );
         let conn = open_index(&dir).unwrap();
         rebuild(&conn, &dir).unwrap();
         let hits = search(&conn, "valley elv").unwrap();
@@ -1280,28 +1417,48 @@ mod tests {
     #[test]
     fn faceted_search_narrows() {
         let dir = tmp_vault("facets");
-        write(&dir, "Towns/Bree.md", "---\nkind: place\ntags: [town]\n---\nA muddy crossroads town.\n");
-        write(&dir, "People/Barliman.md", "---\nkind: npc\ntags: [town]\n---\nInnkeeper of the muddy town.\n");
+        write(
+            &dir,
+            "Towns/Bree.md",
+            "---\nkind: place\ntags: [town]\n---\nA muddy crossroads town.\n",
+        );
+        write(
+            &dir,
+            "People/Barliman.md",
+            "---\nkind: npc\ntags: [town]\n---\nInnkeeper of the muddy town.\n",
+        );
         let conn = open_index(&dir).unwrap();
         rebuild(&conn, &dir).unwrap();
 
         // bare query matches both
         assert_eq!(search(&conn, "muddy").unwrap().len(), 2);
         // kind facet
-        let f = SearchFacets { kind: Some("place".into()), ..Default::default() };
+        let f = SearchFacets {
+            kind: Some("place".into()),
+            ..Default::default()
+        };
         let hits = search_faceted(&conn, "muddy", &f).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "Towns/Bree.md");
         // folder facet (prefix)
-        let f = SearchFacets { folder: Some("People".into()), ..Default::default() };
+        let f = SearchFacets {
+            folder: Some("People".into()),
+            ..Default::default()
+        };
         let hits = search_faceted(&conn, "muddy", &f).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "People/Barliman.md");
         // tag facet matches both
-        let f = SearchFacets { tag: Some("town".into()), ..Default::default() };
+        let f = SearchFacets {
+            tag: Some("town".into()),
+            ..Default::default()
+        };
         assert_eq!(search_faceted(&conn, "muddy", &f).unwrap().len(), 2);
         // date facet in the future excludes everything
-        let f = SearchFacets { edited_after: Some(i64::MAX), ..Default::default() };
+        let f = SearchFacets {
+            edited_after: Some(i64::MAX),
+            ..Default::default()
+        };
         assert!(search_faceted(&conn, "muddy", &f).unwrap().is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1324,7 +1481,10 @@ mod tests {
     fn rewrite_preserves_heading_and_label() {
         let content = "See [[Aragorn]] and [[aragorn#Background|the king]], not [[Aragorn II]].\n";
         let out = rewrite_link_names(content, "Aragorn", "Elessar").unwrap();
-        assert_eq!(out, "See [[Elessar]] and [[Elessar#Background|the king]], not [[Aragorn II]].\n");
+        assert_eq!(
+            out,
+            "See [[Elessar]] and [[Elessar#Background|the king]], not [[Aragorn II]].\n"
+        );
         assert!(rewrite_link_names("no links here", "Aragorn", "Elessar").is_none());
         assert!(rewrite_link_names("[[Gandalf]]", "Aragorn", "Elessar").is_none());
     }
@@ -1338,7 +1498,11 @@ mod tests {
             "See [[Nowhere]].\n![[portrait.png]]\n![[Assets/map.jpg|640]]\n![[missing.png]]\n",
         );
         write(&dir, "Orphan.md", "alone\n");
-        write(&dir, "Notes.sync-conflict-20260603-ABCDEF.md", "conflict copy\n");
+        write(
+            &dir,
+            "Notes.sync-conflict-20260603-ABCDEF.md",
+            "conflict copy\n",
+        );
         std::fs::write(dir.join("portrait.png"), b"png").unwrap();
         std::fs::create_dir_all(dir.join("Assets")).unwrap();
         std::fs::write(dir.join("Assets/map.jpg"), b"jpg").unwrap();
@@ -1364,14 +1528,21 @@ mod tests {
         {
             let conn = open_index(&dir).unwrap();
             rebuild(&conn, &dir).unwrap();
-            conn.execute("UPDATE index_meta SET value = '0' WHERE key = 'schema_version'", [])
-                .unwrap();
+            conn.execute(
+                "UPDATE index_meta SET value = '0' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
         }
         let conn = open_index(&dir).unwrap();
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(count, 0); // recreated empty
         rebuild(&conn, &dir).unwrap();
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(count, 1);
         std::fs::remove_dir_all(&dir).ok();
     }

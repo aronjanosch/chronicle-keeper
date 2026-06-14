@@ -59,15 +59,7 @@ pub fn router(state: AppState) -> Router {
         .route("/campaigns/:id/tags", get(campaigns::list_tags))
         .route("/campaigns/:id/tags/rename", post(campaigns::rename_tag))
         .route("/campaigns/:id/tags/delete", post(campaigns::delete_tag))
-        // codex entries (Phase 2)
-        .route(
-            "/campaigns/:id/codex/entries",
-            get(codex::list).post(codex::create),
-        )
-        .route(
-            "/campaigns/:id/codex/entries/:eid",
-            axum::routing::put(codex::update).delete(codex::delete),
-        )
+        // codex paste-import (writes vault pages)
         .route("/campaigns/:id/codex/import", post(codex::import))
         .route("/campaigns/:id/codex/import/commit", post(codex::commit))
         // vault pages
@@ -82,13 +74,20 @@ pub fn router(state: AppState) -> Router {
             axum::routing::delete(vault::delete_folder),
         )
         .route("/campaigns/:id/vault/move", post(vault::move_entry))
+        .route("/campaigns/:id/vault/promote", post(vault::promote_page))
         .route("/campaigns/:id/vault/bulk", post(vault::bulk))
         // trash (Phase 13D) + page history (13A) + world backup (13E)
         .route("/campaigns/:id/vault/trash", get(vault::trash_list))
-        .route("/campaigns/:id/vault/trash/restore", post(vault::trash_restore))
+        .route(
+            "/campaigns/:id/vault/trash/restore",
+            post(vault::trash_restore),
+        )
         .route("/campaigns/:id/vault/trash/empty", post(vault::trash_empty))
         .route("/campaigns/:id/vault/history", get(vault::history_recent))
-        .route("/campaigns/:id/vault/history/*page", get(vault::page_history))
+        .route(
+            "/campaigns/:id/vault/history/*page",
+            get(vault::page_history),
+        )
         .route(
             "/campaigns/:id/vault/history-restore",
             post(vault::history_restore),
@@ -147,7 +146,10 @@ pub fn router(state: AppState) -> Router {
             post(agent::send_message),
         )
         .route("/campaigns/:id/agent/chats/:cid/abort", post(agent::abort))
-        .route("/campaigns/:id/agent/chats/:cid/approve", post(agent::approve))
+        .route(
+            "/campaigns/:id/agent/chats/:cid/approve",
+            post(agent::approve),
+        )
         .route("/campaigns/:id/agent/chats/:cid/undo", post(agent::undo))
         .route(
             "/campaigns/:id/agent/chats/:cid/attachments",

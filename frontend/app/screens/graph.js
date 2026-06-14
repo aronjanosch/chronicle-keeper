@@ -8,6 +8,8 @@ import { Empty, openContextMenu } from '../ui.js';
 import { loadVaultTree, loadVaultLinks, loadRelations } from '../actions.js';
 import { buildGraph, GraphCanvas, colorForKind } from '../graph.js';
 import { KINDS } from './codex.js';
+import { openPageEvt } from '../tabs.js';
+import { openInNewTab } from '../core.js';
 
 const overlayBox = {
   position: 'absolute', display: 'flex', alignItems: 'center', gap: 8,
@@ -67,7 +69,7 @@ export function GraphScreen() {
     loadVaultTree(c.campaign_id);
     loadVaultLinks(c.campaign_id);
     loadRelations(c.campaign_id);
-  }, [c?.campaign_id]);
+  }, [c?.campaign_id, store.dirty_vault]);
 
   if (!c) { navigate('library'); return null; }
 
@@ -96,6 +98,7 @@ export function GraphScreen() {
 
   const nodeMenu = (n, e) => openContextMenu(e, [
     { label: 'Open', icon: 'book', onClick: () => navigate('page', { path: n.path }) },
+    { label: 'Open in new tab', icon: 'plus', onClick: () => openInNewTab(n.path) },
     { label: 'Focus', icon: 'search', onClick: () => apiRef.current?.focus(n.path) },
     '-',
     { label: 'Hide from graph', icon: 'eye', onClick: () => setHiddenNodes((prev) => new Set(prev).add(n.path)) },
@@ -115,7 +118,7 @@ export function GraphScreen() {
       ${graph.nodes.length
         ? html`<${GraphCanvas} nodes=${graph.nodes} edges=${graph.edges}
             hiddenKinds=${hiddenKinds} hiddenPaths=${hiddenNodes} hideOrphans=${hideOrphans} matches=${matches} apiRef=${apiRef}
-            onOpen=${(path) => navigate('page', { path })} onNodeMenu=${nodeMenu} />
+            onOpen=${(path, e) => openPageEvt(path, e)} onNodeMenu=${nodeMenu} />
           ${hiddenNodes.size > 0 && html`<div style=${{ ...overlayBox, right: 14, top: 50, padding: '5px 10px', cursor: 'pointer' }}
             title="Show the individually hidden pages again" onClick=${() => setHiddenNodes(new Set())}>
             ${hiddenNodes.size} hidden · show

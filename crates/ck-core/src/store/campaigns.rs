@@ -16,7 +16,7 @@ use crate::normalize::normalize_players;
 use crate::store::now;
 use crate::world_config::{self, PlayerEntry, WorldConfig};
 
-fn default_language(conn: &Connection) -> String {
+pub(crate) fn default_language(conn: &Connection) -> String {
     get_value(conn, "default_language")
         .ok()
         .flatten()
@@ -87,7 +87,11 @@ pub(crate) fn worlds(conn: &Connection) -> AppResult<Vec<(PathBuf, WorldConfig)>
         match world_config::read(&root) {
             Ok(Some(cfg)) => {
                 if out.iter().any(|(_, c)| c.id == cfg.id) {
-                    tracing::warn!("duplicate world id {} at {} — ignored", cfg.id, root.display());
+                    tracing::warn!(
+                        "duplicate world id {} at {} — ignored",
+                        cfg.id,
+                        root.display()
+                    );
                 } else {
                     out.push((root, cfg));
                 }
@@ -126,9 +130,21 @@ fn players_entries(v: &Value) -> Vec<PlayerEntry> {
         .map(|arr| {
             arr.iter()
                 .map(|p| PlayerEntry {
-                    player_name: p.get("player_name").and_then(Value::as_str).unwrap_or("").into(),
-                    character_name: p.get("character_name").and_then(Value::as_str).unwrap_or("").into(),
-                    pronouns: p.get("pronouns").and_then(Value::as_str).unwrap_or("").into(),
+                    player_name: p
+                        .get("player_name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .into(),
+                    character_name: p
+                        .get("character_name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .into(),
+                    pronouns: p
+                        .get("pronouns")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .into(),
                 })
                 .collect()
         })
@@ -320,11 +336,13 @@ pub fn delete_campaign(conn: &Connection, campaign_id: &str) -> AppResult<()> {
     crate::paths::move_to_trash(&root)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("move world to trash: {e}")))?;
     unregister_world_dir(conn, &root)?;
-    // Inert-row cleanup (FK shim + legacy codex rows). sessions/artifacts are
+    // Inert-row cleanup (FK shim). sessions/artifacts/codex_entries are
     // cleared globally on open (db.rs migrate). No filesystem touches here —
     // the folder is already in the trash.
-    conn.execute("DELETE FROM codex_entries WHERE campaign_id = ?1", params![campaign_id])?;
-    conn.execute("DELETE FROM campaigns WHERE campaign_id = ?1", params![campaign_id])?;
+    conn.execute(
+        "DELETE FROM campaigns WHERE campaign_id = ?1",
+        params![campaign_id],
+    )?;
     if current_campaign_id(conn)?.as_deref() == Some(campaign_id) {
         set_current_campaign_id(conn, "")?;
     }
@@ -400,7 +418,12 @@ mod tests {
 
         // discovery sees it; idempotent create returns the same world
         assert_eq!(get_campaigns(&conn).unwrap().len(), 1);
-        assert_eq!(create_campaign(&conn, "w1", "Renamed?", 1, None, false, false).unwrap().name, "My World");
+        assert_eq!(
+            create_campaign(&conn, "w1", "Renamed?", 1, None, false, false)
+                .unwrap()
+                .name,
+            "My World"
+        );
 
         // update rewrites config.toml
         let req = CampaignUpdateRequest {
@@ -410,7 +433,9 @@ mod tests {
         };
         let updated = update_campaign(&conn, "w1", &req).unwrap();
         assert_eq!(updated.system, "D&D 5e");
-        let cfg = world_config::read(vault.parent().unwrap()).unwrap().unwrap();
+        let cfg = world_config::read(vault.parent().unwrap())
+            .unwrap()
+            .unwrap();
         assert_eq!(cfg.system, "D&D 5e");
         assert_eq!(cfg.players[0].character_name, "Lyra");
 
@@ -445,8 +470,16 @@ mod tests {
         let foreign = tmp.join("Old Notes");
         std::fs::create_dir_all(foreign.join("People")).unwrap();
         std::fs::write(foreign.join("People/Aragorn.md"), "# Aragorn\n").unwrap();
-        let c = create_campaign(&conn, "w4", "Old Notes", 1, Some(&foreign.to_string_lossy()), false, true)
-            .unwrap();
+        let c = create_campaign(
+            &conn,
+            "w4",
+            "Old Notes",
+            1,
+            Some(&foreign.to_string_lossy()),
+            false,
+            true,
+        )
+        .unwrap();
         // vault root = world root: pages live anywhere
         assert_eq!(PathBuf::from(c.vault_path.unwrap()), foreign);
         assert!(!foreign.join("Codex").exists());

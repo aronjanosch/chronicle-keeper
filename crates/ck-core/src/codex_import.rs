@@ -11,7 +11,7 @@ use crate::error::{AppError, AppResult};
 use crate::llm;
 use crate::models::CodexEntryCreate;
 use crate::state::AppState;
-use crate::store::codex::KINDS;
+use crate::vault::KINDS;
 
 /// Upper bound on pasted note size. Past this, a single import is both useless
 /// (it overruns the model's context) and a foot-gun (runaway token cost on a BYO

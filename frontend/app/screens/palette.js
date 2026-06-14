@@ -9,9 +9,12 @@ import { runCommand, promptNewPage, promptNewFolder } from '../commands.js';
 
 // ⌘<key> / ⌘⇧<key> → command id (14E). Symbol keys match on e.key regardless
 // of shift so non-US layouts that type them shifted still work.
-const MOD_KEYS = { k: 'palette', p: 'quick-open', n: 'new-page', s: 'save' };
-const MOD_SHIFT_KEYS = { f: 'search-world', j: 'quick-capture', k: 'toggle-rail' };
+const MOD_KEYS = { f: 'find', k: 'palette', p: 'quick-open', n: 'new-page', s: 'save', w: 'tab-close' };
+const MOD_SHIFT_KEYS = { f: 'search-world', j: 'quick-capture', k: 'toggle-rail', t: 'tab-reopen' };
 const MOD_SYMBOLS = { '[': 'nav-back', ']': 'nav-forward', ',': 'settings', '/': 'shortcuts' };
+// ⌘⇧[ / ⌘⇧] cycle tabs (15D); both raw and shifted forms so layouts that
+// report '{'/'}' still match.
+const MOD_SHIFT_SYMBOLS = { '[': 'tab-prev', '{': 'tab-prev', ']': 'tab-next', '}': 'tab-next' };
 
 // The single global keydown dispatcher. Only ⌘-chords are reserved —
 // everything else falls through to the focused element so editors keep their
@@ -21,8 +24,10 @@ export function useGlobalHotkeys() {
   useEffect(() => {
     const onKey = (e) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
-      const id = MOD_SYMBOLS[e.key]
-        || (e.shiftKey ? MOD_SHIFT_KEYS[e.key.toLowerCase()] : MOD_KEYS[e.key.toLowerCase()]);
+      const id = (e.shiftKey && MOD_SHIFT_SYMBOLS[e.key])
+        || MOD_SYMBOLS[e.key]
+        || (e.shiftKey ? MOD_SHIFT_KEYS[e.key.toLowerCase()] : MOD_KEYS[e.key.toLowerCase()])
+        || (!e.shiftKey && /^[1-9]$/.test(e.key) ? `tab-${e.key}` : null);
       if (!id) return;
       e.preventDefault();
       runCommand(id);

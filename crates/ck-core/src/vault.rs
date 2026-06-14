@@ -1507,7 +1507,12 @@ mod tests {
         write_default_templates(&dir).unwrap();
 
         // a user-created custom template targeting an existing kind
-        write_template(&dir, "villain", "---\nkind: npc\nsummary:\n---\n\n# {{title}}\n\n## Scheme\n").unwrap();
+        write_template(
+            &dir,
+            "villain",
+            "---\nkind: npc\nsummary:\n---\n\n# {{title}}\n\n## Scheme\n",
+        )
+        .unwrap();
         let names: Vec<String> = list_templates(&dir).into_iter().map(|(n, _)| n).collect();
         assert!(names.contains(&"villain".to_string()));
         assert!(names.contains(&"npc".to_string()));
@@ -1532,7 +1537,11 @@ mod tests {
         let dir = tmp_vault("templates-migrate");
         let legacy = dir.join(".ck").join("templates");
         std::fs::create_dir_all(legacy.join("snippets")).unwrap();
-        std::fs::write(legacy.join("npc.md"), "---\nkind: npc\nvoice:\n---\n\n# {{title}}\n").unwrap();
+        std::fs::write(
+            legacy.join("npc.md"),
+            "---\nkind: npc\nvoice:\n---\n\n# {{title}}\n",
+        )
+        .unwrap();
         std::fs::write(legacy.join("snippets").join("Statblock.md"), "snip\n").unwrap();
 
         write_default_templates(&dir).unwrap();

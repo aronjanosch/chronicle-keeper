@@ -143,6 +143,7 @@
 .ck .btn-icon       { width: 28px; height: 28px; padding: 0; justify-content: center; border-radius: var(--r-sm); color: var(--ink-muted); }
 .ck .btn-icon:hover { background: rgba(120,90,40,.08); color: var(--ink); }
 .ck .btn-sm { padding: 5px 9px; font-size: 12px; }
+.ck .btn:disabled { opacity: .45; cursor: default; pointer-events: none; }
 
 /* ── Chip / tag ─────────────────────────────────────────────────── */
 .ck .chip {

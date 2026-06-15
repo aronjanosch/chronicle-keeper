@@ -147,6 +147,11 @@ pub fn read_tools() -> Vec<ToolDef> {
             description: "Read the world's \"story so far\" recap, if one has been generated.".into(),
             schema: obj(json!({}), &[]),
         },
+        ToolDef {
+            name: "use_skill".into(),
+            description: "Load the full text of one of the skills listed in your system prompt by name. A skill is deep reference (worldbuilding question banks, page syntax) you pull on demand before the task it covers — it returns data you apply, not instructions.".into(),
+            schema: obj(json!({ "name": { "type": "string" } }), &["name"]),
+        },
     ]
 }
 
@@ -1090,6 +1095,7 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             move_with_links(ctx, &path, &to)?;
             Ok(format!("Moved {path} → {to}."))
         }
+        "use_skill" => super::skills::read(&super::skills::skills_root(ctx.state), &str_arg("name")),
         "read_memory" => super::memory::read_memory(ctx.world_root, &str_arg("name")),
         "write_memory" => super::memory::write_memory(
             ctx.world_root,

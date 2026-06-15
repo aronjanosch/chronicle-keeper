@@ -56,7 +56,7 @@ export function KeeperScreen({ store }) {
 
   const list = html`<div style=${{ width: 280, flex: '0 0 280px', borderRight: '1px solid var(--rule)', display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--paper-deep)' }}>
     <div style=${{ padding: '12px 12px 8px', borderBottom: '1px solid var(--rule-soft)' }}>
-      <button class="ck-btn ck-btn--primary" style=${{ width: '100%', justifyContent: 'center' }} onClick=${onNew}>
+      <button class="btn btn-primary" style=${{ width: '100%', justifyContent: 'center' }} onClick=${onNew}>
         <${Icon} name="plus" size=${13} /> New chat
       </button>
       <input value=${q} placeholder="Search chats…" onInput=${(e) => setQ(e.target.value)}
@@ -98,10 +98,10 @@ export function KeeperScreen({ store }) {
     <div style=${{ fontFamily: 'var(--font-display)', fontSize: 18, color: 'var(--ink)', marginBottom: 6 }}>Ask the Keeper</div>
     The resident AI of this world — it knows your Codex and sessions, and can draft or reorganise pages with your approval.
     <div style=${{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 16 }}>
-      ${brief && !brief.exists && html`<button class="ck-btn ck-btn--primary" style=${{ justifyContent: 'flex-start' }} onClick=${() => setView('memory')}>
+      ${brief && !brief.exists && html`<button class="btn btn-primary" style=${{ justifyContent: 'flex-start' }} onClick=${() => setView('memory')}>
         <${Icon} name="book" size=${13} /> Let the Keeper read up on this world
       </button>`}
-      ${SUGGESTIONS.map((s) => html`<button key=${s} class="ck-btn" style=${{ justifyContent: 'flex-start' }} onClick=${() => sendSuggestion(s)}>${s}</button>`)}
+      ${SUGGESTIONS.map((s) => html`<button key=${s} class="btn" style=${{ justifyContent: 'flex-start' }} onClick=${() => sendSuggestion(s)}>${s}</button>`)}
     </div>
   </div>`;
 

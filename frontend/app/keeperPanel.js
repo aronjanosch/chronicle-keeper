@@ -325,9 +325,9 @@ function PermissionCard({ ask }) {
       ${!isShell && !isStructural && html`<${DiffView} diff=${d} />`}
     </div>
     <div style=${{ display: 'flex', gap: 8, padding: '0 10px 10px' }}>
-      <button class="ck-btn ck-btn--primary" onClick=${() => decide(ask.requestId, 'allow_once')}>Allow once</button>
-      ${!isShell && html`<button class="ck-btn" onClick=${() => decide(ask.requestId, 'allow_chat')}>Allow for this chat</button>`}
-      <button class="ck-btn" style=${{ marginLeft: 'auto', color: 'var(--burgundy-700)' }} onClick=${() => decide(ask.requestId, 'deny')}>Deny</button>
+      <button class="btn btn-primary" onClick=${() => decide(ask.requestId, 'allow_once')}>Allow once</button>
+      ${!isShell && html`<button class="btn" onClick=${() => decide(ask.requestId, 'allow_chat')}>Allow for this chat</button>`}
+      <button class="btn" style=${{ marginLeft: 'auto', color: 'var(--burgundy-700)' }} onClick=${() => decide(ask.requestId, 'deny')}>Deny</button>
     </div>
   </div>`;
 }
@@ -405,11 +405,13 @@ function EventRow({ ev }) {
   return null;
 }
 
-const pickSelect = { fontSize: 11.5, padding: '3px 4px', borderRadius: 5, border: '1px solid var(--rule)', background: 'var(--surface)', color: 'var(--ink-muted)', maxWidth: 170, cursor: 'pointer' };
+const pickSelect = { fontSize: 11.5, padding: '4px 5px', borderRadius: 6, border: '1px solid var(--rule)', background: 'var(--surface)', color: 'var(--ink-muted)', cursor: 'pointer', maxWidth: 150 };
 
-// Provider + model for this chat. Resets to the global default on a new chat;
-// the choice rides along in the /messages body as provider/model overrides.
-export function PickerBar({ k }) {
+// Provider + model selects for the active chat — embedded in the composer
+// footer. Resets to the global default on a new chat; the choice rides along in
+// the /messages body as provider/model overrides. Returns the two selects only
+// (no wrapper) so the caller controls layout.
+export function PickerControls({ k }) {
   const provs = configuredProviders();
   const [models, setModels] = useState([]);
 
@@ -435,17 +437,15 @@ export function PickerBar({ k }) {
     patchKeeper({ provider: id, model: (p?.saved_model || p?.default_model) || '' });
   };
 
-  return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderTop: '1px solid var(--rule-soft)' }}>
-    <${Icon} name="cog" size=${12} />
-    <select value=${provId} onChange=${(e) => onProvider(e.target.value)} title="Provider" style=${pickSelect}>
+  return html`
+    ${provs.length > 1 && html`<select value=${provId} onChange=${(e) => onProvider(e.target.value)} title="Provider" style=${pickSelect}>
       ${provs.map((p) => html`<option key=${p.id} value=${p.id}>${p.name}</option>`)}
-    </select>
+    </select>`}
     <select value=${k.model || ''} onChange=${(e) => patchKeeper({ model: e.target.value })} title="Model"
       style=${{ ...pickSelect, flex: 1, minWidth: 0, maxWidth: 'none' }}>
       ${!list.length && html`<option value=${k.model || ''}>${k.model || 'default'}</option>`}
       ${list.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
-    </select>
-  </div>`;
+    </select>`;
 }
 
 export function Composer({ busy }) {
@@ -545,17 +545,21 @@ export function Composer({ busy }) {
           style=${{ position: 'absolute', top: 2, right: 2, width: 16, height: 16, borderRadius: 999, background: 'rgba(0,0,0,.6)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}><${Icon} name="x" size=${9} /></span>
       </div>`)}
     </div>`}
-    <div style=${{ padding: 10, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-      <button class="ck-btn" title="Attach a page, session or file" onClick=${() => setPicker(!picker)}
-        style=${{ padding: '7px 9px' }}><${Icon} name="plus" size=${14} /></button>
+    <div style=${{ margin: 10, border: '1px solid var(--rule)', borderRadius: 10, background: 'var(--surface)', display: 'flex', flexDirection: 'column' }}>
       <textarea ref=${taRef} value=${text} placeholder="Ask the Keeper… ([[ to link, paste images, drop files)" rows=${2}
         onInput=${(e) => { setText(e.target.value); updateAc(e.target); }}
         onKeyDown=${onKeyDown}
         onPaste=${onPaste}
-        style=${{ flex: 1, resize: 'none', fontSize: 13, padding: '8px 10px', borderRadius: 6, border: '1px solid var(--rule)', background: 'var(--surface)', color: 'var(--ink)', fontFamily: 'inherit' }} />
-      ${busy
-        ? html`<button class="ck-btn" onClick=${abortRun} title="Stop the Keeper">Stop</button>`
-        : html`<button class="ck-btn ck-btn--primary" onClick=${send} disabled=${!text.trim() && !images.length}>Send</button>`}
+        style=${{ resize: 'none', fontSize: 13, padding: '9px 10px 4px', border: 'none', outline: 'none', background: 'transparent', color: 'var(--ink)', fontFamily: 'inherit' }} />
+      <div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px 6px' }}>
+        <button class="btn btn-ghost" title="Attach a page, session or file" onClick=${() => setPicker(!picker)}
+          style=${{ padding: '6px 7px' }}><${Icon} name="plus" size=${14} /></button>
+        <${PickerControls} k=${k} />
+        ${busy
+          ? html`<button class="btn" onClick=${abortRun} title="Stop the Keeper" style=${{ padding: '6px 7px', marginLeft: 'auto' }}><${Icon} name="x" size=${14} /></button>`
+          : html`<button class="btn btn-primary" onClick=${send} title="Send (Enter)" disabled=${!text.trim() && !images.length}
+              style=${{ padding: '6px 8px', marginLeft: 'auto' }}><${Icon} name="arrow-r" size=${14} /></button>`}
+      </div>
     </div>
   </div>`;
 }
@@ -590,17 +594,16 @@ export function Conversation({ k, empty }) {
     ${noProvider && html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--rule-soft)', background: 'var(--paper-deep)', fontSize: 12.5, color: 'var(--ink-muted)' }}>
       <${Icon} name="feather" size=${13} />
       <span style=${{ flex: 1 }}>The Keeper needs a language model. Set one up in Settings — Ollama is free and runs locally.</span>
-      <button class="ck-btn" onClick=${() => navigate('settings')}>Open Settings</button>
+      <button class="btn" onClick=${() => navigate('settings')}>Open Settings</button>
     </div>`}
     <${Transcript} k=${k} empty=${empty} />
     ${k.undoable > 0 && !k.live && html`<div style=${{ display: 'flex', alignItems: 'center', gap: 7, padding: '4px 12px', borderTop: '1px solid var(--rule-soft)', fontSize: 12, color: 'var(--ink-muted)' }}>
       <span style=${{ flex: 1 }}>The Keeper changed ${k.undoable} ${k.undoable === 1 ? 'file' : 'files'} in this chat.</span>
-      <button class="ck-btn" onClick=${undoLast} title="Revert the Keeper's most recent change">
+      <button class="btn" onClick=${undoLast} title="Revert the Keeper's most recent change">
         <${Icon} name="undo" size=${12} /> Undo last change
       </button>
     </div>`}
     <${Composer} busy=${!!k.live} />
-    <${PickerBar} k=${k} />
     ${dragging && html`<div style=${{
       position: 'absolute', inset: 0, zIndex: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'rgba(122,46,31,.08)', border: '2px dashed var(--burgundy)', borderRadius: 8,

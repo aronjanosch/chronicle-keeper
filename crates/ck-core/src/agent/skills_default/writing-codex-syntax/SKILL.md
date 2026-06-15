@@ -1,3 +1,7 @@
+---
+name: Writing Codex page syntax
+description: Chronicle Keeper page syntax — transclusion, callouts, typed relations, ck-query, calendar dates, frontmatter keys, plus which app surface shows what. Use before writing or editing a page's body or frontmatter.
+---
 
 ## Page syntax (Obsidian-flavored)
 

@@ -638,22 +638,28 @@ async fn memory_tools_auto_approve_even_in_read_only() {
     let body = memory::read_memory(&root, "terse-summaries").unwrap();
     assert!(body.contains("short summaries"));
     // The index is injected into the next turn's system prompt.
-    assert!(system_prompt(&root, &cfg, Mode::ReadOnly).contains("terse-summaries"));
+    assert!(system_prompt(&root, &root.join("Skills"), &cfg, Mode::ReadOnly).contains("terse-summaries"));
     std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
-fn system_prompt_documents_page_syntax() {
+fn system_prompt_lists_the_syntax_skill() {
+    let skills_root = std::env::temp_dir().join(format!("ck-sp-skills-{}", std::process::id()));
+    std::fs::remove_dir_all(&skills_root).ok();
     let s = system_prompt(
         std::path::Path::new("/nonexistent-ck-syntax-test"),
+        &skills_root,
         &WorldConfig::default(),
         Mode::ReadOnly,
     );
-    assert!(s.contains("## Page syntax"));
-    assert!(s.contains("Typed relations"));
-    assert!(s.contains("ck-query"));
-    assert!(s.contains("[!secret]"));
-    assert!(s.contains("date:"));
+    // The page-syntax detail moved into a skill; the prompt now only indexes it.
+    assert!(s.contains("Writing Codex page syntax"));
+    assert!(s.contains("use_skill"));
+    assert!(!s.contains("[!secret]"));
+    // ...but it is pullable in full on demand.
+    let body = super::skills::read(&skills_root, "Writing Codex page syntax").unwrap();
+    assert!(body.contains("ck-query") && body.contains("[!secret]"));
+    std::fs::remove_dir_all(&skills_root).ok();
 }
 
 // ── Injection corpus (agent-tools-and-permissions-spec.md §threat model) ──

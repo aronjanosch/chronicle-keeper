@@ -73,7 +73,7 @@ function briefCard({ brief, run, regenerate }) {
   const head = html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
     <${Icon} name="book" size=${15} />
     <div style=${{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600, flex: 1 }}>World Brief</div>
-    <button class="ck-btn" onClick=${regenerate} disabled=${!!run}>
+    <button class="btn" onClick=${regenerate} disabled=${!!run}>
       ${run ? 'Reading…' : (brief?.exists ? 'Regenerate' : 'Read up on this world')}
     </button>
   </div>`;
@@ -130,7 +130,7 @@ function memoryCard({ memories, open, setOpen, forget }) {
           <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 600 }}>${m.name}</span>
           <span style=${{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--ink-faint)', border: '1px solid var(--rule-soft)', borderRadius: 999, padding: '1px 7px' }}>${TYPE_LABEL[m.type] || m.type || 'note'}</span>
           <span style=${{ flex: 1 }} />
-          <button class="ck-btn" style=${{ padding: '3px 7px', fontSize: 11.5 }} onClick=${() => setOpen((o) => ({ ...o, [m.name]: !o[m.name] }))}>${isOpen ? 'Hide' : 'Read'}</button>
+          <button class="btn" style=${{ padding: '3px 7px', fontSize: 11.5 }} onClick=${() => setOpen((o) => ({ ...o, [m.name]: !o[m.name] }))}>${isOpen ? 'Hide' : 'Read'}</button>
           <span onClick=${() => forget(m.name)} title="Forget" style=${{ cursor: 'pointer', color: 'var(--ink-faint)', display: 'flex', padding: 3 }}><${Icon} name="trash" size=${12} /></span>
         </div>
         <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 3 }}>${m.description || '(no description)'}</div>

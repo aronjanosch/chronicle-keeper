@@ -445,7 +445,7 @@ function VaultPanel({ campaign, tree, active, onOpen, act }) {
         </div>`}
       </div>`;
     })()}
-    <div style=${{ margin: '0 -12px', borderTop: '1px solid var(--rule-soft)' }}>
+    <div style=${{ margin: '0 -12px', borderTop: '1px solid var(--rule)' }}>
       <div style=${{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--ink-faint)', cursor: 'pointer' }}>
         <span onClick=${() => setTplOpen((o) => !o)} style=${{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
           <${Icon} name=${tplOpen ? 'chev-d' : 'chev-r'} size=${11} />
@@ -453,6 +453,8 @@ function VaultPanel({ campaign, tree, active, onOpen, act }) {
           <span>Templates</span>
           <span style=${{ color: 'var(--ink-faint)', opacity: 0.7 }}>${(store.templates || []).length || ''}</span>
         </span>
+        <span title="Deleted pages and folders — restore or empty" onClick=${() => openModal('trash')}
+          style=${{ color: 'var(--ink-faint)', cursor: 'pointer', padding: 2 }}><${Icon} name="trash" size=${12} /></span>
         <span title="New template" onClick=${newTemplateFlow} style=${{ color: 'var(--ink-faint)', cursor: 'pointer', padding: 2 }}><${Icon} name="plus" size=${12} /></span>
       </div>
       ${tplOpen && html`<div style=${{ padding: '0 0 6px' }}>
@@ -467,16 +469,11 @@ function VaultPanel({ campaign, tree, active, onOpen, act }) {
               ${t.kind && html`<span style=${{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>${t.kind}</span>`}
             </div>`)}
       </div>`}
-    </div>
-    <div onClick=${() => openModal('trash')} title="Deleted pages and folders — restore or empty"
-      style=${{ margin: '0 -12px', borderTop: '1px solid var(--rule-soft)', padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--ink-faint)', cursor: 'pointer' }}>
-      <${Icon} name="trash" size=${11} />
-      <span style=${{ flex: 1 }}>Trash</span>
-    </div>
-    <div onClick=${attachVaultFlow} title="Change vault folder (advanced)"
-      style=${{ margin: '0 -12px', borderTop: '1px solid var(--rule-soft)', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', cursor: 'pointer' }}>
-      <span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--moss)', flex: '0 0 auto' }} />
-      <span style=${{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', direction: 'rtl', textAlign: 'left' }}>${campaign.vault_path}</span>
+      <div onClick=${attachVaultFlow} title="Change vault folder (advanced)"
+        style=${{ borderTop: '1px solid var(--rule-soft)', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 7, fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', cursor: 'pointer' }}>
+        <span style=${{ width: 5, height: 5, borderRadius: '50%', background: 'var(--moss)', flex: '0 0 auto' }} />
+        <span style=${{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', direction: 'rtl', textAlign: 'left' }}>${campaign.vault_path}</span>
+      </div>
     </div>
   </div>`;
 }

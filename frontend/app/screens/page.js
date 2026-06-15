@@ -14,7 +14,7 @@ import { setEditorActive } from '../commands.js';
 import { TabStrip, openPageEvt } from '../tabs.js';
 import { FileTree, buildTree, makeVaultActions, iconForKind, KINDS, dirOf } from './codex.js';
 import { colorForKind } from '../graph.js';
-import { keeperState, openPanel, Conversation } from '../keeperPanel.js';
+import { keeperState, openPanel, newChat, ModeSelect, Conversation } from '../keeperPanel.js';
 
 function kindLabel(k) {
   return (KINDS.find((x) => x.value === k) || {}).label || k || 'Page';
@@ -240,10 +240,55 @@ function OutlineCard({ outline, scrollRef }) {
   </${RailCard}>`;
 }
 
+// Phase 18C: containment hierarchy. `part_of: "[[Parent]]"` in a child's
+// frontmatter is the only stored edge; the reverse ("contains") is derived
+// from the index, so parents never accumulate a child list.
+const CONTAINMENT_PRED = 'part_of';
+function containmentChildren(path, relations) {
+  return (relations || [])
+    .filter((r) => r.target_path === path && r.predicate === CONTAINMENT_PRED)
+    .map((r) => r.source_path);
+}
+// Ancestors root → … → immediate parent, following the first part_of at each
+// level; cycle-guarded so a mis-set loop can't hang the breadcrumb.
+function containmentAncestry(path, relations) {
+  const chain = [];
+  const seen = new Set([path]);
+  let cur = path;
+  while (cur) {
+    const parent = (relations || []).find(
+      (r) => r.source_path === cur && r.predicate === CONTAINMENT_PRED && r.target_path,
+    )?.target_path;
+    if (!parent || seen.has(parent)) break;
+    seen.add(parent);
+    chain.unshift(parent);
+    cur = parent;
+  }
+  return chain;
+}
+
+function ContainsCard({ path, pages, relations }) {
+  const children = containmentChildren(path, relations);
+  if (!children.length) return null;
+  const byPath = new Map((pages || []).map((p) => [p.path, p]));
+  return html`<${RailCard} icon="folder" title="Contains" right=${String(children.length)}>
+    <div style=${{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      ${children.map((src) => {
+        const p = byPath.get(src);
+        return html`<div class="ck-rail-link" key=${src} onClick=${(e) => openPageEvt(src, e)}>
+          <${Icon} name=${iconForKind(p?.kind)} size=${12} className="ck-ink-muted" />
+          <span>${p?.title || src}</span>
+        </div>`;
+      })}
+    </div>
+  </${RailCard}>`;
+}
+
 // Incoming typed relations grouped by predicate (Phase 9B): the other end of
-// `member_of: "[[X]]"` — no manual upkeep of both directions.
+// `member_of: "[[X]]"` — no manual upkeep of both directions. part_of is
+// excluded here; it gets first-class breadcrumb + Contains treatment (18C).
 function RelationsCard({ path, pages, relations }) {
-  const incoming = (relations || []).filter((r) => r.target_path === path);
+  const incoming = (relations || []).filter((r) => r.target_path === path && r.predicate !== CONTAINMENT_PRED);
   if (!incoming.length) return null;
   const byPath = new Map((pages || []).map((p) => [p.path, p]));
   const groups = new Map();
@@ -584,6 +629,7 @@ function ReadView({ page, path, pages, links, relations, schemas, atlasMaps, cam
             <${InfoboxCard} fm=${fm} kind=${page.kind} schemas=${schemas} pages=${pages} />
             <${SummaryCard} page=${page} onSave=${onSave} />
             <${TagsCard} tags=${meta?.tags} />
+            <${ContainsCard} path=${path} pages=${pages} relations=${relations} />
             <${OnMapCard} path=${path} maps=${atlasMaps} campaignId=${campaignId} />
             <div class="ck-rail-foot">${[edited && `Edited ${edited}`, `${words} words`].filter(Boolean).join(' · ')}</div>
           </div>`
@@ -616,7 +662,15 @@ function RailTab({ icon, label, active, onClick }) {
 function RailChat() {
   const k = keeperState();
   useEffect(() => { if (!k.chatId) openPanel(); }, []);
-  return html`<${Conversation} k=${k} />`;
+  const iconBtn = { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, border: 'none', background: 'none', color: 'var(--ink-muted)', cursor: 'pointer' };
+  return html`<div style=${{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderBottom: '1px solid var(--rule-soft)' }}>
+      <span style=${{ flex: 1, minWidth: 0 }}><${ModeSelect} mode=${k.mode} /></span>
+      <button title="New chat" class="ck-chat-row" style=${iconBtn} onClick=${() => newChat()}><${Icon} name="plus" size=${15} /></button>
+      <button title="Open the Keeper full-screen" class="ck-chat-row" style=${iconBtn} onClick=${() => navigate('keeper', { id: k.campaignId })}><${Icon} name="export" size=${14} /></button>
+    </div>
+    <${Conversation} k=${k} />
+  </div>`;
 }
 
 // Edit-mode scroller with per-tab scroll memory (read mode's lives in ReadView).
@@ -697,6 +751,7 @@ export function PageScreen() {
     if (!c?.campaign_id) return undefined;
     return watchVault(c.campaign_id, () => {
       loadVaultTree(c.campaign_id);
+      loadRelations(c.campaign_id);
       refreshFromDisk();
     });
   }, [path, c?.campaign_id]);
@@ -716,10 +771,13 @@ export function PageScreen() {
 
   const openBroken = (name) => createVaultPage(name, 'lore', '').then((p) => navigate('page', { path: p.path })).catch(() => {});
 
+  const byPath = new Map(pages.map((p) => [p.path, p]));
+  const ancestry = containmentAncestry(path, store.vaultRelations);
   const crumbs = [
     { label: 'Worlds', onClick: () => navigate('library') },
     { label: c.name, onClick: () => openCampaign(c.campaign_id) },
     { label: 'Codex', onClick: () => navigate('codex', { id: c.campaign_id }) },
+    ...ancestry.map((ap) => ({ label: byPath.get(ap)?.title || ap, onClick: () => navigate('page', { path: ap }) })),
     (page && page.title) || path,
   ];
 

@@ -87,7 +87,7 @@ const FIELD_TYPES: [&str; 6] = ["text", "list", "number", "checkbox", "date", "d
 const DEFAULT_KINDS: &[(&str, &[&str])] = &[
     ("pc", &["player", "race", "class", "affiliation:list"]),
     ("npc", &["race", "affiliation:list", "status", "location"]),
-    ("place", &["region", "type", "population", "ruler"]),
+    ("place", &["region", "type", "population", "ruler", "part_of"]),
     ("faction", &["type", "leader", "headquarters", "alignment"]),
     ("item", &["type", "owner", "location", "magical:checkbox"]),
     ("event", &["date:date", "location", "participants:list"]),

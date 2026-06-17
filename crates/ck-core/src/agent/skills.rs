@@ -232,7 +232,7 @@ mod tests {
         assert!(body.contains("## Page syntax"));
         assert!(body.contains("ck-query"));
         assert!(!body.starts_with("---")); // frontmatter stripped
-        // A question-bank skill loads its curated prompts.
+                                           // A question-bank skill loads its curated prompts.
         assert!(read(&root, "Flesh out a character")
             .unwrap()
             .contains("What do they want most"));

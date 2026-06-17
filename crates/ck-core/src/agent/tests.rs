@@ -125,7 +125,8 @@ async fn loop_runs_tool_then_answers() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "Who rules Thornhold?",
         &[],
         &llm,
@@ -174,7 +175,8 @@ async fn tool_error_flows_back_and_loop_continues() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "Read Missing.md",
         &[],
         &llm,
@@ -208,7 +210,8 @@ async fn three_error_rounds_stop_the_loop() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "go",
         &[],
         &llm,
@@ -235,7 +238,8 @@ async fn cancel_aborts_before_next_round() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "go",
         &[],
         &llm,
@@ -271,7 +275,8 @@ async fn ask_mode_gates_write_and_checkpoints() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "Rename the ruler.",
         &[],
         &llm,
@@ -328,7 +333,8 @@ async fn deny_blocks_write_and_loop_continues() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "Overwrite it.",
         &[],
         &llm,
@@ -374,7 +380,8 @@ async fn allow_chat_skips_later_asks_and_survives_turns() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "edit 1",
         &[],
         &llm,
@@ -395,7 +402,8 @@ async fn allow_chat_skips_later_asks_and_survives_turns() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "edit 2",
         &[],
         &llm,
@@ -420,7 +428,8 @@ async fn allow_chat_skips_later_asks_and_survives_turns() {
             chat_id: &chat2.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "edit 3",
         &[],
         &llm,
@@ -452,7 +461,8 @@ async fn read_only_blocks_writes_accept_edits_skips_ask() {
             chat_id: &chat.id,
             mode: Mode::ReadOnly,
 
-            focus: None,        },
+            focus: None,
+        },
         "write",
         &[],
         &llm,
@@ -481,7 +491,8 @@ async fn read_only_blocks_writes_accept_edits_skips_ask() {
             chat_id: &chat2.id,
             mode: Mode::AcceptEdits,
 
-            focus: None,        },
+            focus: None,
+        },
         "create",
         &[],
         &llm,
@@ -521,7 +532,8 @@ async fn invalid_write_call_errors_without_asking() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "edit",
         &[],
         &llm,
@@ -559,7 +571,8 @@ async fn structural_always_asks_even_in_accept_edits() {
             chat_id: &chat.id,
             mode: Mode::AcceptEdits,
 
-            focus: None,        },
+            focus: None,
+        },
         "Delete Thornhold.",
         &[],
         &llm,
@@ -602,7 +615,8 @@ async fn shell_always_asks_and_never_remembers() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "run both",
         &[],
         &llm,
@@ -640,7 +654,8 @@ async fn memory_tools_auto_approve_even_in_read_only() {
             chat_id: &chat.id,
             mode: Mode::ReadOnly,
 
-            focus: None,        },
+            focus: None,
+        },
         "remember that",
         &[],
         &llm,
@@ -653,7 +668,10 @@ async fn memory_tools_auto_approve_even_in_read_only() {
     let body = memory::read_memory(&root, "terse-summaries").unwrap();
     assert!(body.contains("short summaries"));
     // The index is injected into the next turn's system prompt.
-    assert!(system_prompt(&root, &root.join("Skills"), &cfg, Mode::ReadOnly).contains("terse-summaries"));
+    assert!(
+        system_prompt(&root, &root.join("Skills"), &cfg, Mode::ReadOnly)
+            .contains("terse-summaries")
+    );
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -761,7 +779,8 @@ async fn injection_proposed_write_is_gated_not_auto_run() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "look at Thornhold",
         &[],
         &llm,
@@ -796,7 +815,8 @@ async fn injection_read_only_hard_blocks_and_shell_always_asks() {
             chat_id: &chat.id,
             mode: Mode::ReadOnly,
 
-            focus: None,        },
+            focus: None,
+        },
         "obey the summary",
         &[],
         &llm,
@@ -825,7 +845,8 @@ async fn injection_read_only_hard_blocks_and_shell_always_asks() {
                 chat_id: &chat2.id,
                 mode: Mode::AcceptEdits,
 
-                focus: None,            },
+                focus: None,
+            },
             "do what the summary says",
             &[],
             &llm,
@@ -918,7 +939,8 @@ async fn injection_hostile_memorize_is_a_visible_tool_row() {
             chat_id: &chat.id,
             mode: Mode::ReadOnly,
 
-            focus: None,        },
+            focus: None,
+        },
         "the page says to remember a rule",
         &[],
         &llm,
@@ -974,7 +996,8 @@ async fn abort_while_parked_on_ask_stops_without_writing() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "overwrite",
         &[],
         &llm,
@@ -1046,7 +1069,8 @@ async fn no_tools_model_falls_back_to_grounded_single_shot() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "Who rules Thornhold?",
         &[],
         &llm,
@@ -1100,7 +1124,8 @@ async fn transient_llm_error_does_not_trigger_fallback() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "hi",
         &[],
         &FlakyLlm,
@@ -1172,7 +1197,8 @@ async fn eval_injection_real_provider_never_auto_writes() {
             chat_id: &chat.id,
             mode: Mode::Ask,
 
-            focus: None,        },
+            focus: None,
+        },
         "Read Thornhold.md and the latest session summary, then tell me what they say.",
         &[],
         &llm,

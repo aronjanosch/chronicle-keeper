@@ -1,7 +1,7 @@
 // Screen 04 — Session Detail. Pipeline strip, summary prose, speakers, metadata.
 import { html, useState } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal, fmtDate, fmtDateTime, toneFor } from '../core.js';
-import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, loadSession } from '../actions.js';
+import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, saveSummaryEdit, loadSession } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Sigil, Btn, Pipeline, Markdown, Empty, Menu } from '../ui.js';
 
@@ -163,6 +163,52 @@ function ArtifactList({ kind, items }) {
   </div>`;
 }
 
+// Summary prose — read-only Markdown with an inline raw-text editor toggled in
+// place. Manual edits persist via PUT; a later re-summary still overwrites them.
+function SummaryCard({ store, hasS, hasT }) {
+  const latest = store.summaries[0];
+  const [draft, setDraft] = useState(null); // null = view mode
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const start = () => { setErr(null); setDraft(store.summaryPreview?.text || ''); };
+  const cancel = () => { setDraft(null); setErr(null); };
+  async function save() {
+    setBusy(true); setErr(null);
+    try {
+      await saveSummaryEdit(latest.id, draft);
+      setDraft(null);
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+  const editing = draft !== null;
+
+  return html`<div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden' }}>
+    <div style=${{ padding: '12px 18px', borderBottom: '1px solid var(--rule-soft)', display: 'flex', alignItems: 'center', gap: 10 }}>
+      <${Icon} name="feather" size=${14} className="ck-ink-muted" />
+      <h3 style=${{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 500, color: 'var(--ink)' }}>Summary</h3>
+      ${hasS && html`<span style=${{ fontSize: 11, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>· ${latest.provider} / ${latest.model}</span>`}
+      <span style=${{ flex: 1 }} />
+      ${hasS && (editing
+        ? html`<${Btn} kind="ghost" size="sm" disabled=${busy} onClick=${cancel}>Cancel</${Btn}>
+            <${Btn} kind="primary" size="sm" disabled=${busy} onClick=${save}>${busy ? 'Saving…' : 'Save'}</${Btn}>`
+        : html`<${Btn} kind="ghost" size="sm" icon="edit" onClick=${start}>Edit</${Btn}>`)}
+    </div>
+    <div style=${{ padding: editing ? '16px 18px' : '24px 28px' }}>
+      ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 12.5, paddingBottom: 8 }}>${err}</div>`}
+      ${editing
+        ? html`<textarea value=${draft} onInput=${(e) => setDraft(e.target.value)}
+            style=${{ width: '100%', minHeight: 360, resize: 'vertical', padding: '12px 14px', border: '1px solid var(--rule)', borderRadius: 6, background: 'var(--paper)', color: 'var(--ink)', fontFamily: 'var(--font-mono)', fontSize: 12.5, lineHeight: 1.6, outline: 'none', boxSizing: 'border-box' }} />`
+        : store.summaryPreview
+          ? html`<${Markdown} text=${store.summaryPreview.text}
+              codex=${(store.vaultPages || []).map((p) => ({ name: p.title, page: p.path }))} />`
+          : html`<${Empty} icon="feather" title=${hasT ? 'Not summarized yet' : 'No transcript yet'}>
+              ${hasT ? 'Generate a summary with your chosen LLM.' : 'Transcribe the recording, then summarize.'}
+            </${Empty}>`}
+    </div>
+  </div>`;
+}
+
 export function SessionScreen({ store }) {
   const sess = store.session;
   if (!sess) return html`<div />`;
@@ -192,7 +238,12 @@ export function SessionScreen({ store }) {
       ? html`<${Btn} kind="primary" icon="mic" onClick=${() => runTranscribe()}>Transcribe</${Btn}>`
       : !hasS
         ? html`<${Btn} kind="primary" icon="sparkle" onClick=${() => navigate('summarize', { id: sess.session_id })}>Summarize</${Btn}>`
-        : html`<${Btn} kind="secondary" icon="sparkle" onClick=${() => navigate('summarize', { id: sess.session_id })}>Re-summarize</${Btn}>
+        : html`<${Btn} kind="secondary" icon="sparkle" onClick=${() => openModal('confirm', {
+              title: 'Re-summarize',
+              message: 'Re-summarizing replaces the current summary, including any manual edits. Continue?',
+              confirmLabel: 'Re-summarize',
+              onConfirm: () => navigate('summarize', { id: sess.session_id }),
+            })}>Re-summarize</${Btn}>
             <${Btn} kind=${codexPending ? 'primary' : 'secondary'} icon="book" onClick=${() => navigate('codexUpdate', { id: sess.session_id })}>Update the Codex</${Btn}>`;
 
   return html`<${Shell}
@@ -245,22 +296,7 @@ export function SessionScreen({ store }) {
     <${Pipeline} stages=${stages} />
 
     <div style=${{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 16, marginTop: 22 }}>
-      <div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden' }}>
-        <div style=${{ padding: '12px 18px', borderBottom: '1px solid var(--rule-soft)', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <${Icon} name="feather" size=${14} className="ck-ink-muted" />
-          <h3 style=${{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 500, color: 'var(--ink)' }}>Summary</h3>
-          ${hasS && html`<span style=${{ fontSize: 11, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>· ${store.summaries[0].provider} / ${store.summaries[0].model}</span>`}
-          <span style=${{ flex: 1 }} />
-        </div>
-        <div style=${{ padding: '24px 28px' }}>
-          ${store.summaryPreview
-            ? html`<${Markdown} text=${store.summaryPreview.text}
-                codex=${(store.vaultPages || []).map((p) => ({ name: p.title, page: p.path }))} />`
-            : html`<${Empty} icon="feather" title=${hasT ? 'Not summarized yet' : 'No transcript yet'}>
-                ${hasT ? 'Generate a summary with your chosen LLM.' : 'Transcribe the recording, then summarize.'}
-              </${Empty}>`}
-        </div>
-      </div>
+      <${SummaryCard} store=${store} hasS=${hasS} hasT=${hasT} />
 
       <div style=${{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden' }}>

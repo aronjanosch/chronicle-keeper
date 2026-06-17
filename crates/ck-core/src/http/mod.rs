@@ -166,6 +166,7 @@ pub fn router(state: AppState) -> Router {
         )
         // the Keeper's memory + World Brief
         .route("/campaigns/:id/agent/skills", get(agent::list_skills))
+        .route("/skills", get(agent::list_skills))
         .route("/campaigns/:id/agent/memory", get(agent::list_memory))
         .route(
             "/campaigns/:id/agent/memory/:name",
@@ -244,7 +245,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/sessions/:id/summaries/:aid",
-            delete(artifacts::delete_summary),
+            delete(artifacts::delete_summary).put(artifacts::update_summary),
         )
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), require_token))

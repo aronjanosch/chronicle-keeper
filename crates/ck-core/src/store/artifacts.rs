@@ -158,6 +158,43 @@ pub fn insert_artifact(
     })
 }
 
+/// Overwrite the summary body, preserving its frontmatter provenance. For
+/// manual edits — the next re-summary still wins (it calls `insert_artifact`).
+pub fn update_summary(
+    conn: &Connection,
+    session_id: &str,
+    content: &str,
+) -> AppResult<ArtifactInfo> {
+    let dir = session_dir(conn, session_id)?;
+    if !file_of(&dir, "summary")
+        .metadata()
+        .map(|m| m.len() > 0)
+        .unwrap_or(false)
+    {
+        return Err(AppError::NotFound(format!(
+            "No summary to edit: {session_id}"
+        )));
+    }
+    let meta = meta_for(&dir, "summary");
+    let st = session_files::read_session_toml(&dir)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    session_files::write_summary_md(
+        &dir,
+        content,
+        st.number,
+        st.date.as_deref(),
+        st.title.as_deref(),
+        &meta.provider,
+        &meta.model,
+        &meta.generated_at,
+    )
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("write summary.md: {e}")))?;
+    info_for(&dir, session_id, "summary")
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("summary vanished after write")))
+}
+
 /// 0 or 1 synthetic artifacts per kind (the file either exists or doesn't).
 pub fn list_artifacts(
     conn: &Connection,

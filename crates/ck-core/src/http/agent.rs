@@ -210,9 +210,11 @@ pub async fn delete_memory(
 }
 
 pub async fn list_skills(State(state): State<AppState>) -> AppResult<Json<Value>> {
-    Ok(Json(agent::skills::list_json(&agent::skills::skills_root(
-        &state,
-    ))))
+    let root = agent::skills::skills_root(&state);
+    Ok(Json(json!({
+        "path": root.to_string_lossy(),
+        "skills": agent::skills::list_json(&root),
+    })))
 }
 
 pub async fn get_brief(

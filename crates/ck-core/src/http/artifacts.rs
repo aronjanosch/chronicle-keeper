@@ -68,3 +68,15 @@ pub async fn delete_summary(
 ) -> AppResult<Json<Value>> {
     delete(&s, &id, aid).await
 }
+pub async fn update_summary(
+    State(s): State<AppState>,
+    AxPath((id, _aid)): AxPath<(String, i64)>,
+    Json(body): Json<Value>,
+) -> AppResult<Json<ArtifactInfo>> {
+    let content = body
+        .get("content")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::BadRequest("missing content".into()))?;
+    let info = s.with_db(|conn| artifacts::update_summary(conn, &id, content))?;
+    Ok(Json(info))
+}

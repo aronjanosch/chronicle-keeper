@@ -30,6 +30,7 @@ pub enum Tier {
     Write,
     Structural,
     Shell,
+    Foundry,
 }
 
 pub fn tier_of(name: &str) -> Tier {
@@ -43,6 +44,7 @@ pub fn tier_of(name: &str) -> Tier {
         | "write_page" => Tier::Write,
         "rename_page" | "move_page" | "delete_page" | "create_folder" => Tier::Structural,
         "run_command" => Tier::Shell,
+        "sync_foundry" => Tier::Foundry,
         _ => Tier::Read,
     }
 }
@@ -314,6 +316,19 @@ pub fn structural_tools() -> Vec<ToolDef> {
     ]
 }
 
+pub fn foundry_tools() -> Vec<ToolDef> {
+    vec![ToolDef {
+        name: "sync_foundry".into(),
+        description: "Push the whole Codex to the connected FoundryVTT world as Journal entries \
+                      (one-way projection — CK stays the source of truth, Foundry is never read \
+                      back). Pages map to journals, folders to journal folders, [[wikilinks]] to \
+                      @UUID links; removed pages are deleted from Foundry. Always asks first, and \
+                      there is no remote undo. Only offered when the Foundry bridge is configured."
+            .into(),
+        schema: json!({ "type": "object", "properties": {}, "required": [] }),
+    }]
+}
+
 pub fn shell_tools() -> Vec<ToolDef> {
     vec![ToolDef {
         name: "run_command".into(),
@@ -416,6 +431,7 @@ pub fn gate_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value
     match tier_of(name) {
         Tier::Write => write_preview(ctx, name, args),
         Tier::Structural => structural_preview(ctx, name, args),
+        Tier::Foundry => foundry_preview(ctx),
         Tier::Shell => {
             let cmd = args
                 .get("command")
@@ -429,6 +445,83 @@ pub fn gate_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value
         }
         Tier::Read | Tier::Memory => Err(format!("not a gated tool: {name}")),
     }
+}
+
+/// Approval card for a Foundry sync: how many pages create / update / delete.
+/// `action: "sync_foundry"` (no `new`) so the UI shows the summary, not a diff.
+fn foundry_preview(ctx: &ToolCtx<'_>) -> Result<Value, String> {
+    if !crate::foundry::load_settings(ctx.state)
+        .map(|s| s.is_complete())
+        .unwrap_or(false)
+    {
+        return Err(
+            "The Foundry bridge is not configured — set it up in Settings → Foundry VTT bridge."
+                .into(),
+        );
+    }
+    let vault_root = ctx.cfg.codex_dir(ctx.world_root);
+    let pages = vault::list_pages(&vault_root).map_err(app_err)?;
+    let map = crate::foundry::read_map(ctx.world_root);
+    let present: std::collections::HashSet<&str> = pages.iter().map(|p| p.path.as_str()).collect();
+    let updated = pages
+        .iter()
+        .filter(|p| map.pages.contains_key(&p.path))
+        .count();
+    let created = pages.len() - updated;
+    let removed = map
+        .pages
+        .keys()
+        .filter(|k| !present.contains(k.as_str()))
+        .count();
+    let mut parts = Vec::new();
+    if created > 0 {
+        parts.push(format!("{created} new"));
+    }
+    if updated > 0 {
+        parts.push(format!("{updated} updated"));
+    }
+    if removed > 0 {
+        parts.push(format!("{removed} removed"));
+    }
+    let detail = if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", parts.join(", "))
+    };
+    let summary = format!(
+        "push {} Codex page{} to FoundryVTT{detail} — one-way, no remote undo",
+        pages.len(),
+        if pages.len() == 1 { "" } else { "s" },
+    );
+    Ok(json!({ "action": "sync_foundry", "summary": summary }))
+}
+
+/// Run the one-way Codex → Foundry push and report the counts. Async (network);
+/// the agent loop calls this directly rather than through `dispatch`.
+pub async fn run_foundry_sync(ctx: &ToolCtx<'_>) -> Result<String, String> {
+    let settings = crate::foundry::load_settings(ctx.state).map_err(app_err)?;
+    if !settings.is_complete() {
+        return Err(
+            "The Foundry bridge is not configured — set it up in Settings → Foundry VTT bridge."
+                .into(),
+        );
+    }
+    let vault_root = ctx.cfg.codex_dir(ctx.world_root);
+    let report =
+        crate::foundry::sync::sync_world(&settings, ctx.world_root, &vault_root, &ctx.cfg.name)
+            .await
+            .map_err(|e| format!("Foundry sync failed: {e}"))?;
+    let mut out = format!(
+        "Synced the Codex to FoundryVTT — {} created, {} updated, {} deleted.",
+        report.created, report.updated, report.deleted
+    );
+    if !report.errors.is_empty() {
+        out.push_str(&format!("\n{} page(s) failed:", report.errors.len()));
+        for e in report.errors.iter().take(20) {
+            out.push_str(&format!("\n- {e}"));
+        }
+    }
+    Ok(out)
 }
 
 fn write_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, String> {
@@ -1617,6 +1710,25 @@ mod tests {
         let stderr = call(&ctx, "run_command", json!({ "command": "echo oops 1>&2" })).unwrap();
         assert!(stderr.contains("[stderr]") && stderr.contains("oops"));
         assert!(gate_preview(&ctx, "run_command", &json!({ "command": "  " })).is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn foundry_tool_gates_and_needs_config() {
+        let (state, root, cfg) = fixture_world("foundry");
+        let ctx = ToolCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+        };
+        assert_eq!(tier_of("sync_foundry"), Tier::Foundry);
+        // Unconfigured bridge: both the approval preview and the run refuse.
+        assert!(gate_preview(&ctx, "sync_foundry", &json!({})).is_err());
+        let err = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(run_foundry_sync(&ctx))
+            .unwrap_err();
+        assert!(err.contains("not configured"));
         std::fs::remove_dir_all(&root).ok();
     }
 

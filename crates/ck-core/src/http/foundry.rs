@@ -9,18 +9,8 @@ use serde_json::{json, Value};
 use super::vault::{vault_root, world_cfg};
 use crate::config;
 use crate::error::{AppError, AppResult};
-use crate::foundry::{self, FoundrySettings};
+use crate::foundry::{self, load_settings};
 use crate::state::AppState;
-
-fn load_settings(state: &AppState) -> AppResult<FoundrySettings> {
-    state.with_db(|conn| {
-        Ok(FoundrySettings {
-            server_url: config::get_value(conn, "foundry_server_url")?.unwrap_or_default(),
-            user_id: config::get_value(conn, "foundry_user_id")?.unwrap_or_default(),
-            password: config::get_value(conn, "foundry_password")?.unwrap_or_default(),
-        })
-    })
-}
 
 /// GET — current bridge settings; the password is never echoed, only its presence.
 pub async fn get_settings(State(state): State<AppState>) -> AppResult<Json<Value>> {
@@ -84,10 +74,10 @@ pub async fn sync(
             "Foundry bridge is not fully configured (server URL, user id, password).".into(),
         ));
     }
-    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    let (world_root, cfg) = world_cfg(&state, &campaign_id)?;
     let vault = vault_root(&state, &campaign_id)?;
 
-    let report = foundry::sync::sync_world(&s, &world_root, &vault).await?;
+    let report = foundry::sync::sync_world(&s, &world_root, &vault, &cfg.name).await?;
     Ok(Json(json!({
         "created": report.created,
         "updated": report.updated,

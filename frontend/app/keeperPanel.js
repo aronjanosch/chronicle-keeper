@@ -403,7 +403,7 @@ function PermissionCard({ ask }) {
     </div>
     <div style=${{ display: 'flex', gap: 8, padding: '0 10px 10px' }}>
       <button class="btn btn-primary" onClick=${() => decide(ask.requestId, 'allow_once')}>Allow once</button>
-      ${!isShell && html`<button class="btn" onClick=${() => decide(ask.requestId, 'allow_chat')}>Allow for this chat</button>`}
+      ${!isShell && d.action !== 'sync_foundry' && html`<button class="btn" onClick=${() => decide(ask.requestId, 'allow_chat')}>Allow for this chat</button>`}
       <button class="btn" style=${{ marginLeft: 'auto', color: 'var(--burgundy-700)' }} onClick=${() => decide(ask.requestId, 'deny')}>Deny</button>
     </div>
   </div>`;

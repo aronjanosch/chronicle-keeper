@@ -6,7 +6,9 @@ pub mod sync;
 
 pub use client::FoundryClient;
 
+use crate::config;
 use crate::error::{AppError, AppResult};
+use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -24,6 +26,17 @@ impl FoundrySettings {
     pub fn is_complete(&self) -> bool {
         !self.server_url.is_empty() && !self.user_id.is_empty() && !self.password.is_empty()
     }
+}
+
+/// Read the bridge settings from the global app DB.
+pub fn load_settings(state: &AppState) -> AppResult<FoundrySettings> {
+    state.with_db(|conn| {
+        Ok(FoundrySettings {
+            server_url: config::get_value(conn, "foundry_server_url")?.unwrap_or_default(),
+            user_id: config::get_value(conn, "foundry_user_id")?.unwrap_or_default(),
+            password: config::get_value(conn, "foundry_password")?.unwrap_or_default(),
+        })
+    })
 }
 
 // ---------------------------------------------------------------------------

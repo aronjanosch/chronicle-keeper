@@ -33,6 +33,10 @@ const DEFAULT_SKILLS: &[(&str, &str)] = &[
         "flesh-out-a-culture/SKILL.md",
         include_str!("skills_default/flesh-out-a-culture/SKILL.md"),
     ),
+    (
+        "foundry-bridge/SKILL.md",
+        include_str!("skills_default/foundry-bridge/SKILL.md"),
+    ),
 ];
 
 /// `<output_root>/Skills` — the app-global skills library.

@@ -280,7 +280,9 @@ fn checkpoint_gated(
             }
             _ => {}
         },
-        tools::Tier::Shell | tools::Tier::Read | tools::Tier::Memory => {}
+        // Shell + Foundry write outside the vault's snapshot model (external
+        // edits / a remote world) — no checkpoint, no undo.
+        tools::Tier::Shell | tools::Tier::Foundry | tools::Tier::Read | tools::Tier::Memory => {}
     }
     Ok(())
 }
@@ -342,6 +344,14 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
         registry.extend(tools::write_tools());
         registry.extend(tools::structural_tools());
         registry.extend(tools::shell_tools());
+        // Only offered when the bridge is configured — otherwise the tool would
+        // just fail on every call.
+        if crate::foundry::load_settings(state)
+            .map(|s| s.is_complete())
+            .unwrap_or(false)
+        {
+            registry.extend(tools::foundry_tools());
+        }
     }
     let vault_root = cfg.codex_dir(world_root);
     let ctx = tools::ToolCtx {
@@ -419,7 +429,8 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
                             let should_ask = match tier {
                                 tools::Tier::Write => mode == Mode::Ask && !chat_allows_write,
                                 tools::Tier::Structural => !chat_allows_write,
-                                tools::Tier::Shell => true,
+                                // Always ask; remote, no undo — never remembered.
+                                tools::Tier::Shell | tools::Tier::Foundry => true,
                                 tools::Tier::Read | tools::Tier::Memory => false,
                             };
                             if should_ask {
@@ -441,7 +452,12 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
                                     Decision::Deny => {
                                         refusal = Some("The user denied this action.".into())
                                     }
-                                    Decision::AllowChat if tier != tools::Tier::Shell => {
+                                    Decision::AllowChat
+                                        if matches!(
+                                            tier,
+                                            tools::Tier::Write | tools::Tier::Structural
+                                        ) =>
+                                    {
                                         chat_allows_write = true
                                     }
                                     _ => {}
@@ -467,6 +483,12 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
             });
             let (raw, is_error) = match refusal {
                 Some(msg) => (msg, true),
+                // Foundry sync is async (network) — call it directly; every
+                // other tool is synchronous via `dispatch`.
+                None if call.name == "sync_foundry" => match tools::run_foundry_sync(&ctx).await {
+                    Ok(raw) => (raw, false),
+                    Err(msg) => (msg, true),
+                },
                 None => match tools::dispatch(&ctx, &call.name, &call.arguments) {
                     Ok(raw) => (raw, false),
                     Err(msg) => (msg, true),

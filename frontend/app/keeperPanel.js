@@ -75,8 +75,20 @@ async function fetchChatInto(chatId) {
   patchKeeper({ chatId, events, undoable: undoable || 0, attachments: att.attachments || [], live: null, error: null, ...defaultPick() });
 }
 
+// Blank, never-used chats are ephemeral: discard the one we're leaving so the
+// list never fills with empty "New chat" rows. Fire-and-forget.
+function discardIfEmpty(cid, chat) {
+  if (!cid || !chat?.chatId || chat.live || chat.events.length) return;
+  apiJson(`/campaigns/${cid}/agent/chats/${chat.chatId}`, 'DELETE', {})
+    .then(() => bump('keeper')).catch(() => {});
+}
+
 export async function openChat(chatId) {
-  try { await fetchChatInto(chatId); } catch (e) { patchKeeper({ error: String(e.message || e) }); }
+  const prev = keeperState();
+  try {
+    await fetchChatInto(chatId);
+    if (prev.chatId && prev.chatId !== chatId) discardIfEmpty(prev.campaignId, prev);
+  } catch (e) { patchKeeper({ error: String(e.message || e) }); }
 }
 
 export async function openPanel() {
@@ -93,8 +105,16 @@ export async function openPanel() {
   if (k.chatId) return;
   try {
     const { chats } = await apiFetch(`/campaigns/${cid}/agent/chats`);
-    let chat = chats[0];
-    if (!chat) { chat = await apiJson(`/campaigns/${cid}/agent/chats`, 'POST', {}); bump('keeper'); }
+    // Most recent first (server sorts by mtime). Prune abandoned blanks, keeping
+    // at most the most-recent chat — that becomes the open one (or a fresh blank).
+    const keep = chats[0];
+    for (const c of chats) {
+      if (c.id !== keep?.id && c.message_count === 0) {
+        apiJson(`/campaigns/${cid}/agent/chats/${c.id}`, 'DELETE', {}).catch(() => {});
+      }
+    }
+    const chat = keep || await apiJson(`/campaigns/${cid}/agent/chats`, 'POST', {});
+    bump('keeper');
     await fetchChatInto(chat.id);
   } catch (e) {
     patchKeeper({ error: String(e.message || e) });
@@ -104,6 +124,9 @@ export async function openPanel() {
 export async function newChat() {
   const cid = store.campaign?.campaign_id;
   if (!cid) return;
+  // Already sitting on an untouched blank? Reuse it instead of stacking another.
+  const k = keeperState();
+  if (k.chatId && !k.events.length && !k.live) return k.chatId;
   try {
     const chat = await apiJson(`/campaigns/${cid}/agent/chats`, 'POST', {});
     patchKeeper({ chatId: chat.id, events: [], undoable: 0, attachments: [], live: null, error: null, ...defaultPick() });
@@ -116,8 +139,14 @@ export async function newChat() {
 
 export async function sendMessage(text, images = []) {
   const cid = store.campaign?.campaign_id;
-  const k = keeperState();
-  if (!cid || !k.chatId || k.live) return;
+  let k = keeperState();
+  if (!cid || k.live) return;
+  // No chat yet (rail opened, openPanel still in flight, or a fresh world):
+  // create one so the message lands instead of vanishing.
+  if (!k.chatId) {
+    if (!(await newChat())) return;
+    k = keeperState();
+  }
   const events = [...k.events, { type: 'user', text, images }];
   patchKeeper({ events, live: { text: '', tools: [] }, error: null });
   let toolsRan = false;
@@ -656,11 +685,16 @@ export function Composer({ busy }) {
 
 export function Transcript({ k, empty }) {
   const ref = useRef(null);
+  const pinned = useRef(true);
+  const onScroll = () => {
+    const el = ref.current;
+    if (el) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  };
   useEffect(() => {
-    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+    if (ref.current && pinned.current) ref.current.scrollTop = ref.current.scrollHeight;
   }, [k.events.length, k.live?.text, k.live?.tools?.length, k.live?.ask]);
   const isEmpty = !k.events.length && !k.live;
-  return html`<div ref=${ref} style=${{ flex: 1, overflow: 'auto', padding: '6px 14px' }}>
+  return html`<div ref=${ref} onScroll=${onScroll} style=${{ flex: 1, overflow: 'auto', padding: '6px 14px' }}>
     ${isEmpty && (empty || html`<div style=${{ color: 'var(--ink-faint)', fontSize: 13, padding: '24px 8px', textAlign: 'center', lineHeight: 1.6 }}>
       The Keeper knows this world's Codex and sessions.<br />Ask about people, places, or what happened.
     </div>`)}

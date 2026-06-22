@@ -28,11 +28,17 @@ export async function openCampaign(id) {
         ? apiFetch(`/campaigns/${id}/vault/tree`).catch(() => null)
         : Promise.resolve(null),
     ]);
+    // Chats are per-world: drop a previous world's chat binding so the Keeper
+    // never posts a stale chatId to this world's root (→ "Chat not found").
+    const keeper = store.keeper && store.keeper.campaignId !== id
+      ? { ...store.keeper, campaignId: id, chatId: null, events: [], attachments: [], live: null, error: null }
+      : store.keeper;
     setState({
       campaign,
       campaignSessions: sessions || [],
       vaultPages: vaultTree?.pages || [],
       vaultFolders: vaultTree?.folders || [],
+      keeper,
       loading: false,
     });
     loadWorldTabs(id);

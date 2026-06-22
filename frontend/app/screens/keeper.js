@@ -6,7 +6,7 @@ import { navigate, apiFetch, apiJson, bump, fmtDate } from '../core.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Spinner } from '../ui.js';
 import {
-  keeperState, openChat, newChat, ModeSelect, Conversation, sendMessage,
+  keeperState, patchKeeper, openChat, newChat, ModeSelect, Conversation, sendMessage,
 } from '../keeperPanel.js';
 import { MemoryView, fetchBriefStatus } from '../keeperMemory.js';
 
@@ -47,7 +47,11 @@ export function KeeperScreen({ store }) {
     e.stopPropagation();
     try {
       await apiJson(`/campaigns/${cid}/agent/chats/${id}`, 'DELETE', {});
-      if (keeperState().chatId === id) openChat((chats || []).find((x) => x.id !== id)?.id);
+      if (keeperState().chatId === id) {
+        const next = (chats || []).find((x) => x.id !== id);
+        if (next) { openChat(next.id); }
+        else { patchKeeper({ chatId: null, events: [], live: null }); newChat(); }
+      }
       bump('keeper');
     } catch (_) {}
   };

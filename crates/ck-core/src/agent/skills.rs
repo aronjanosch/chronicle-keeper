@@ -185,7 +185,7 @@ pub fn for_kind(root: &Path, kind: &str) -> Vec<Skill> {
     }
     list(root)
         .into_iter()
-        .filter(|s| s.kinds.iter().any(|k| *k == want))
+        .filter(|s| s.kinds.contains(&want))
         .collect()
 }
 

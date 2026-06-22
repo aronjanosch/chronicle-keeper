@@ -954,6 +954,20 @@ export async function saveConfig(payload, apiBaseValue) {
   return updated;
 }
 
+// Foundry bridge (Phase 23) — codex → Journals projection.
+export async function loadFoundrySettings() {
+  return apiFetch('/foundry/settings');
+}
+export async function saveFoundrySettings(payload) {
+  return apiJson('/foundry/settings', 'PUT', payload);
+}
+export async function testFoundry() {
+  return apiJson('/foundry/test', 'POST', {});
+}
+export async function syncFoundry(campaignId) {
+  return apiJson(`/campaigns/${campaignId}/foundry/sync`, 'POST', {});
+}
+
 export async function loadLlmProviders(force) {
   if (store.llmProviders && !force) return store.llmProviders;
   let list = [];

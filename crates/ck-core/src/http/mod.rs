@@ -4,6 +4,7 @@ mod atlas;
 mod campaigns;
 mod codex;
 mod codex_update;
+mod foundry;
 mod index;
 mod llm;
 mod migration;
@@ -93,6 +94,12 @@ pub fn router(state: AppState) -> Router {
             post(vault::history_restore),
         )
         .route("/campaigns/:id/backup", post(vault::backup))
+        .route(
+            "/foundry/settings",
+            get(foundry::get_settings).put(foundry::put_settings),
+        )
+        .route("/foundry/test", post(foundry::test_connection))
+        .route("/campaigns/:id/foundry/sync", post(foundry::sync))
         .route("/campaigns/:id/vault/kinds", get(vault::kind_schemas))
         .route("/campaigns/:id/vault/snippets", get(vault::list_snippets))
         .route("/campaigns/:id/vault/templates", get(vault::list_templates))

@@ -1,7 +1,7 @@
 // Screen 08 — Settings. Calm single page, grouped into cards. Real config.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { store, setOp, openModal } from '../core.js';
-import { loadConfig, saveConfig, loadLlmProviders, loadPromptTemplates, deletePromptTemplate, restorePromptDefaults, pingLlmProvider, loadSkillsPath, revealPath } from '../actions.js';
+import { loadConfig, saveConfig, loadLlmProviders, loadPromptTemplates, deletePromptTemplate, restorePromptDefaults, pingLlmProvider, loadSkillsPath, revealPath, loadFoundrySettings, saveFoundrySettings, testFoundry, syncFoundry } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Btn } from '../ui.js';
 
@@ -89,6 +89,63 @@ function TemplatesCard() {
       <${Btn} kind="secondary" size="sm" icon="plus" onClick=${() => openModal('promptTemplate', {})}>New template</${Btn}>
       <${Btn} kind="ghost" size="sm" onClick=${restore}>Restore defaults</${Btn}>
     </div>
+  </${SettingsCard}>`;
+}
+
+function FoundryCard() {
+  const [f, setF] = useState(null);
+  const [busy, setBusy] = useState('');
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+
+  useEffect(() => {
+    loadFoundrySettings()
+      .then((s) => setF({ server_url: s.server_url || '', user_id: s.user_id || '', password: '', password_set: !!s.password_set }))
+      .catch((e) => setOp(`Can't load Foundry settings: ${e.message}`, 'err'));
+  }, []);
+
+  if (!f) return html`<${SettingsCard} icon="link" title="Foundry VTT bridge" desc="Project codex pages into a live FoundryVTT world as Journal entries."><div style=${{ padding: '12px 0', fontSize: 12.5, color: 'var(--ink-muted)' }}>Loading…</div></${SettingsCard}>`;
+
+  async function save() {
+    setBusy('save');
+    try {
+      const payload = { server_url: f.server_url.trim(), user_id: f.user_id.trim() };
+      if (f.password) payload.password = f.password; // omit to keep the stored one
+      await saveFoundrySettings(payload);
+      setF((s) => ({ ...s, password: '', password_set: s.password_set || !!s.password }));
+      setOp('Foundry settings saved', 'done');
+    } catch (e) { setOp(e.message, 'err'); } finally { setBusy(''); }
+  }
+  async function test() {
+    setBusy('test');
+    try { await testFoundry(); setOp('Foundry bridge connected', 'done'); }
+    catch (e) { setOp(`Foundry: ${e.message}`, 'err'); } finally { setBusy(''); }
+  }
+  async function sync() {
+    setBusy('sync');
+    try {
+      const r = await syncFoundry(store.campaign.campaign_id);
+      const msg = `Synced — ${r.created} created, ${r.updated} updated, ${r.deleted} deleted${r.errors?.length ? `, ${r.errors.length} errors` : ''}`;
+      setOp(msg, r.errors?.length ? 'err' : 'done');
+    } catch (e) { setOp(`Sync failed: ${e.message}`, 'err'); } finally { setBusy(''); }
+  }
+
+  return html`<${SettingsCard} icon="link" title="Foundry VTT bridge" desc="Project codex pages into a live FoundryVTT world as Journal entries. One-way: Chronicle Keeper is the source of truth.">
+    <${Row} label="Server URL" hint="Your Foundry world's base URL, e.g. https://foundry.example.com (no /game).">
+      <input value=${f.server_url} onInput=${(e) => set('server_url', e.target.value)} placeholder="https://foundry.example.com" style=${inp({ fontFamily: 'var(--font-mono)' })} />
+    </${Row}>
+    <${Row} label="API user id" hint="The 16-char document _id of a dedicated Assistant-GM user (game.users.getName('name').id in Foundry's console).">
+      <input value=${f.user_id} onInput=${(e) => set('user_id', e.target.value)} placeholder="K7zWvqylw1bpbI9b" style=${inp({ width: 280, fontFamily: 'var(--font-mono)' })} />
+    </${Row}>
+    <${Row} label="Password" hint="That user's password. Stored on this machine only; never displayed.">
+      <input type="password" value=${f.password} onInput=${(e) => set('password', e.target.value)} placeholder=${f.password_set ? '•••••••• (saved)' : ''} style=${inp({ width: 280, fontFamily: 'var(--font-mono)' })} />
+    </${Row}>
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+      <${Btn} kind="secondary" size="sm" disabled=${!!busy} onClick=${save}>${busy === 'save' ? 'Saving…' : 'Save'}</${Btn}>
+      <${Btn} kind="ghost" size="sm" disabled=${!!busy} onClick=${test}>${busy === 'test' ? 'Testing…' : 'Test connection'}</${Btn}>
+      <div style=${{ flex: 1 }} />
+      ${store.campaign && html`<${Btn} kind="primary" size="sm" icon="upload" disabled=${!!busy} onClick=${sync}>${busy === 'sync' ? 'Syncing…' : `Sync “${store.campaign.name}” now`}</${Btn}>`}
+    </div>
+    ${!store.campaign && html`<div style=${{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 8 }}>Open a world to sync its codex.</div>`}
   </${SettingsCard}>`;
 }
 
@@ -180,6 +237,8 @@ export function SettingsScreen({ store }) {
         </${SettingsCard}>
 
         <${TemplatesCard} />
+
+        <${FoundryCard} />
 
         <${SettingsCard} icon="folder" title="Storage" desc="Where Chronicle Keeper keeps its database, audio and model.">
           <${Row} label="Data folder" hint="Sessions, transcripts and the model live here. Absolute path.">

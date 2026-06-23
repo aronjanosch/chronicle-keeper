@@ -172,11 +172,11 @@ pub fn memory_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "write_memory".into(),
-            description: "Save or update a memory — a lasting user preference, a correction to how you work, a style note, or an ongoing meta-task. NEVER store world lore (NPCs, places, events, relationships) here — that belongs in a Codex page. Re-use the same name to update rather than duplicate.".into(),
+            description: "Save or update a lasting work preference, correction, style note, or meta-task (not world lore). Re-use a name to update, don't duplicate.".into(),
             schema: obj(
                 json!({
-                    "name": { "type": "string", "description": "short kebab-case label, e.g. terse-summaries" },
-                    "description": { "type": "string", "description": "one-line summary shown in your memory index" },
+                    "name": { "type": "string", "description": "short kebab-case label" },
+                    "description": { "type": "string", "description": "one-line index summary" },
                     "type": { "type": "string", "enum": ["preference", "task", "style", "correction"] },
                     "content": { "type": "string", "description": "the fact, a few lines max" }
                 }),

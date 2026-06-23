@@ -43,10 +43,14 @@ pub fn tier_of(name: &str) -> Tier {
         | "write_page" => Tier::Write,
         "rename_page" | "move_page" | "delete_page" | "create_folder" => Tier::Structural,
         "run_command" => Tier::Shell,
+        // Writes: always-ask, no remote undo. Live-play reads (foundry_get_actor /
+        // list_actors / scene_state / lookup) are ungated — they fall through to
+        // Tier::Read since they only query the table, never mutate it.
         "sync_foundry"
         | "foundry_create_actor"
         | "foundry_create_scene"
-        | "foundry_create_rolltable" => Tier::Foundry,
+        | "foundry_create_rolltable"
+        | "foundry_post_chat" => Tier::Foundry,
         _ => Tier::Read,
     }
 }
@@ -384,6 +388,46 @@ pub fn foundry_tools() -> Vec<ToolDef> {
                 &["name", "entries"],
             ),
         },
+        ToolDef {
+            name: "foundry_list_actors".into(),
+            description: "List every Actor (name + type) in the connected FoundryVTT world — \
+                          who/what exists at the table. Read-only, no approval needed. See the \
+                          foundry-bridge skill."
+                .into(),
+            schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
+        ToolDef {
+            name: "foundry_get_actor".into(),
+            description: "Look up one Actor by name in the connected FoundryVTT world: core fields, \
+                          its items, and the raw system stat block (game-system specific — interpret \
+                          it for the user). Read-only, no approval needed."
+                .into(),
+            schema: obj(json!({ "name": { "type": "string" } }), &["name"]),
+        },
+        ToolDef {
+            name: "foundry_scene_state".into(),
+            description: "Describe the active Scene in the connected FoundryVTT world — its name, \
+                          size, and the tokens placed on it (with their linked actor ids). Read-only, \
+                          no approval needed."
+                .into(),
+            schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
+        ToolDef {
+            name: "foundry_lookup".into(),
+            description: "Search the installed game system's compendium packs (rules / skills / \
+                          items) by name in the connected FoundryVTT world — the GM's own system + \
+                          version, offline. Read-only, no approval needed."
+                .into(),
+            schema: obj(json!({ "query": { "type": "string" } }), &["query"]),
+        },
+        ToolDef {
+            name: "foundry_post_chat".into(),
+            description: "Post a message to the table's chat log in the connected FoundryVTT world \
+                          (markdown rendered to HTML). The one live-play write — always asks first, \
+                          no remote undo. Use only when the user asks to say something to the table."
+                .into(),
+            schema: obj(json!({ "message": { "type": "string" } }), &["message"]),
+        },
     ]
 }
 
@@ -675,6 +719,12 @@ fn foundry_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value,
                 if n == 1 { "y" } else { "ies" }
             )
         }
+        "foundry_post_chat" => {
+            let msg = str_arg("message");
+            let preview: String = msg.chars().take(80).collect();
+            let ellipsis = if msg.chars().count() > 80 { "…" } else { "" };
+            format!("post to the FoundryVTT chat log: “{preview}{ellipsis}” — no remote undo")
+        }
         _ => return foundry_sync_preview(ctx),
     };
     Ok(json!({ "action": name, "summary": summary }))
@@ -769,7 +819,15 @@ pub async fn run_foundry_sync(ctx: &ToolCtx<'_>) -> Result<String, String> {
 pub fn is_foundry_async(name: &str) -> bool {
     matches!(
         name,
-        "sync_foundry" | "foundry_create_actor" | "foundry_create_scene" | "foundry_create_rolltable"
+        "sync_foundry"
+            | "foundry_create_actor"
+            | "foundry_create_scene"
+            | "foundry_create_rolltable"
+            | "foundry_post_chat"
+            | "foundry_list_actors"
+            | "foundry_get_actor"
+            | "foundry_scene_state"
+            | "foundry_lookup"
     )
 }
 
@@ -871,6 +929,53 @@ pub async fn run_foundry_tool(
                     .await
                     .map(|id| format!("Created roll table “{tname}” with {n} entries in Foundry [id {id}]."))
                     .map_err(|e| format!("create roll table failed: {e}"))
+            }
+        }
+        "foundry_list_actors" => client
+            .fetch_world()
+            .await
+            .map(|w| crate::foundry::read::list_actors(&w))
+            .map_err(|e| format!("fetch world failed: {e}")),
+        "foundry_scene_state" => client
+            .fetch_world()
+            .await
+            .map(|w| crate::foundry::read::scene_state(&w))
+            .map_err(|e| format!("fetch world failed: {e}")),
+        "foundry_get_actor" => {
+            let aname = str_arg("name");
+            if aname.is_empty() {
+                Err("name is required".to_string())
+            } else {
+                client
+                    .fetch_world()
+                    .await
+                    .map(|w| crate::foundry::read::get_actor(&w, &aname))
+                    .map_err(|e| format!("fetch world failed: {e}"))
+            }
+        }
+        "foundry_lookup" => {
+            let query = str_arg("query");
+            if query.is_empty() {
+                Err("query is required".to_string())
+            } else {
+                client
+                    .fetch_world()
+                    .await
+                    .map(|w| crate::foundry::read::lookup(&w, &query))
+                    .map_err(|e| format!("fetch world failed: {e}"))
+            }
+        }
+        "foundry_post_chat" => {
+            let msg = str_arg("message");
+            if msg.trim().is_empty() {
+                Err("message is empty".to_string())
+            } else {
+                let html = crate::foundry::body_to_html(&msg, &|_| None);
+                client
+                    .post_chat(&html, &settings.user_id)
+                    .await
+                    .map(|id| format!("Posted to the Foundry chat log [id {id}]."))
+                    .map_err(|e| format!("post chat failed: {e}"))
             }
         }
         other => Err(format!("unknown foundry tool: {other}")),
@@ -2103,10 +2208,21 @@ mod tests {
             "foundry_create_actor",
             "foundry_create_scene",
             "foundry_create_rolltable",
+            "foundry_post_chat",
         ] {
             assert_eq!(tier_of(t), Tier::Foundry);
             assert!(is_foundry_async(t));
             assert!(gate_preview(&ctx, t, &json!({})).is_err());
+        }
+        // Live-play reads are ungated (Tier::Read) but still async + bridge-gated.
+        for t in [
+            "foundry_list_actors",
+            "foundry_get_actor",
+            "foundry_scene_state",
+            "foundry_lookup",
+        ] {
+            assert_eq!(tier_of(t), Tier::Read);
+            assert!(is_foundry_async(t));
         }
         // Unconfigured bridge: every runner refuses before touching the network.
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -2118,6 +2234,11 @@ mod tests {
             "foundry_create_actor",
             "foundry_create_scene",
             "foundry_create_rolltable",
+            "foundry_post_chat",
+            "foundry_list_actors",
+            "foundry_get_actor",
+            "foundry_scene_state",
+            "foundry_lookup",
         ] {
             let err = rt.block_on(run_foundry_tool(&ctx, t, &json!({}))).unwrap_err();
             assert!(err.contains("not configured"), "{t}: {err}");

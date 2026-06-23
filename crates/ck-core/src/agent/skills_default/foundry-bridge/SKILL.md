@@ -1,6 +1,6 @@
 ---
 name: Foundry VTT bridge
-description: How the one-way Codex → FoundryVTT Journal projection works (sync_foundry) and how the ad-hoc create tools (foundry_create_actor/scene/rolltable) behave. Pull before pushing the world to Foundry, making a quick table-side document, or when the user asks about the mirror.
+description: How the one-way Codex → FoundryVTT Journal projection works (sync_foundry), how the ad-hoc create tools (foundry_create_actor/scene/rolltable) behave, and the live-play read tools (foundry_list_actors/get_actor/scene_state/lookup + foundry_post_chat). Pull before pushing the world, making a table-side document, answering a question about the live table, or when the user asks about the mirror.
 ---
 
 ## What the bridge does
@@ -70,3 +70,37 @@ in-the-moment table aids.
 
 After a sync, report the counts it returns (created / updated / deleted) and surface any
 per-page errors instead of claiming a clean run.
+
+## Live-play reads (asking the table questions)
+
+The bridge is one-way for the **Codex** — but during a live session the Keeper can *read* the
+running table to answer the GM's questions. These reads are **ephemeral lookups**: they query
+the live world and return an answer, never write anything back to the Codex (the "Foundry is
+never truth" rule is about codex sync, not about asking the table a question). They are
+**read-only and need no approval**.
+
+- **`foundry_list_actors`** — every Actor (name + type) in the world. "Who exists at the table?"
+- **`foundry_get_actor`** — `name`. Core fields, the actor's items, and the **raw `system` stat
+  block**. Foundry stores mechanical stats (HP/AC/skill mods) under `system.*` in a
+  **game-system-specific** shape — so the tool hands you that raw JSON and **you interpret it**
+  for the user's system (5e `system.attributes.hp.value`, Daggerheart's own shape, etc.). Don't
+  assume 5e; read what's there.
+- **`foundry_scene_state`** — the active scene's name, size, and the tokens on it (with linked
+  actor ids you can cross-reference via `foundry_get_actor`). "Who's on the battle map?"
+- **`foundry_lookup`** — `query`. Searches the installed **game system's compendium packs**
+  (rules / skills / items) by name. This is the right way to look up what a skill or rule does:
+  it matches the GM's actual system + version and works offline — prefer it over guessing. If it
+  reports no index was available, the system may load packs lazily; say so rather than inventing
+  an answer.
+
+## Posting to the table (the one live write)
+
+- **`foundry_post_chat`** — `message` (markdown, rendered to HTML). Posts to the table's chat
+  log. This is the only live-play *write*, so it is **approval-gated, no remote undo** like the
+  other writes. Use it only when the user clearly asks to say something to the table (read a box
+  text, drop a result in chat) — never to "show your work."
+
+Reads vs writes: questions, lookups, and "what's on the scene" are free reads. Posting to chat,
+creating an actor/scene/table, and `sync_foundry` are gated writes. When the GM asks *for* an
+NPC or a roll table mid-session, the create tools are the move; when they ask *about* the table,
+the read tools are.

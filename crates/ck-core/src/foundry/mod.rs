@@ -2,6 +2,7 @@
 //! entries. CK is the source of truth; Foundry is a projection, never read back.
 
 pub mod client;
+pub mod read;
 pub mod sync;
 
 pub use client::{fetch_status, FoundryClient};
@@ -303,6 +304,20 @@ impl FoundryClient {
                     "formula": format!("1d{}", (low - 1).max(1)),
                     "results": results,
                 }] }),
+            )
+            .await?;
+        first_id(&resp)
+    }
+
+    /// Posts a `ChatMessage` to the table's chat log; returns its id. The content
+    /// is sent as HTML (Foundry renders it). `author` is the posting user's 16-char
+    /// `_id` (v14 renamed the old `user` field to `author`).
+    pub async fn post_chat(&mut self, html: &str, author: &str) -> AppResult<String> {
+        let resp = self
+            .modify_document(
+                "ChatMessage",
+                "create",
+                json!({ "data": [{ "content": html, "author": author }] }),
             )
             .await?;
         first_id(&resp)
@@ -630,5 +645,54 @@ mod live_tests {
 
         c.close().await;
         println!("RUST FOUNDRY CREATE SMOKE PASS");
+    }
+
+    // Phase 25 live-play reads + post_chat. Confirms the `world` emit ack carries
+    // the snapshot (the open transport question) and that the agnostic parsers find
+    // real documents. Dumps the snapshot's top-level keys first so any schema drift
+    // is visible. Same env + invocation, filter `foundry_live_read`:
+    //   FOUNDRY_URL=… FOUNDRY_USER_ID=… FOUNDRY_PASSWORD=… \
+    //     cargo test -p ck-core foundry_live_read -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn foundry_live_read_cycle() {
+        let url = std::env::var("FOUNDRY_URL").unwrap();
+        let uid = std::env::var("FOUNDRY_USER_ID").unwrap();
+        let pw = std::env::var("FOUNDRY_PASSWORD").unwrap();
+
+        let mut c = FoundryClient::connect(&url, &uid, &pw)
+            .await
+            .expect("connect");
+
+        let world = c.fetch_world().await.expect("fetch world");
+        if let Value::Object(map) = &world {
+            let keys: Vec<&String> = map.keys().collect();
+            println!("world snapshot top-level keys: {keys:?}");
+        } else {
+            println!("UNEXPECTED world payload shape: {world}");
+        }
+
+        println!("--- list_actors ---\n{}", read::list_actors(&world));
+        println!("--- scene_state ---\n{}", read::scene_state(&world));
+        println!("--- lookup 'stealth' ---\n{}", read::lookup(&world, "stealth"));
+
+        // get_actor against the first actor present, to prove the raw `system`
+        // blob extraction on a real (system-specific) sheet.
+        if let Some(first) = read::collection(&world, "actors")
+            .first()
+            .and_then(|a| a.get("name"))
+            .and_then(|n| n.as_str())
+        {
+            println!("--- get_actor {first:?} ---\n{}", read::get_actor(&world, first));
+        }
+
+        let id = c
+            .post_chat("<p>CK Phase 25 live-read smoke.</p>", &uid)
+            .await
+            .expect("post chat");
+        println!("posted chat message {id}");
+
+        c.close().await;
+        println!("RUST FOUNDRY READ SMOKE PASS");
     }
 }

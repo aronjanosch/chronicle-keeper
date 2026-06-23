@@ -173,6 +173,22 @@ impl FoundryClient {
         Ok(resp)
     }
 
+    /// Fetches the live world snapshot — the same payload the browser receives
+    /// as the **ack** of its `world` emit on connect (cf. the module header #3).
+    /// Carries every world document (actors, items, scenes, journal, folders,
+    /// the active scene, compendium pack metadata + indices). Read-only; nothing
+    /// is mutated. Used for Phase 25 live-play lookups, fetched fresh per call so
+    /// mid-session state never goes stale.
+    pub async fn fetch_world(&mut self) -> AppResult<Value> {
+        let resp = self.emit_ack(json!(["world"])).await?;
+        if let Some(err) = resp.get("error").and_then(|e| e.as_str()) {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "foundry world fetch rejected: {err}"
+            )));
+        }
+        Ok(resp)
+    }
+
     /// Creates a directory under the user data root (`storage = "data"`),
     /// building each path level. The `/upload` route won't create dirs, so the
     /// scene-art target must be made first. An already-existing level is fine.
@@ -275,10 +291,19 @@ async fn authenticate(base: &str, user_id: &str, password: &str) -> AppResult<St
         .send()
         .await
         .map_err(|e| AppError::BadRequest(format!("foundry POST /join: {e}")))?;
-    let body: Value = post
-        .json()
+    // With no world launched, Foundry serves the setup page (HTML, not JSON) here.
+    // Detect that and say so plainly instead of leaking a JSON-decode error.
+    let text = post
+        .text()
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("foundry /join body: {e}")))?;
+    let body: Value = serde_json::from_str(&text).map_err(|_| {
+        AppError::BadRequest(
+            "Foundry returned no login response — make sure a world is launched (Return to Setup \
+             → Launch World), then try again."
+                .into(),
+        )
+    })?;
     if body.get("status").and_then(|s| s.as_str()) != Some("success") {
         let msg = body
             .get("message")

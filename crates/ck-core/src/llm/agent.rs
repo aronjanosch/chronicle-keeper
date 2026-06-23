@@ -148,20 +148,46 @@ fn anthropic_body(msgs: &[Msg], tools: &[ToolDef], model: &str, stream: bool) ->
             ),
         }
     }
+    // Prompt caching (Anthropic only — Ollama/Gemini ignore cache_control or
+    // cache automatically). Render order is tools → system → messages: one
+    // breakpoint at the end of the stable prefix (system, which also caches the
+    // tools before it — identical every turn and every agent-loop iteration),
+    // plus one on the latest message so the growing conversation is cached too.
+    // Reads cost ~0.1x; the diagnostic log surfaces cache_read_input_tokens.
+    if let Some(blocks) = messages
+        .last_mut()
+        .and_then(|m| m["content"].as_array_mut())
+    {
+        if let Some(last) = blocks.last_mut() {
+            last["cache_control"] = json!({ "type": "ephemeral" });
+        }
+    }
     let mut body = json!({
         "model": model,
         "max_tokens": 8192,
         "stream": stream,
         "messages": messages,
     });
-    if !system.is_empty() {
-        body["system"] = json!(system);
-    }
     if !tools.is_empty() {
-        body["tools"] = tools
+        let mut defs: Vec<Value> = tools
             .iter()
             .map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.schema }))
             .collect();
+        // With no system block, the last tool is the end of the stable prefix.
+        if system.is_empty() {
+            if let Some(last) = defs.last_mut() {
+                last["cache_control"] = json!({ "type": "ephemeral" });
+            }
+        }
+        body["tools"] = json!(defs);
+    }
+    if !system.is_empty() {
+        // Text-block form so cache_control can ride the prefix end.
+        body["system"] = json!([{
+            "type": "text",
+            "text": system,
+            "cache_control": { "type": "ephemeral" },
+        }]);
     }
     body
 }
@@ -711,7 +737,7 @@ mod tests {
     #[test]
     fn anthropic_body_shape() {
         let body = anthropic_body(&sample_msgs(), &tool_defs(), "claude-sonnet-4-6", true);
-        assert_eq!(body["system"], "You are the Keeper.");
+        assert_eq!(body["system"][0]["text"], "You are the Keeper.");
         let msgs = body["messages"].as_array().unwrap();
         // user, assistant (text + tool_use merged), user (tool_result)
         assert_eq!(msgs.len(), 3);
@@ -723,6 +749,24 @@ mod tests {
         assert_eq!(msgs[2]["content"][0]["type"], "tool_result");
         assert_eq!(msgs[2]["content"][0]["tool_use_id"], "tc1");
         assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
+    }
+
+    #[test]
+    fn anthropic_cache_breakpoints() {
+        // System present → breakpoint on the system block (covers tools too),
+        // not on the tools; plus one on the latest message.
+        let body = anthropic_body(&sample_msgs(), &tool_defs(), "claude-sonnet-4-6", false);
+        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
+        assert!(body["tools"][0].get("cache_control").is_none());
+        let msgs = body["messages"].as_array().unwrap();
+        let last = msgs.last().unwrap()["content"].as_array().unwrap();
+        assert_eq!(last.last().unwrap()["cache_control"]["type"], "ephemeral");
+
+        // No system → the last tool carries the stable-prefix breakpoint.
+        let no_sys = vec![Msg::User("hi".into())];
+        let body = anthropic_body(&no_sys, &tool_defs(), "m", false);
+        assert!(body.get("system").is_none());
+        assert_eq!(body["tools"][0]["cache_control"]["type"], "ephemeral");
     }
 
     #[test]

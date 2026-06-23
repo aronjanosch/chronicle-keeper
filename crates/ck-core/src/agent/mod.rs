@@ -483,12 +483,14 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
             });
             let (raw, is_error) = match refusal {
                 Some(msg) => (msg, true),
-                // Foundry sync is async (network) — call it directly; every
+                // Foundry tools are async (network) — call them directly; every
                 // other tool is synchronous via `dispatch`.
-                None if call.name == "sync_foundry" => match tools::run_foundry_sync(&ctx).await {
-                    Ok(raw) => (raw, false),
-                    Err(msg) => (msg, true),
-                },
+                None if tools::is_foundry_async(&call.name) => {
+                    match tools::run_foundry_tool(&ctx, &call.name, &call.arguments).await {
+                        Ok(raw) => (raw, false),
+                        Err(msg) => (msg, true),
+                    }
+                }
                 None => match tools::dispatch(&ctx, &call.name, &call.arguments) {
                     Ok(raw) => (raw, false),
                     Err(msg) => (msg, true),

@@ -44,7 +44,10 @@ pub fn tier_of(name: &str) -> Tier {
         | "write_page" => Tier::Write,
         "rename_page" | "move_page" | "delete_page" | "create_folder" => Tier::Structural,
         "run_command" => Tier::Shell,
-        "sync_foundry" => Tier::Foundry,
+        "sync_foundry"
+        | "foundry_create_actor"
+        | "foundry_create_scene"
+        | "foundry_create_rolltable" => Tier::Foundry,
         _ => Tier::Read,
     }
 }
@@ -317,17 +320,69 @@ pub fn structural_tools() -> Vec<ToolDef> {
 }
 
 pub fn foundry_tools() -> Vec<ToolDef> {
-    vec![ToolDef {
-        name: "sync_foundry".into(),
-        description: "Push the whole world to the connected FoundryVTT world (one-way projection — \
-                      CK stays the source of truth, Foundry is never read back). Codex pages map to \
-                      journals, folders to journal folders, [[wikilinks]] to @UUID links; atlas maps \
-                      become scenes (art uploaded as the background) with a linked note per pin. \
-                      Removed pages/maps are deleted from Foundry. Always asks first, and there is \
-                      no remote undo. Only offered when the Foundry bridge is configured."
-            .into(),
-        schema: json!({ "type": "object", "properties": {}, "required": [] }),
-    }]
+    fn obj(props: Value, required: &[&str]) -> Value {
+        json!({ "type": "object", "properties": props, "required": required })
+    }
+    vec![
+        ToolDef {
+            name: "sync_foundry".into(),
+            description: "Push the whole world to the connected FoundryVTT world (one-way projection — \
+                          CK stays the source of truth, Foundry is never read back). Codex pages map to \
+                          journals, folders to journal folders, [[wikilinks]] to @UUID links; atlas maps \
+                          become scenes (art uploaded as the background) with a linked note per pin. \
+                          Removed pages/maps are deleted from Foundry. Always asks first, and there is \
+                          no remote undo. Only offered when the Foundry bridge is configured."
+                .into(),
+            schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
+        ToolDef {
+            name: "foundry_create_actor".into(),
+            description: "Create a bare Actor (name + type only, no stat block) in the connected \
+                          FoundryVTT world. Fire-and-forget; see the foundry-bridge skill."
+                .into(),
+            schema: obj(
+                json!({
+                    "name": { "type": "string" },
+                    "actor_type": { "type": "string", "description": "Foundry actor type, e.g. npc or character; defaults to npc" }
+                }),
+                &["name"],
+            ),
+        },
+        ToolDef {
+            name: "foundry_create_scene".into(),
+            description: "Create a blank Scene (no background) in the connected FoundryVTT world. \
+                          For map-backed scenes use sync_foundry instead. See the foundry-bridge skill."
+                .into(),
+            schema: obj(
+                json!({
+                    "name": { "type": "string" },
+                    "width": { "type": "integer", "description": "pixels, default 3000" },
+                    "height": { "type": "integer", "description": "pixels, default 3000" }
+                }),
+                &["name"],
+            ),
+        },
+        ToolDef {
+            name: "foundry_create_rolltable".into(),
+            description: "Create a RollTable (loot/encounter table) with plain-text results in the \
+                          connected FoundryVTT world. See the foundry-bridge skill."
+                .into(),
+            schema: obj(
+                json!({
+                    "name": { "type": "string" },
+                    "entries": {
+                        "type": "array",
+                        "description": "result rows; each tiles the roll range in order",
+                        "items": { "type": "object", "properties": {
+                            "text": { "type": "string" },
+                            "weight": { "type": "integer", "description": "roll weight, default 1" }
+                        }, "required": ["text"] }
+                    }
+                }),
+                &["name", "entries"],
+            ),
+        },
+    ]
 }
 
 pub fn shell_tools() -> Vec<ToolDef> {
@@ -385,6 +440,9 @@ fn parse_edits(args: &Value) -> Vec<EditOp> {
 
 /// Apply exact-string edits in order on the evolving content. All-or-nothing:
 /// the first failure aborts with a 1-based message and no partial result.
+/// On an exact miss we retry with whitespace-normalized matching so a copy
+/// that differs only in indentation or run-length of spaces still lands —
+/// the change is still shown in the approval diff before it commits.
 fn apply_edits(content: &str, edits: &[EditOp]) -> Result<String, String> {
     if edits.is_empty() {
         return Err("no edits provided".into());
@@ -397,9 +455,21 @@ fn apply_edits(content: &str, edits: &[EditOp]) -> Result<String, String> {
         }
         match (cur.matches(&e.old).count(), e.all) {
             (0, _) => {
-                return Err(format!(
-                    "edit {n}: old_str not found — read the page and copy the exact text."
-                ))
+                let spans = ws_match_spans(&cur, &e.old);
+                match (spans.len(), e.all) {
+                    (0, _) => {
+                        return Err(format!(
+                            "edit {n}: old_str not found — read the page and copy the exact text."
+                        ))
+                    }
+                    (1, _) | (_, true) => cur = replace_spans(&cur, &spans, &e.new),
+                    (m, false) => {
+                        return Err(format!(
+                            "edit {n}: old_str matches {m} times (whitespace-normalized) — \
+                             set replace_all or add surrounding context."
+                        ))
+                    }
+                }
             }
             (_, true) => cur = cur.replace(&e.old, &e.new),
             (1, false) => cur = cur.replacen(&e.old, &e.new, 1),
@@ -411,6 +481,118 @@ fn apply_edits(content: &str, edits: &[EditOp]) -> Result<String, String> {
         }
     }
     Ok(cur)
+}
+
+/// Collapse every run of whitespace to one space; map each normalized byte
+/// back to the original byte offset it came from (plus a final sentinel at
+/// `s.len()`), so a match in normalized space maps to an original span.
+fn normalize_ws(s: &str) -> (String, Vec<usize>) {
+    let mut out = String::with_capacity(s.len());
+    let mut map = Vec::with_capacity(s.len() + 1);
+    let mut prev_ws = false;
+    for (i, ch) in s.char_indices() {
+        if ch.is_whitespace() {
+            if !prev_ws {
+                out.push(' ');
+                map.push(i);
+            }
+            prev_ws = true;
+        } else {
+            for _ in 0..ch.len_utf8() {
+                map.push(i);
+            }
+            out.push(ch);
+            prev_ws = false;
+        }
+    }
+    map.push(s.len());
+    (out, map)
+}
+
+/// Original-text spans whose whitespace-normalized form equals `old`'s.
+fn ws_match_spans(content: &str, old: &str) -> Vec<(usize, usize)> {
+    let (norm_old_raw, _) = normalize_ws(old);
+    let needle = norm_old_raw.trim();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let (norm, map) = normalize_ws(content);
+    let mut spans = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = norm[from..].find(needle) {
+        let ns = from + rel;
+        let ne = ns + needle.len();
+        spans.push((map[ns], map[ne]));
+        from = ne;
+    }
+    spans
+}
+
+/// Replace each original span (left-to-right, non-overlapping) with `new`.
+fn replace_spans(content: &str, spans: &[(usize, usize)], new: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut last = 0;
+    for &(s, e) in spans {
+        out.push_str(&content[last..s]);
+        out.push_str(new);
+        last = e;
+    }
+    out.push_str(&content[last..]);
+    out
+}
+
+/// "Page not found" plus the closest real paths, so a guessed path turns into
+/// one corrected read instead of a dead round-trip.
+fn not_found_with_suggestions(vault_root: &std::path::Path, wanted: &str) -> String {
+    let near = nearest_pages(vault_root, wanted, 5);
+    if near.is_empty() {
+        format!("Page not found: {wanted} — use list_pages or search_pages.")
+    } else {
+        let list = near
+            .iter()
+            .map(|p| format!("- {p}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("Page not found: {wanted}. Did you mean:\n{list}")
+    }
+}
+
+/// Rank known page paths against a guessed one: exact basename, then basename
+/// substring, then shared word count. Returns up to `n` non-zero matches.
+fn nearest_pages(vault_root: &std::path::Path, wanted: &str, n: usize) -> Vec<String> {
+    fn base(p: &str) -> String {
+        p.rsplit('/')
+            .next()
+            .unwrap_or(p)
+            .trim_end_matches(".md")
+            .to_lowercase()
+    }
+    fn words(s: &str) -> Vec<String> {
+        s.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+    let wb = base(wanted);
+    let ww = words(&wb);
+    let mut scored: Vec<(i32, String)> = vault::list_pages(vault_root)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|p| {
+            let pb = base(&p.path);
+            let score = if pb == wb {
+                1000
+            } else if pb.contains(&wb) || wb.contains(&pb) {
+                500
+            } else {
+                let pw = words(&pb);
+                ww.iter().filter(|w| pw.contains(w)).count() as i32 * 100
+            };
+            (score > 0).then_some((score, p.path))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored.into_iter().take(n).map(|(_, p)| p).collect()
 }
 
 fn cap_preview(s: &str) -> String {
@@ -432,7 +614,7 @@ pub fn gate_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value
     match tier_of(name) {
         Tier::Write => write_preview(ctx, name, args),
         Tier::Structural => structural_preview(ctx, name, args),
-        Tier::Foundry => foundry_preview(ctx),
+        Tier::Foundry => foundry_preview(ctx, name, args),
         Tier::Shell => {
             let cmd = args
                 .get("command")
@@ -448,9 +630,10 @@ pub fn gate_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value
     }
 }
 
-/// Approval card for a Foundry sync: how many pages create / update / delete.
-/// `action: "sync_foundry"` (no `new`) so the UI shows the summary, not a diff.
-fn foundry_preview(ctx: &ToolCtx<'_>) -> Result<Value, String> {
+/// Approval card for a Foundry tool. `action` carries the tool name (no `new`)
+/// so the UI shows the summary, not a diff. The create-* tools describe what
+/// one document they will make; `sync_foundry` describes the whole push.
+fn foundry_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, String> {
     if !crate::foundry::load_settings(ctx.state)
         .map(|s| s.is_complete())
         .unwrap_or(false)
@@ -460,6 +643,43 @@ fn foundry_preview(ctx: &ToolCtx<'_>) -> Result<Value, String> {
                 .into(),
         );
     }
+    let str_arg = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").trim();
+    let summary = match name {
+        "foundry_create_actor" => {
+            let t = str_arg("actor_type");
+            let t = if t.is_empty() { "npc" } else { t };
+            format!(
+                "create actor “{}” ({t}) in FoundryVTT — bare stub, no remote undo",
+                str_arg("name")
+            )
+        }
+        "foundry_create_scene" => {
+            let w = args.get("width").and_then(Value::as_u64).unwrap_or(3000);
+            let h = args.get("height").and_then(Value::as_u64).unwrap_or(3000);
+            format!(
+                "create blank scene “{}” ({w}×{h}) in FoundryVTT — no remote undo",
+                str_arg("name")
+            )
+        }
+        "foundry_create_rolltable" => {
+            let n = args
+                .get("entries")
+                .and_then(Value::as_array)
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!(
+                "create roll table “{}” ({n} entr{}) in FoundryVTT — no remote undo",
+                str_arg("name"),
+                if n == 1 { "y" } else { "ies" }
+            )
+        }
+        _ => return foundry_sync_preview(ctx),
+    };
+    Ok(json!({ "action": name, "summary": summary }))
+}
+
+/// The whole-world push summary (page create / update / delete counts).
+fn foundry_sync_preview(ctx: &ToolCtx<'_>) -> Result<Value, String> {
     let vault_root = ctx.cfg.codex_dir(ctx.world_root);
     let pages = vault::list_pages(&vault_root).map_err(app_err)?;
     let map = crate::foundry::read_map(ctx.world_root);
@@ -540,6 +760,121 @@ pub async fn run_foundry_sync(ctx: &ToolCtx<'_>) -> Result<String, String> {
         }
     }
     Ok(out)
+}
+
+/// Foundry tools touch the network, so the agent loop runs them directly (async)
+/// rather than through the synchronous `dispatch`.
+pub fn is_foundry_async(name: &str) -> bool {
+    matches!(
+        name,
+        "sync_foundry" | "foundry_create_actor" | "foundry_create_scene" | "foundry_create_rolltable"
+    )
+}
+
+/// Async runner for every Foundry tool. The create-* tools are fire-and-forget
+/// bare stubs (system-agnostic; no stat block, no foundry-map tracking, so a
+/// repeat call makes a duplicate).
+pub async fn run_foundry_tool(
+    ctx: &ToolCtx<'_>,
+    name: &str,
+    args: &Value,
+) -> Result<String, String> {
+    if name == "sync_foundry" {
+        return run_foundry_sync(ctx).await;
+    }
+    let settings = crate::foundry::load_settings(ctx.state).map_err(app_err)?;
+    if !settings.is_complete() {
+        return Err(
+            "The Foundry bridge is not configured — set it up in Settings → Foundry VTT bridge."
+                .into(),
+        );
+    }
+    let str_arg = |k: &str| {
+        args.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let mut client = crate::foundry::FoundryClient::connect(
+        &settings.server_url,
+        &settings.user_id,
+        &settings.password,
+    )
+    .await
+    .map_err(|e| format!("Foundry connect failed: {e}"))?;
+
+    let result = match name {
+        "foundry_create_actor" => {
+            let aname = str_arg("name");
+            let atype = {
+                let t = str_arg("actor_type");
+                if t.is_empty() {
+                    "npc".to_string()
+                } else {
+                    t
+                }
+            };
+            if aname.is_empty() {
+                Err("name is required".to_string())
+            } else {
+                client
+                    .create_actor(&aname, &atype)
+                    .await
+                    .map(|id| format!("Created actor “{aname}” ({atype}) in Foundry [id {id}]."))
+                    .map_err(|e| format!("create actor failed: {e}"))
+            }
+        }
+        "foundry_create_scene" => {
+            let sname = str_arg("name");
+            let w = args.get("width").and_then(Value::as_u64).unwrap_or(3000) as u32;
+            let h = args.get("height").and_then(Value::as_u64).unwrap_or(3000) as u32;
+            if sname.is_empty() {
+                Err("name is required".to_string())
+            } else {
+                client
+                    .create_scene_stub(&sname, w, h)
+                    .await
+                    .map(|id| format!("Created blank scene “{sname}” ({w}×{h}) in Foundry [id {id}]."))
+                    .map_err(|e| format!("create scene failed: {e}"))
+            }
+        }
+        "foundry_create_rolltable" => {
+            let tname = str_arg("name");
+            let entries: Vec<(String, u32)> = args
+                .get("entries")
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|e| {
+                            let text = e.get("text").and_then(Value::as_str)?.trim().to_string();
+                            if text.is_empty() {
+                                return None;
+                            }
+                            let weight =
+                                e.get("weight").and_then(Value::as_u64).unwrap_or(1).max(1) as u32;
+                            Some((text, weight))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if tname.is_empty() {
+                Err("name is required".to_string())
+            } else if entries.is_empty() {
+                Err("at least one entry with text is required".to_string())
+            } else {
+                let n = entries.len();
+                client
+                    .create_rolltable(&tname, &entries)
+                    .await
+                    .map(|id| format!("Created roll table “{tname}” with {n} entries in Foundry [id {id}]."))
+                    .map_err(|e| format!("create roll table failed: {e}"))
+            }
+        }
+        other => Err(format!("unknown foundry tool: {other}")),
+    };
+    client.close().await;
+    result
 }
 
 fn write_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, String> {
@@ -788,8 +1123,11 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
         }
         "read_page" => {
             let vault_root = ctx.cfg.codex_dir(ctx.world_root);
-            let page = vault::read_page(&vault_root, &str_arg("path")).map_err(app_err)?;
-            Ok(page.content)
+            let path = str_arg("path");
+            match vault::read_page(&vault_root, &path) {
+                Ok(page) => Ok(page.content),
+                Err(_) => Err(not_found_with_suggestions(&vault_root, &path)),
+            }
         }
         "list_pages" => {
             let folder = str_arg("folder");
@@ -1739,14 +2077,30 @@ mod tests {
             world_root: &root,
             cfg: &cfg,
         };
-        assert_eq!(tier_of("sync_foundry"), Tier::Foundry);
-        // Unconfigured bridge: both the approval preview and the run refuse.
-        assert!(gate_preview(&ctx, "sync_foundry", &json!({})).is_err());
-        let err = tokio::runtime::Runtime::new()
-            .unwrap()
+        for t in [
+            "sync_foundry",
+            "foundry_create_actor",
+            "foundry_create_scene",
+            "foundry_create_rolltable",
+        ] {
+            assert_eq!(tier_of(t), Tier::Foundry);
+            assert!(is_foundry_async(t));
+            assert!(gate_preview(&ctx, t, &json!({})).is_err());
+        }
+        // Unconfigured bridge: every runner refuses before touching the network.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        assert!(rt
             .block_on(run_foundry_sync(&ctx))
-            .unwrap_err();
-        assert!(err.contains("not configured"));
+            .unwrap_err()
+            .contains("not configured"));
+        for t in [
+            "foundry_create_actor",
+            "foundry_create_scene",
+            "foundry_create_rolltable",
+        ] {
+            let err = rt.block_on(run_foundry_tool(&ctx, t, &json!({}))).unwrap_err();
+            assert!(err.contains("not configured"), "{t}: {err}");
+        }
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -1761,6 +2115,63 @@ mod tests {
         assert!(call(&ctx, "read_summary", json!({ "session": 99 })).is_err());
         assert!(call(&ctx, "nope", json!({})).is_err());
         assert!(call(&ctx, "read_page", json!({ "path": "../../etc/passwd" })).is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn edit_tolerates_whitespace_variants() {
+        // Exact match still wins and is untouched.
+        let op = |old: &str, new: &str| EditOp {
+            old: old.into(),
+            new: new.into(),
+            all: false,
+        };
+        let body = "## Notes\n\nThe   guard    stands\n\tat the gate.\n";
+        // Model copied with single spaces / different indentation.
+        let out = apply_edits(body, &[op("The guard stands at the gate.", "The guard left.")])
+            .unwrap();
+        assert!(out.contains("The guard left."));
+        assert!(!out.contains("stands"));
+
+        // Genuinely absent text still errors.
+        assert!(apply_edits(body, &[op("nonexistent line", "x")]).is_err());
+
+        // Ambiguous normalized match without replace_all errors (neither line
+        // matches "a b" exactly, both match once whitespace-normalized).
+        let dup = "a  b\na   b\n";
+        assert!(apply_edits(dup, &[op("a b", "X")]).is_err());
+        assert_eq!(
+            apply_edits(
+                dup,
+                &[EditOp {
+                    old: "a b".into(),
+                    new: "X".into(),
+                    all: true
+                }]
+            )
+            .unwrap(),
+            "X\nX\n"
+        );
+    }
+
+    #[test]
+    fn read_page_miss_suggests_neighbours() {
+        let (state, root, cfg) = fixture_world("suggest");
+        std::fs::create_dir_all(root.join("Codex/NPCs")).unwrap();
+        std::fs::write(
+            root.join("Codex/NPCs/Baron Aldric.md"),
+            "---\nkind: npc\n---\n\nx\n",
+        )
+        .unwrap();
+        let ctx = ToolCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+        };
+        let err = call(&ctx, "read_page", json!({ "path": "People/Baron Aldric.md" }))
+            .unwrap_err();
+        assert!(err.contains("Did you mean"));
+        assert!(err.contains("NPCs/Baron Aldric.md"));
         std::fs::remove_dir_all(&root).ok();
     }
 }

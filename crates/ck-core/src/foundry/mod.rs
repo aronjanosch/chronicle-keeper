@@ -236,6 +236,93 @@ impl FoundryClient {
         .await
         .map(|_| ())
     }
+
+    // -- ad-hoc stubs (Keeper create tools; fire-and-forget, not in foundry-map) --
+
+    /// Creates a bare `Actor` (name + system type only — no stat block, which is
+    /// game-system specific); returns its id.
+    pub async fn create_actor(&mut self, name: &str, actor_type: &str) -> AppResult<String> {
+        let resp = self
+            .modify_document(
+                "Actor",
+                "create",
+                json!({ "data": [{ "name": name, "type": actor_type }] }),
+            )
+            .await?;
+        first_id(&resp)
+    }
+
+    /// Creates a `RollTable` of plain-text results; returns its id. `entries` are
+    /// `(text, weight)` pairs that tile the `1..=N` roll range in order.
+    pub async fn create_rolltable(
+        &mut self,
+        name: &str,
+        entries: &[(String, u32)],
+    ) -> AppResult<String> {
+        let mut low = 1u32;
+        let results: Vec<Value> = entries
+            .iter()
+            .map(|(text, weight)| {
+                let w = (*weight).max(1);
+                let high = low + w - 1;
+                // v14 TableResult: `name` is the label, `description` the chat
+                // output (the old single `text` field was removed in v13/v14).
+                let r = json!({
+                    "type": "text",
+                    "name": text,
+                    "description": text,
+                    "weight": w,
+                    "range": [low, high],
+                });
+                low = high + 1;
+                r
+            })
+            .collect();
+        let resp = self
+            .modify_document(
+                "RollTable",
+                "create",
+                json!({ "data": [{
+                    "name": name,
+                    "formula": format!("1d{}", (low - 1).max(1)),
+                    "results": results,
+                }] }),
+            )
+            .await?;
+        first_id(&resp)
+    }
+
+    /// Creates a gridless, background-less `Scene` (a blank canvas); returns its id.
+    pub async fn create_scene_stub(
+        &mut self,
+        name: &str,
+        width: u32,
+        height: u32,
+    ) -> AppResult<String> {
+        let level_id = random_id();
+        let resp = self
+            .modify_document(
+                "Scene",
+                "create",
+                json!({ "data": [{
+                    "name": name,
+                    "width": width,
+                    "height": height,
+                    "padding": 0.0,
+                    "grid": { "type": 0, "size": 100 },
+                    "levels": [{ "_id": level_id, "name": "Base", "elevation": 0 }],
+                    "initialLevel": level_id,
+                }] }),
+            )
+            .await?;
+        first_id(&resp)
+    }
+}
+
+/// A 16-char alphanumeric id in Foundry's `randomID` shape (hex is a valid
+/// subset), for embedded ids that must be set before creation.
+pub(crate) fn random_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()[..16].to_string()
 }
 
 fn first_id(resp: &Value) -> AppResult<String> {
@@ -467,5 +554,54 @@ mod live_tests {
             .expect("delete folder");
         c.close().await;
         println!("RUST FOUNDRY SMOKE PASS");
+    }
+
+    // Live smoke for the ad-hoc create tools (actor / rolltable / scene). Same
+    // env + invocation as above, with `foundry_create` as the filter:
+    //   FOUNDRY_URL=… FOUNDRY_USER_ID=… FOUNDRY_PASSWORD=… \
+    //     cargo test -p ck-core foundry_live_create -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn foundry_live_create_cycle() {
+        let url = std::env::var("FOUNDRY_URL").unwrap();
+        let uid = std::env::var("FOUNDRY_USER_ID").unwrap();
+        let pw = std::env::var("FOUNDRY_PASSWORD").unwrap();
+
+        let mut c = FoundryClient::connect(&url, &uid, &pw)
+            .await
+            .expect("connect");
+
+        let actor = c
+            .create_actor("CK smoke actor", "npc")
+            .await
+            .expect("actor");
+        println!("actor {actor}");
+
+        let table = c
+            .create_rolltable(
+                "CK smoke loot",
+                &[("50 gp".into(), 3), ("Potion of Healing".into(), 1)],
+            )
+            .await
+            .expect("rolltable");
+        println!("rolltable {table}");
+
+        let scene = c
+            .create_scene_stub("CK smoke scene", 2000, 2000)
+            .await
+            .expect("scene");
+        println!("scene {scene}");
+
+        // Clean up everything created (actor/rolltable have no public helper).
+        c.modify_document("Actor", "delete", json!({ "ids": [actor] }))
+            .await
+            .expect("delete actor");
+        c.modify_document("RollTable", "delete", json!({ "ids": [table] }))
+            .await
+            .expect("delete rolltable");
+        c.delete_scene(&scene).await.expect("delete scene");
+
+        c.close().await;
+        println!("RUST FOUNDRY CREATE SMOKE PASS");
     }
 }

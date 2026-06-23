@@ -1,6 +1,6 @@
 ---
 name: Foundry VTT bridge
-description: How the one-way Codex → FoundryVTT Journal projection works and when to run sync_foundry. Pull before pushing the world to Foundry or when the user asks about the table-side mirror.
+description: How the one-way Codex → FoundryVTT Journal projection works (sync_foundry) and how the ad-hoc create tools (foundry_create_actor/scene/rolltable) behave. Pull before pushing the world to Foundry, making a quick table-side document, or when the user asks about the mirror.
 ---
 
 ## What the bridge does
@@ -39,6 +39,34 @@ Do **not** run it speculatively. It is a remote, approval-gated, non-undoable ac
 call `sync_foundry` when the user has clearly asked to update Foundry. The tool only appears
 when the bridge is configured (Settings → Foundry VTT bridge: server URL, API user id,
 password); if it is missing, tell the user to configure it there rather than guessing.
+
+## Ad-hoc create tools (quick at-the-table needs)
+
+Separate from the full sync, three tools make a single Foundry document on demand — useful
+mid-session ("I need a quick loot table", "drop in an NPC", "give me a blank battle map"):
+
+- **`foundry_create_actor`** — `name` + optional `actor_type` (defaults to `npc`).
+- **`foundry_create_scene`** — `name` + optional `width`/`height` (default 3000×3000). Blank
+  canvas, no background. For a *map-backed* scene, use `sync_foundry` (it uploads atlas art).
+- **`foundry_create_rolltable`** — `name` + `entries`, each `{ text, weight? }`. Entries tile
+  the roll range in order (weight = how many faces), and the table formula is set to match.
+  This is the loot/encounter-table tool.
+
+How they differ from `sync_foundry`, say so if the user might assume otherwise:
+
+- **Bare stubs, no stats.** They set only the name (and type/size/results). Foundry stat blocks
+  are game-system specific, so the Keeper does **not** fill them — the user finishes the sheet
+  in Foundry. Don't claim a playable monster was created; you made a named placeholder.
+- **Fire-and-forget — not tracked.** Unlike synced pages, these are **not** in
+  `.ck/foundry-map.json`. Calling a create tool twice makes **two** documents (no dedup), and
+  they are not linked back to any Codex page. They are one-shot conveniences, not part of the
+  mirrored world.
+- Same remote, approval-gated, no-undo nature as `sync_foundry`; only available when the bridge
+  is configured.
+
+If the user wants a roll table or NPC that should *live in the world* (be re-synced, linked),
+make a Codex page for it and `sync_foundry`; use these create tools only for throwaway,
+in-the-moment table aids.
 
 After a sync, report the counts it returns (created / updated / deleted) and surface any
 per-page errors instead of claiming a clean run.

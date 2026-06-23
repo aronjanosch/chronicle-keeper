@@ -27,6 +27,32 @@ const VAULT_WRITE_TOOLS = new Set([
   'delete_page', 'create_folder',
 ]);
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+// Longest-edge cap for pasted images. A raw screenshot is multi-MB of base64
+// that gets stored in the chat and re-sent to the model every turn; downscaling
+// to this on paste cuts it to a few hundred KB with no loss the model can use.
+const MAX_IMAGE_EDGE = 1568;
+
+// Decode → downscale (longest edge ≤ MAX_IMAGE_EDGE) → re-encode JPEG. Returns
+// the { media_type, data, url } shape the composer + backend expect.
+function downscaleImage(file) {
+  return new Promise((resolve, reject) => {
+    const objUrl = URL.createObjectURL(file);
+    const img = document.createElement('img');
+    img.onload = () => {
+      URL.revokeObjectURL(objUrl);
+      const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      resolve({ media_type: 'image/jpeg', data: dataUrl.slice(dataUrl.indexOf(',') + 1), url: dataUrl });
+    };
+    img.onerror = (err) => { URL.revokeObjectURL(objUrl); reject(err); };
+    img.src = objUrl;
+  });
+}
 
 export function keeperState() {
   const k = store.keeper || { open: false, chatId: null, events: [], live: null, error: null };
@@ -387,6 +413,7 @@ function PermissionCard({ ask }) {
   const d = ask.diff || {};
   const isShell = d.command != null;
   const isStructural = !isShell && d.summary != null && d.new == null;
+  const isFoundry = d.action === 'sync_foundry' || String(d.action || '').startsWith('foundry_');
   const title = isShell
     ? html`The Keeper wants to run a command`
     : isStructural
@@ -403,7 +430,7 @@ function PermissionCard({ ask }) {
     </div>
     <div style=${{ display: 'flex', gap: 8, padding: '0 10px 10px' }}>
       <button class="btn btn-primary" onClick=${() => decide(ask.requestId, 'allow_once')}>Allow once</button>
-      ${!isShell && d.action !== 'sync_foundry' && html`<button class="btn" onClick=${() => decide(ask.requestId, 'allow_chat')}>Allow for this chat</button>`}
+      ${!isShell && !isFoundry && html`<button class="btn" onClick=${() => decide(ask.requestId, 'allow_chat')}>Allow for this chat</button>`}
       <button class="btn" style=${{ marginLeft: 'auto', color: 'var(--burgundy-700)' }} onClick=${() => decide(ask.requestId, 'deny')}>Deny</button>
     </div>
   </div>`;
@@ -581,14 +608,9 @@ export function Composer({ busy }) {
       const file = it.getAsFile();
       if (!file) return;
       if (file.size > MAX_IMAGE_BYTES) { setOp('Image too large (max 8 MB).', 'error'); return; }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const url = String(reader.result);
-        const semi = url.indexOf(';'); const comma = url.indexOf(',');
-        if (semi < 0 || comma < 0) return;
-        setImages((prev) => [...prev, { media_type: url.slice(5, semi), data: url.slice(comma + 1), url }]);
-      };
-      reader.readAsDataURL(file);
+      downscaleImage(file)
+        .then((im) => setImages((prev) => [...prev, im]))
+        .catch(() => setOp('Could not read that image.', 'error'));
     });
   }
 

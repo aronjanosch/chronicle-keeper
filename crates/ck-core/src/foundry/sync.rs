@@ -203,7 +203,7 @@ async fn sync_one_scene(
             entry.scene_id.clone()
         }
         None => {
-            let level_id = random_id();
+            let level_id = super::random_id();
             let id = client
                 .create_scene(&m.name, &src, w, h, &m.id, &level_id)
                 .await?;
@@ -252,12 +252,6 @@ async fn sync_one_scene(
     }
     report.scenes += 1;
     Ok(())
-}
-
-/// A 16-char alphanumeric id in Foundry's `randomID` shape (hex is a valid
-/// subset), for embedded documents we must reference before creation.
-fn random_id() -> String {
-    uuid::Uuid::new_v4().simple().to_string()[..16].to_string()
 }
 
 /// Filesystem-safe lowercase slug for the per-world upload directory.

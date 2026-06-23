@@ -241,6 +241,11 @@ fn openai_style_body(
         "messages": messages,
         "stream": stream,
     });
+    // OpenAI-compat only emits a usage block when asked; Ollama always sends
+    // counts on its final chunk and rejects unknown keys.
+    if stream && !ollama {
+        body["stream_options"] = json!({ "include_usage": true });
+    }
     if !tools.is_empty() {
         body["tools"] = tools
             .iter()
@@ -286,9 +291,24 @@ struct StreamState {
     tools: BTreeMap<u64, ToolBuf>,
     stop_reason: Option<StopReason>,
     done: bool,
+    /// Provider usage block accumulated from the stream (token counts incl.
+    /// any cache-hit fields). Logged for caching diagnostics, not used in flow.
+    usage: Option<Value>,
 }
 
 impl StreamState {
+    /// Merge a provider `usage` object into the accumulator (non-null wins).
+    fn merge_usage(&mut self, u: &Value) {
+        let Some(src) = u.as_object() else { return };
+        let dst = self.usage.get_or_insert_with(|| json!({}));
+        let dst = dst.as_object_mut().unwrap();
+        for (k, val) in src {
+            if !val.is_null() {
+                dst.insert(k.clone(), val.clone());
+            }
+        }
+    }
+
     fn finish(self) -> AssistantTurn {
         let tool_calls: Vec<ToolCall> = self
             .tools
@@ -380,6 +400,11 @@ impl StreamState {
                     _ => Ok(None),
                 }
             }
+            Some("message_start") => {
+                // cache_read/creation + input_tokens land here on the opening event.
+                self.merge_usage(&v["message"]["usage"]);
+                Ok(None)
+            }
             Some("message_delta") => {
                 if let Some(s) = v
                     .get("delta")
@@ -388,6 +413,8 @@ impl StreamState {
                 {
                     self.stop_reason = Some(parse_stop(s));
                 }
+                // output_tokens (and refreshed cache fields) ride the closing delta.
+                self.merge_usage(&v["usage"]);
                 Ok(None)
             }
             Some("message_stop") => {
@@ -412,6 +439,10 @@ impl StreamState {
         let Ok(v) = serde_json::from_str::<Value>(data) else {
             return Ok(None);
         };
+        // The usage chunk (include_usage) carries an empty choices array, so
+        // grab it before the choices guard. cached_tokens lives under
+        // prompt_tokens_details.
+        self.merge_usage(&v["usage"]);
         let Some(choice) = v.get("choices").and_then(|c| c.get(0)) else {
             return Ok(None);
         };
@@ -456,6 +487,19 @@ impl StreamState {
             self.done = true;
             if let Some(s) = v.get("done_reason").and_then(Value::as_str) {
                 self.stop_reason = Some(parse_stop(s));
+            }
+            // Counts (prompt_eval_count, eval_count, …) ride the final chunk.
+            // Capture every scalar top-level key so Ollama Cloud cache fields,
+            // whatever they're named, surface in the log too.
+            if let Some(obj) = v.as_object() {
+                let counts: serde_json::Map<String, Value> = obj
+                    .iter()
+                    .filter(|(k, val)| {
+                        k.as_str() != "message" && !val.is_object() && !val.is_array()
+                    })
+                    .map(|(k, val)| (k.clone(), val.clone()))
+                    .collect();
+                self.merge_usage(&Value::Object(counts));
             }
         }
         self.absorb_ollama_tool_calls(&v);
@@ -603,6 +647,14 @@ pub async fn agent_chat_stream<F: FnMut(AgentDelta)>(
                 break 'outer;
             }
         }
+    }
+    if let Some(usage) = &state.usage {
+        tracing::info!(
+            transport = ?resolved.transport,
+            model = %resolved.model,
+            usage = %usage,
+            "agent turn usage (cache diagnostics)"
+        );
     }
     Ok(state.finish())
 }
@@ -899,6 +951,51 @@ mod tests {
         assert_eq!(turn.stop_reason, StopReason::ToolUse);
         assert_eq!(turn.tool_calls.len(), 1);
         assert_eq!(turn.tool_calls[0].id, "call_0");
+    }
+
+    #[test]
+    fn anthropic_stream_captures_cache_usage() {
+        let mut st = StreamState::default();
+        for l in [
+            r#"data: {"type":"message_start","message":{"usage":{"input_tokens":12,"cache_read_input_tokens":8000,"cache_creation_input_tokens":0}}}"#,
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42}}"#,
+            r#"data: {"type":"message_stop"}"#,
+        ] {
+            st.anthropic_line(l).unwrap();
+        }
+        let u = st.usage.as_ref().unwrap();
+        assert_eq!(u["cache_read_input_tokens"], 8000);
+        assert_eq!(u["input_tokens"], 12);
+        assert_eq!(u["output_tokens"], 42);
+    }
+
+    #[test]
+    fn openai_stream_captures_usage_chunk() {
+        let mut st = StreamState::default();
+        for l in [
+            r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#,
+            r#"data: {"choices":[],"usage":{"prompt_tokens":1000,"prompt_tokens_details":{"cached_tokens":768}}}"#,
+            "data: [DONE]",
+        ] {
+            st.openai_line(l).unwrap();
+        }
+        let u = st.usage.as_ref().unwrap();
+        assert_eq!(u["prompt_tokens"], 1000);
+        assert_eq!(u["prompt_tokens_details"]["cached_tokens"], 768);
+    }
+
+    #[test]
+    fn ollama_done_captures_counts_skips_nested() {
+        let mut st = StreamState::default();
+        st.ollama_line(
+            r#"{"message":{"content":""},"done":true,"done_reason":"stop","prompt_eval_count":900,"eval_count":50}"#,
+        )
+        .unwrap();
+        let u = st.usage.as_ref().unwrap();
+        assert_eq!(u["prompt_eval_count"], 900);
+        assert_eq!(u["eval_count"], 50);
+        // message object must not leak into the usage block.
+        assert!(u.get("message").is_none());
     }
 
     #[test]

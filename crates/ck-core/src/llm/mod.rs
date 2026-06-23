@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 
 use crate::error::{AppError, AppResult};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Transport {
     Ollama,
     OpenAiCompat,

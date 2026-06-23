@@ -292,3 +292,18 @@ async fn authenticate(base: &str, user_id: &str, password: &str) -> AppResult<St
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
+
+/// Best-effort fetch of Foundry's unauthenticated `/api/status` JSON (long-standing
+/// monitoring endpoint: `version`, `world`, `system`, `active`). Returns `None` on
+/// any failure — version reporting must never break the connection test.
+pub async fn fetch_status(base_url: &str) -> Option<Value> {
+    let base = base_url.trim_end_matches('/');
+    let http = reqwest::Client::builder().build().ok()?;
+    let resp = http
+        .get(format!("{base}/api/status"))
+        .timeout(Duration::from_secs(8))
+        .send()
+        .await
+        .ok()?;
+    resp.json().await.ok()
+}

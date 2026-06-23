@@ -4,7 +4,23 @@
 pub mod client;
 pub mod sync;
 
-pub use client::FoundryClient;
+pub use client::{fetch_status, FoundryClient};
+
+/// The Foundry major version the bridge is validated against (v14.364). A live
+/// world on another major is allowed but flagged on Test — Foundry's document
+/// schemas drift between majors (cf. RollTable `text`→`name`, `Scene#background`
+/// →`Level`), so a mismatch is the likely first suspect when a sync misbehaves.
+pub const SUPPORTED_FOUNDRY_MAJOR: &str = "14";
+
+/// True when `version` (Foundry's `generation`/full version string) shares the
+/// supported major. Unparseable / empty versions are treated as compatible — we
+/// only warn on a *known* mismatch, never on uncertainty.
+pub fn version_compatible(version: &str) -> bool {
+    match version.trim().split('.').next() {
+        Some(major) if !major.is_empty() => major == SUPPORTED_FOUNDRY_MAJOR,
+        _ => true,
+    }
+}
 
 use crate::config;
 use crate::error::{AppError, AppResult};
@@ -465,6 +481,17 @@ mod tests {
             "alpha" => Some("aaaaaaaaaaaaaaaa".to_string()),
             _ => None,
         }
+    }
+
+    #[test]
+    fn version_compat_matches_major_only() {
+        assert!(version_compatible("14.364"));
+        assert!(version_compatible("14"));
+        assert!(!version_compatible("13.331"));
+        assert!(!version_compatible("15.2"));
+        // Unknown / empty → treated as compatible (warn only on a known mismatch).
+        assert!(version_compatible(""));
+        assert!(version_compatible("   "));
     }
 
     #[test]

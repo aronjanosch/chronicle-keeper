@@ -117,7 +117,15 @@ function FoundryCard() {
   }
   async function test() {
     setBusy('test');
-    try { await testFoundry(); setOp('Foundry bridge connected', 'done'); }
+    try {
+      const r = await testFoundry();
+      const ver = r.version ? ` (Foundry v${r.version}${r.world ? `, world “${r.world}”` : ''})` : '';
+      if (r.version && r.compatible === false) {
+        setOp(`Connected${ver} — untested major; the bridge is validated on v${r.supported_major}. Syncs may misbehave.`, 'err');
+      } else {
+        setOp(`Foundry bridge connected${ver}`, 'done');
+      }
+    }
     catch (e) { setOp(`Foundry: ${e.message}`, 'err'); } finally { setBusy(''); }
   }
   async function sync() {

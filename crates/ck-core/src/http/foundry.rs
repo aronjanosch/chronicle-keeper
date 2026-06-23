@@ -60,7 +60,31 @@ pub async fn test_connection(State(state): State<AppState>) -> AppResult<Json<Va
     }
     let client = foundry::FoundryClient::connect(&s.server_url, &s.user_id, &s.password).await?;
     client.close().await;
-    Ok(Json(json!({ "connected": true })))
+
+    // Best-effort version probe: report it and flag a known-major mismatch, but
+    // never fail the test on it (the schema-drift early-warning, not a gate).
+    let status = foundry::fetch_status(&s.server_url).await;
+    let version = status
+        .as_ref()
+        .and_then(|v| v.get("version"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let world = status
+        .as_ref()
+        .and_then(|v| v.get("world"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let compatible = version
+        .as_deref()
+        .map(foundry::version_compatible)
+        .unwrap_or(true);
+    Ok(Json(json!({
+        "connected": true,
+        "version": version,
+        "world": world,
+        "compatible": compatible,
+        "supported_major": foundry::SUPPORTED_FOUNDRY_MAJOR,
+    })))
 }
 
 /// POST — push every vault page to Foundry as a Journal entry.

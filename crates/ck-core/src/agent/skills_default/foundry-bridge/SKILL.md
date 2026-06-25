@@ -1,6 +1,6 @@
 ---
 name: Foundry VTT bridge
-description: How the one-way Codex → FoundryVTT Journal projection works (sync_foundry), how the ad-hoc create tools (foundry_create_actor/scene/rolltable) behave, and the live-play read tools (foundry_list_actors/get_actor/scene_state/lookup + foundry_post_chat). Pull before pushing the world, making a table-side document, answering a question about the live table, or when the user asks about the mirror.
+description: How the one-way Codex → FoundryVTT Journal projection works (sync_foundry), how the ad-hoc create tools (foundry_create_actor/scene/rolltable) behave, and the live-play read tools (foundry_list_actors/get_actor/scene_state/lookup/system_info + foundry_post_chat). Pull before pushing the world, making a table-side document, answering a question about the live table, or when the user asks about the mirror.
 ---
 
 ## What the bridge does
@@ -45,7 +45,9 @@ password); if it is missing, tell the user to configure it there rather than gue
 Separate from the full sync, three tools make a single Foundry document on demand — useful
 mid-session ("I need a quick loot table", "drop in an NPC", "give me a blank battle map"):
 
-- **`foundry_create_actor`** — `name` + optional `actor_type` (defaults to `npc`).
+- **`foundry_create_actor`** — `name` + optional `actor_type` (defaults to `npc`), and optional
+  `system` (the stat block) + `items`. Omit `system` for a bare named placeholder; pass it to
+  create a **fully statted** NPC (see "Statting an NPC" below).
 - **`foundry_create_scene`** — `name` + optional `width`/`height` (default 3000×3000). Blank
   canvas, no background. For a *map-backed* scene, use `sync_foundry` (it uploads atlas art).
 - **`foundry_create_rolltable`** — `name` + `entries`, each `{ text, weight? }`. Entries tile
@@ -54,9 +56,10 @@ mid-session ("I need a quick loot table", "drop in an NPC", "give me a blank bat
 
 How they differ from `sync_foundry`, say so if the user might assume otherwise:
 
-- **Bare stubs, no stats.** They set only the name (and type/size/results). Foundry stat blocks
-  are game-system specific, so the Keeper does **not** fill them — the user finishes the sheet
-  in Foundry. Don't claim a playable monster was created; you made a named placeholder.
+- **Scenes and tables are bare.** `foundry_create_scene`/`_rolltable` set only the name (and
+  size/results) — no further mechanics. `foundry_create_actor` *can* be statted (see below); left
+  unstatted it is a named placeholder the user finishes in Foundry. Don't claim a playable monster
+  was created unless you passed a `system` block.
 - **Fire-and-forget — not tracked.** Unlike synced pages, these are **not** in
   `.ck/foundry-map.json`. Calling a create tool twice makes **two** documents (no dedup), and
   they are not linked back to any Codex page. They are one-shot conveniences, not part of the
@@ -67,6 +70,28 @@ How they differ from `sync_foundry`, say so if the user might assume otherwise:
 If the user wants a roll table or NPC that should *live in the world* (be re-synced, linked),
 make a Codex page for it and `sync_foundry`; use these create tools only for throwaway,
 in-the-moment table aids.
+
+### Statting an NPC for the user's system
+
+CK ships **no per-system schema** — yet it can make a fully statted NPC in *any* system, the
+same way the read tools work: you read a real example and mirror its shape.
+
+1. **Learn the schema.** Two ways, in order:
+   - **`foundry_system_info` with the type** (e.g. `{ doc: "Actor", type: "npc" }`) — returns the
+     system's default `system` data model, the exact field paths to fill. Works on an **empty
+     world**, no existing actor required. This is the first choice.
+   - If it reports a **DataModel** system (no static schema — e.g. Daggerheart), fall back to
+     **`foundry_get_actor`** on an existing same-type actor to read its real `system` shape. If the
+     world has none, make a bare stub (and say so) or `foundry_lookup` a compendium statblock to
+     base it on — don't invent field paths blind.
+2. **Fill.** Author a `system` object of the **same shape**, with stats appropriate to the NPC the
+   user described. Add `items` (weapons/spells/features) shaped per the matching Item type if the
+   system carries them there. Copy the structure faithfully — guessed field names silently no-op.
+3. **Create.** Call `foundry_create_actor` with `name`, `actor_type`, the `system` block, and any
+   `items`. CK writes them through verbatim.
+
+After creating, suggest the user open the sheet to confirm it imported cleanly (there is no remote
+undo).
 
 After a sync, report the counts it returns (created / updated / deleted) and surface any
 per-page errors instead of claiming a clean run.
@@ -88,6 +113,11 @@ never truth" rule is about codex sync, not about asking the table a question). T
   assume 5e; read what's there.
 - **`foundry_scene_state`** — the active scene's name, size, and the tokens on it (with linked
   actor ids you can cross-reference via `foundry_get_actor`). "Who's on the battle map?"
+- **`foundry_system_info`** — optional `doc` (Actor/Item) + `type`. The system's id/version, the
+  Actor and Item **types** it defines, and (with `type`) that type's **default `system` data model**
+  — the exact field paths to fill when statting. This is how you stat an actor on an **empty world**
+  with no existing actor to sample. If the system defines its schema in code (a DataModel — e.g.
+  Daggerheart), it says so and sends you to `foundry_get_actor` instead.
 - **`foundry_lookup`** — `query`. Searches the installed **game system's compendium packs**
   (rules / skills / items) by name. This is the right way to look up what a skill or rule does:
   it matches the GM's actual system + version and works offline — prefer it over guessing. If it

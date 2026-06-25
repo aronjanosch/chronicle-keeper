@@ -121,6 +121,26 @@ impl FoundryClient {
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("foundry upload: no path returned")))
     }
 
+    /// Fetches a template-based system's `systems/<id>/template.json` (the default
+    /// document data models). `None` on 404 / non-JSON — modern DataModel systems
+    /// ship no such file, which the caller treats as "no static schema".
+    pub async fn fetch_template(&self, system_id: &str) -> AppResult<Option<Value>> {
+        let http = reqwest::Client::builder()
+            .timeout(CONNECT_TIMEOUT)
+            .build()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("http client: {e}")))?;
+        let resp = http
+            .get(format!("{}/systems/{system_id}/template.json", self.base))
+            .header("Cookie", format!("session={}", self.session))
+            .send()
+            .await
+            .map_err(|e| AppError::BadRequest(format!("foundry template.json: {e}")))?;
+        if !resp.status().is_success() {
+            return Ok(None);
+        }
+        Ok(resp.json().await.ok())
+    }
+
     /// Completes the Engine.IO/Socket.IO handshake: wait for the engine open
     /// (`0{...}`), send the namespace connect (`40`), wait for its ack.
     async fn handshake(&mut self) -> AppResult<()> {

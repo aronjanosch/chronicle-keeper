@@ -4,6 +4,7 @@
 pub mod client;
 pub mod read;
 pub mod sync;
+pub mod system;
 
 pub use client::{fetch_status, FoundryClient};
 
@@ -256,15 +257,22 @@ impl FoundryClient {
 
     // -- ad-hoc stubs (Keeper create tools; fire-and-forget, not in foundry-map) --
 
-    /// Creates a bare `Actor` (name + system type only — no stat block, which is
-    /// game-system specific); returns its id.
-    pub async fn create_actor(&mut self, name: &str, actor_type: &str) -> AppResult<String> {
+    /// Creates an `Actor`; returns its id. `system` is the game-system-specific
+    /// stat block (5e `attributes.hp`, Daggerheart's shape, …) — when `None` the
+    /// actor is a bare stub the GM finishes in Foundry. `items` are embedded item
+    /// documents (weapons/spells/features). Both are passed through verbatim: the
+    /// Keeper authors them by mirroring a real same-system actor (see foundry_get_actor),
+    /// so CK never needs a per-system schema.
+    pub async fn create_actor(
+        &mut self,
+        name: &str,
+        actor_type: &str,
+        system: Option<&Value>,
+        items: Option<&Value>,
+    ) -> AppResult<String> {
+        let data = actor_create_data(name, actor_type, system, items);
         let resp = self
-            .modify_document(
-                "Actor",
-                "create",
-                json!({ "data": [{ "name": name, "type": actor_type }] }),
-            )
+            .modify_document("Actor", "create", json!({ "data": [data] }))
             .await?;
         first_id(&resp)
     }
@@ -348,6 +356,26 @@ impl FoundryClient {
             .await?;
         first_id(&resp)
     }
+}
+
+/// Builds the `Actor` create payload, attaching the optional `system` stat block
+/// and `items` only when present (a bare stub carries neither).
+fn actor_create_data(
+    name: &str,
+    actor_type: &str,
+    system: Option<&Value>,
+    items: Option<&Value>,
+) -> Value {
+    let mut data = json!({ "name": name, "type": actor_type });
+    if let Value::Object(ref mut m) = data {
+        if let Some(sys) = system {
+            m.insert("system".into(), sys.clone());
+        }
+        if let Some(its) = items {
+            m.insert("items".into(), its.clone());
+        }
+    }
+    data
 }
 
 /// A 16-char alphanumeric id in Foundry's `randomID` shape (hex is a valid
@@ -499,6 +527,21 @@ mod tests {
     }
 
     #[test]
+    fn actor_create_data_attaches_only_present_fields() {
+        let bare = actor_create_data("Goblin", "npc", None, None);
+        assert_eq!(bare["name"], "Goblin");
+        assert_eq!(bare["type"], "npc");
+        assert!(bare.get("system").is_none());
+        assert!(bare.get("items").is_none());
+
+        let sys = json!({ "attributes": { "hp": { "value": 7, "max": 7 } } });
+        let items = json!([{ "name": "Scimitar", "type": "weapon" }]);
+        let statted = actor_create_data("Goblin", "npc", Some(&sys), Some(&items));
+        assert_eq!(statted["system"], sys);
+        assert_eq!(statted["items"], items);
+    }
+
+    #[test]
     fn version_compat_matches_major_only() {
         assert!(version_compatible("14.364"));
         assert!(version_compatible("14"));
@@ -614,10 +657,23 @@ mod live_tests {
             .expect("connect");
 
         let actor = c
-            .create_actor("CK smoke actor", "npc")
+            .create_actor("CK smoke actor", "npc", None, None)
             .await
             .expect("actor");
         println!("actor {actor}");
+
+        // Statted actor: a freeform system blob is passed through verbatim (the
+        // Keeper would mirror a real same-system actor's shape here).
+        let statted = c
+            .create_actor(
+                "CK smoke statted",
+                "npc",
+                Some(&json!({ "attributes": { "hp": { "value": 12, "max": 12 } } })),
+                Some(&json!([{ "name": "Club", "type": "weapon" }])),
+            )
+            .await
+            .expect("statted actor");
+        println!("statted actor {statted}");
 
         let table = c
             .create_rolltable(
@@ -635,7 +691,7 @@ mod live_tests {
         println!("scene {scene}");
 
         // Clean up everything created (actor/rolltable have no public helper).
-        c.modify_document("Actor", "delete", json!({ "ids": [actor] }))
+        c.modify_document("Actor", "delete", json!({ "ids": [actor, statted] }))
             .await
             .expect("delete actor");
         c.modify_document("RollTable", "delete", json!({ "ids": [table] }))

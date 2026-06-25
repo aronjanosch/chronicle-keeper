@@ -343,13 +343,19 @@ pub fn foundry_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "foundry_create_actor".into(),
-            description: "Create a bare Actor (name + type only, no stat block) in the connected \
-                          FoundryVTT world. Fire-and-forget; see the foundry-bridge skill."
+            description: "Create an Actor in the connected FoundryVTT world. To stat an NPC for the \
+                          user's game system, first call foundry_get_actor on an existing actor of the \
+                          same type to learn that system's exact field paths, then pass a matching \
+                          `system` object (and optional `items`) here — CK writes them through verbatim, \
+                          so the NPC is fully statted with no per-system code. Omit `system` for a bare \
+                          stub the GM finishes in Foundry. Fire-and-forget; see the foundry-bridge skill."
                 .into(),
             schema: obj(
                 json!({
                     "name": { "type": "string" },
-                    "actor_type": { "type": "string", "description": "Foundry actor type, e.g. npc or character; defaults to npc" }
+                    "actor_type": { "type": "string", "description": "Foundry actor type, e.g. npc or character; defaults to npc" },
+                    "system": { "type": "object", "description": "Game-system stat block, mirroring the shape of an existing same-type actor (see foundry_get_actor). Omit for a bare stub." },
+                    "items": { "type": "array", "description": "Embedded item documents (weapons/spells/features), each a {name,type,system} object matching the system's item shape.", "items": { "type": "object" } }
                 }),
                 &["name"],
             ),
@@ -420,6 +426,23 @@ pub fn foundry_tools() -> Vec<ToolDef> {
                           version, offline. Read-only, no approval needed."
                 .into(),
             schema: obj(json!({ "query": { "type": "string" } }), &["query"]),
+        },
+        ToolDef {
+            name: "foundry_system_info".into(),
+            description: "Inspect the connected world's game system: its id/version, the Actor and \
+                          Item types it defines, and (with `type`) that type's default `system` data \
+                          model — the exact field paths to fill when statting an actor. Use this to \
+                          stat an NPC on an empty world without an existing actor to sample. If the \
+                          system defines its schema in code (a DataModel), it says so and points you \
+                          to foundry_get_actor instead. Read-only, no approval needed."
+                .into(),
+            schema: obj(
+                json!({
+                    "doc": { "type": "string", "description": "Document class for the schema: Actor (default) or Item" },
+                    "type": { "type": "string", "description": "A type name (e.g. npc, weapon) to get its default system schema; omit for just the type listing" }
+                }),
+                &[],
+            ),
         },
         ToolDef {
             name: "foundry_post_chat".into(),
@@ -829,6 +852,7 @@ pub fn is_foundry_async(name: &str) -> bool {
             | "foundry_get_actor"
             | "foundry_scene_state"
             | "foundry_lookup"
+            | "foundry_system_info"
     )
 }
 
@@ -876,13 +900,16 @@ pub async fn run_foundry_tool(
                     t
                 }
             };
+            let system = args.get("system").filter(|v| v.is_object());
+            let items = args.get("items").filter(|v| v.is_array());
             if aname.is_empty() {
                 Err("name is required".to_string())
             } else {
+                let statted = if system.is_some() { "statted" } else { "bare" };
                 client
-                    .create_actor(&aname, &atype)
+                    .create_actor(&aname, &atype, system, items)
                     .await
-                    .map(|id| format!("Created actor “{aname}” ({atype}) in Foundry [id {id}]."))
+                    .map(|id| format!("Created {statted} actor “{aname}” ({atype}) in Foundry [id {id}]."))
                     .map_err(|e| format!("create actor failed: {e}"))
             }
         }
@@ -964,6 +991,43 @@ pub async fn run_foundry_tool(
                     .await
                     .map(|w| crate::foundry::read::lookup(&w, &query))
                     .map_err(|e| format!("fetch world failed: {e}"))
+            }
+        }
+        "foundry_system_info" => {
+            let doc = {
+                let d = str_arg("doc");
+                if d.is_empty() {
+                    "Actor".to_string()
+                } else {
+                    d
+                }
+            };
+            let want_type = str_arg("type");
+            let want = if want_type.is_empty() {
+                None
+            } else {
+                Some(want_type.as_str())
+            };
+            match client.fetch_world().await {
+                Ok(world) => {
+                    let status = crate::foundry::fetch_status(&settings.server_url).await;
+                    let sys_id = status
+                        .as_ref()
+                        .and_then(|s| s.get("system"))
+                        .and_then(Value::as_str);
+                    let template = match sys_id {
+                        Some(id) => client.fetch_template(id).await.ok().flatten(),
+                        None => None,
+                    };
+                    Ok(crate::foundry::system::system_info(
+                        &world,
+                        status.as_ref(),
+                        template.as_ref(),
+                        &doc,
+                        want,
+                    ))
+                }
+                Err(e) => Err(format!("fetch world failed: {e}")),
             }
         }
         "foundry_post_chat" => {
@@ -2221,6 +2285,7 @@ mod tests {
             "foundry_get_actor",
             "foundry_scene_state",
             "foundry_lookup",
+            "foundry_system_info",
         ] {
             assert_eq!(tier_of(t), Tier::Read);
             assert!(is_foundry_async(t));
@@ -2240,6 +2305,7 @@ mod tests {
             "foundry_get_actor",
             "foundry_scene_state",
             "foundry_lookup",
+            "foundry_system_info",
         ] {
             let err = rt.block_on(run_foundry_tool(&ctx, t, &json!({}))).unwrap_err();
             assert!(err.contains("not configured"), "{t}: {err}");

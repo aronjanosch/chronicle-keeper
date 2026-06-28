@@ -340,8 +340,10 @@ mod tests {
     }
 
     #[test]
-    fn agents_md_in_codex_not_listed_as_page() {
-        let root = tmp_world("agents-notpage");
+    fn agents_md_in_codex_is_an_editable_page() {
+        // AGENTS.md feeds the standing-instructions layer, but is also an ordinary
+        // page so the user can open and edit it in the Codex.
+        let root = tmp_world("agents-page");
         std::fs::write(root.join("Codex/AGENTS.md"), "Instructions.").unwrap();
         std::fs::write(
             root.join("Codex/Thornhold.md"),
@@ -349,11 +351,9 @@ mod tests {
         )
         .unwrap();
         let pages = vault::list_pages(&cfg("W").codex_dir(&root)).unwrap();
-        assert_eq!(pages.len(), 1);
-        assert_eq!(pages[0].path, "Thornhold.md");
-        let d = digest(&root, &cfg("W"));
-        assert!(d.contains("1 pages."));
-        assert!(!d.contains("AGENTS"));
+        let paths: Vec<&str> = pages.iter().map(|p| p.path.as_str()).collect();
+        assert!(paths.contains(&"AGENTS.md"));
+        assert!(paths.contains(&"Thornhold.md"));
         std::fs::remove_dir_all(&root).ok();
     }
 

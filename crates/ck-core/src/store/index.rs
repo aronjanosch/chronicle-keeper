@@ -538,9 +538,7 @@ fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {
             if !vault::is_reserved_dir(&name) {
                 collect_md(&path, out);
             }
-        } else if path.extension().and_then(|e| e.to_str()) == Some("md")
-            && !vault::is_reserved_page(&name)
-        {
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
             out.push(path);
         }
     }
@@ -1418,8 +1416,8 @@ mod tests {
     }
 
     #[test]
-    fn reserved_pages_not_indexed() {
-        let dir = tmp_vault("reserved");
+    fn agents_md_is_indexed_like_a_page() {
+        let dir = tmp_vault("agents");
         write(&dir, "AGENTS.md", "Always answer in German please.\n");
         write(
             &dir,
@@ -1428,7 +1426,10 @@ mod tests {
         );
         let conn = open_index(&dir).unwrap();
         rebuild(&conn, &dir).unwrap();
-        assert!(search(&conn, "German").unwrap().is_empty());
+        // AGENTS.md is an ordinary, user-editable page now — searchable too.
+        let german = search(&conn, "German").unwrap();
+        assert_eq!(german.len(), 1);
+        assert_eq!(german[0].path, "AGENTS.md");
         let hits = search(&conn, "valley").unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "Rivendell.md");

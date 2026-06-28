@@ -35,14 +35,6 @@ pub(crate) fn is_reserved_dir(name: &str) -> bool {
     name == "Sessions" || name == "_templates"
 }
 
-// Instruction files (`AGENTS.md` standing instructions, `CLAUDE.md` assistant
-// guidance) live in the vault but are never world pages: they must not surface
-// in the page list, tree, index/FTS, links, search, or graph. Case-insensitive
-// (Obsidian and macOS treat filenames that way).
-pub(crate) fn is_reserved_page(name: &str) -> bool {
-    name.eq_ignore_ascii_case("AGENTS.md") || name.eq_ignore_ascii_case("CLAUDE.md")
-}
-
 fn require_dir(vault: &Path) -> AppResult<()> {
     if vault.is_dir() {
         Ok(())
@@ -352,12 +344,6 @@ pub fn list_pages(vault: &Path) -> AppResult<Vec<PageInfo>> {
     collect_md(vault, &mut files);
     let mut pages: Vec<PageInfo> = files
         .iter()
-        .filter(|abs| {
-            !abs.file_name()
-                .and_then(|n| n.to_str())
-                .map(is_reserved_page)
-                .unwrap_or(false)
-        })
         .filter_map(|abs| {
             let content = std::fs::read_to_string(abs).ok()?;
             let p = page_from(vault, abs, content);
@@ -1353,18 +1339,20 @@ mod tests {
     }
 
     #[test]
-    fn reserved_pages_never_listed() {
-        let dir = std::env::temp_dir().join(format!("ck-vault-reserved-{}", std::process::id()));
+    fn agents_md_is_an_editable_page() {
+        // AGENTS.md is the user's standing-instructions file: the Keeper reads it,
+        // but it must also be listed as an ordinary page so the user can edit it.
+        let dir = std::env::temp_dir().join(format!("ck-vault-agents-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("AGENTS.md"), "Instructions.").unwrap();
-        std::fs::write(dir.join("CLAUDE.md"), "Guidance.").unwrap();
         std::fs::write(dir.join("Rivendell.md"), "---\nkind: place\n---\n\nBody\n").unwrap();
         let paths: Vec<String> = list_pages(&dir)
             .unwrap()
             .into_iter()
             .map(|p| p.path)
             .collect();
-        assert_eq!(paths, ["Rivendell.md"]);
+        assert!(paths.contains(&"AGENTS.md".to_string()));
+        assert!(paths.contains(&"Rivendell.md".to_string()));
         std::fs::remove_dir_all(&dir).ok();
     }
 

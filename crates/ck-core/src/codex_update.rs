@@ -982,7 +982,7 @@ mod tests {
         assert!(report.stale.is_empty());
 
         let ulric = std::fs::read_to_string(vault_root.join("NPCs/Ulric.md")).unwrap();
-        assert!(ulric.contains("summary: New liner."));
+        assert!(ulric.contains("summary: \"New liner.\""));
         assert!(ulric.contains("S13 — old note."));
         assert!(ulric.contains("S14 — new note."));
         assert!(ulric.contains("[[Mira]]"));
@@ -990,7 +990,7 @@ mod tests {
 
         let sigil = std::fs::read_to_string(vault_root.join("Lore/The Bronze Sigil.md")).unwrap();
         assert!(sigil.contains("kind: lore"));
-        assert!(sigil.contains("summary: A sigil."));
+        assert!(sigil.contains("summary: \"A sigil.\""));
         assert!(sigil.contains("S14 — found."));
 
         let back = read_run(&sess).unwrap().unwrap();

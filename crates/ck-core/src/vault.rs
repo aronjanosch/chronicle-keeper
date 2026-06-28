@@ -902,7 +902,7 @@ pub(crate) fn set_frontmatter_fields(content: &str, kind: &str, summary: &str) -
         .unwrap_or(summary);
     let mut out = String::from("---\n");
     out.push_str(&format!("kind: {k}\n"));
-    let sq = yaml_scalar(s);
+    let sq = yaml_quoted(s);
     if sq.is_empty() {
         out.push_str("summary:\n");
     } else {
@@ -926,7 +926,12 @@ fn push_fm_field(out: &mut String, key: &str, vals: &[String]) {
     if vals.is_empty() {
         out.push_str(&format!("{key}:\n"));
     } else if vals.len() == 1 {
-        out.push_str(&format!("{key}: {}\n", yaml_scalar(&vals[0])));
+        let v = if key == "summary" {
+            yaml_quoted(&vals[0])
+        } else {
+            yaml_scalar(&vals[0])
+        };
+        out.push_str(&format!("{key}: {v}\n"));
     } else {
         out.push_str(&format!("{key}:\n"));
         for v in vals {
@@ -1024,6 +1029,16 @@ pub(crate) fn needs_frontmatter_enhance(content: &str) -> bool {
         || fm_get(&fm, "summary").filter(|s| !s.is_empty()).is_none()
 }
 
+/// Always double-quote a scalar (empty stays empty). Used for `summary:` so the
+/// emitted frontmatter is unambiguous for Obsidian's YAML parser.
+fn yaml_quoted(s: &str) -> String {
+    let s = s.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 fn yaml_scalar(s: &str) -> String {
     let s = s.trim();
     if s.is_empty() {
@@ -1041,7 +1056,7 @@ fn yaml_scalar(s: &str) -> String {
 
 pub(crate) fn page_file_content(name: &str, kind: &str, summary: &str, body: &str) -> String {
     let mut out = format!("---\nkind: {kind}\n");
-    let s = yaml_scalar(summary);
+    let s = yaml_quoted(summary);
     if s.is_empty() {
         out.push_str("summary:\n");
     } else {

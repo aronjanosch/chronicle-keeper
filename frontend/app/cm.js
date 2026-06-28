@@ -703,6 +703,33 @@ function createSingleton(cm) {
   return s;
 }
 
+// Scroll the live editor to the i-th body heading — mirrors ReadView's outline
+// indexing (frontmatter dropped, leading H1 title dropped, fence-aware) so the
+// rail's Outline jumps to the same place in read and edit mode. Returns false
+// when there's no mounted view yet or the index is out of range.
+export function gotoHeading(index) {
+  if (!ed || !ed.view) return false;
+  const view = ed.view;
+  const full = view.state.doc.toString();
+  let body = full, base = 0;
+  const fm = full.match(/^---\n[\s\S]*?\n---\n?/);
+  if (fm) { base = fm[0].length; body = full.slice(base); }
+  const h1 = body.match(/^\s*#\s+.*\n+/);
+  if (h1) { base += h1[0].length; body = body.slice(h1[0].length); }
+  let pos = base, count = -1, fence = false;
+  for (const raw of body.split('\n')) {
+    const line = raw.trim();
+    if (/^(```|~~~)/.test(line)) fence = !fence;
+    else if (!fence && /^#{1,3}\s+/.test(line) && ++count === index) {
+      view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+      view.focus();
+      return true;
+    }
+    pos += raw.length + 1;
+  }
+  return false;
+}
+
 // Mount the editor into `host`. `opts.cacheKey` (world:path) keys the per-tab
 // EditorState cache — a hit restores cursor/undo, but only while the cached
 // doc still matches `opts.doc` (external edits and history restores miss).

@@ -9,7 +9,7 @@ import { navigate, useStore, openModal, setState } from '../core.js';
 import { Shell, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
 import { Empty, Icon, PageBody, WikilinkHoverCard, splitDoc, joinDoc, parseProps, openContextMenu, useAsset, bannerAsset } from '../ui.js';
 import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault, uploadVaultAsset, loadSnippets, loadRelations, loadSkills, copyText } from '../actions.js';
-import { mountEditor } from '../cm.js';
+import { mountEditor, gotoHeading } from '../cm.js';
 import { setEditorActive } from '../commands.js';
 import { TabStrip, openPageEvt } from '../tabs.js';
 import { FileTree, buildTree, makeVaultActions, iconForKind, KINDS, dirOf } from './codex.js';
@@ -220,20 +220,14 @@ function parseOutline(md) {
   return out;
 }
 
-// Sticky in-page nav. Click scrolls to the Nth rendered heading — the prose is
-// rendered from the same source in order, so outline index === h1/h2/h3 index.
-function OutlineCard({ outline, scrollRef }) {
+// Sticky in-page nav. Click jumps to the Nth heading — the read scroller in
+// read mode, the live editor in edit mode (onGoto resolves the right target).
+function OutlineCard({ outline, onGoto }) {
   if (!outline || outline.length < 2) return null;
-  const go = (i) => {
-    // Scope to the prose body — the page title <h1> sits outside .ck-prose, so
-    // querying the whole scroller would be off by one vs the parsed outline.
-    const hs = scrollRef.current?.querySelectorAll('.ck-prose h1, .ck-prose h2, .ck-prose h3');
-    if (hs && hs[i]) hs[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
   return html`<${RailCard} icon="scroll" title="Outline">
     <div style=${{ display: 'flex', flexDirection: 'column', gap: 1 }}>
       ${outline.map((h, i) => html`<div key=${i} class="ck-rail-link"
-        onClick=${() => go(i)} style=${{ paddingLeft: (h.level - 1) * 12 }}>
+        onClick=${() => onGoto(i)} style=${{ paddingLeft: (h.level - 1) * 12 }}>
         <span style=${{ fontSize: h.level === 1 ? 12.5 : 12, color: h.level === 1 ? 'var(--ink)' : 'var(--ink-soft)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${h.text}</span>
       </div>`)}
     </div>
@@ -542,27 +536,15 @@ function FindBar({ scrollRef, doc, focusTick, onClose }) {
   </div>`;
 }
 
-function ReadView({ page, path, pages, links, relations, schemas, atlasMaps, campaignId, onSave, onBroken, railHidden }) {
+function ReadView({ page, path, pages, campaignId, onBroken, scrollRef }) {
   const { fm, body } = splitDoc(page.content);
   const props = parseProps(fm);
   const role = (props.find((p) => p.key === 'role') || {}).values?.[0];
   const eyebrow = [kindLabel(page.kind), role].filter(Boolean).join(' · ');
   const prose = body.replace(/^\s*#\s+.*\n+/, ''); // title rendered above; drop the leading H1
 
-  const meta = (pages || []).find((p) => p.path === path);
-  const words = prose.trim() ? prose.trim().split(/\s+/).length : 0;
-  const edited = meta?.modified ? new Date(meta.modified * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : null;
-  const outline = useMemo(() => parseOutline(prose), [prose]);
-  const scrollRef = useScrollMemory(`${campaignId}:${path}`, 'readScroll');
-  // navigate('page', { path, rail: 'chat' }) (e.g. "Ask Keeper" in the
-  // Explorer) lands with the requested rail tab open.
-  const routeRail = useStore().route.params?.rail;
-  const [railTab, setRailTab] = useState(routeRail || 'info');
-  useEffect(() => { if (routeRail) setRailTab(routeRail); }, [routeRail]);
-  const [railW, onRailResize] = useSidebarWidth('ck_page_rail_w', 300, { min: 240, max: 560, fromRight: true });
-
   // ⌘F / Edit → Find in Page. The tick refocuses (and reselects) the input
-  // when the bar is already open.
+  // when the bar is already open. (Edit mode uses CM's own search panel.)
   const [findTick, setFindTick] = useState(0);
   useEffect(() => {
     const onCmd = (e) => { if (e.detail === 'find') setFindTick((t) => t + 1); };
@@ -572,47 +554,57 @@ function ReadView({ page, path, pages, links, relations, schemas, atlasMaps, cam
 
   const bannerUrl = useAsset(campaignId, bannerAsset(props));
 
-  return html`<div style=${{ flex: 1, display: 'flex', minWidth: 0, minHeight: 0 }}>
-    <div style=${{ flex: 1, position: 'relative', display: 'flex', minWidth: 0, minHeight: 0 }}>
-      ${findTick > 0 && html`<${FindBar} scrollRef=${scrollRef} doc=${page.content} focusTick=${findTick} onClose=${() => setFindTick(0)} />`}
-      <div ref=${scrollRef} style=${{ flex: 1, overflow: 'auto', background: 'var(--paper)', padding: '0 0 64px', minWidth: 0 }}>
-        ${bannerUrl && html`<img class="ck-page-banner" src=${bannerUrl} alt="" />`}
-        <div style=${{ maxWidth: 680, margin: '0 auto', padding: `${bannerUrl ? 24 : 34}px 52px 0` }}>
-          <${Provenance} path=${path} />
-          <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--burgundy)', marginTop: 16 }}>${eyebrow}</div>
-          <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 38, fontWeight: 500, letterSpacing: '-0.02em', lineHeight: 1.08, color: 'var(--ink)', marginTop: 6 }}>${page.title}</h1>
-          <div style=${{ height: 1, background: 'var(--rule)', margin: '26px 0' }} />
-          <${PageBody} text=${prose} pages=${pages} onBroken=${onBroken} />
-        </div>
+  return html`<div style=${{ flex: 1, position: 'relative', display: 'flex', minWidth: 0, minHeight: 0 }}>
+    ${findTick > 0 && html`<${FindBar} scrollRef=${scrollRef} doc=${page.content} focusTick=${findTick} onClose=${() => setFindTick(0)} />`}
+    <div ref=${scrollRef} style=${{ flex: 1, overflow: 'auto', background: 'var(--paper)', padding: '0 0 64px', minWidth: 0 }}>
+      ${bannerUrl && html`<img class="ck-page-banner" src=${bannerUrl} alt="" />`}
+      <div style=${{ maxWidth: 680, margin: '0 auto', padding: `${bannerUrl ? 24 : 34}px 52px 0` }}>
+        <${Provenance} path=${path} />
+        <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--burgundy)', marginTop: 16 }}>${eyebrow}</div>
+        <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 38, fontWeight: 500, letterSpacing: '-0.02em', lineHeight: 1.08, color: 'var(--ink)', marginTop: 6 }}>${page.title}</h1>
+        <div style=${{ height: 1, background: 'var(--rule)', margin: '26px 0' }} />
+        <${PageBody} text=${prose} pages=${pages} onBroken=${onBroken} />
       </div>
     </div>
-    ${!railHidden && html`<aside style=${{ width: railW, flex: `0 0 ${railW}px`, position: 'relative', borderLeft: '1px solid var(--rule-soft)', background: 'var(--paper)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <${ResizeHandle} side="left" onMouseDown=${onRailResize} />
-      <div style=${{ display: 'flex', padding: '0 8px', borderBottom: '1px solid var(--rule-soft)' }}>
-        <${RailTab} icon="book" label="Info" active=${railTab === 'info'} onClick=${() => setRailTab('info')} />
-        <${RailTab} icon="link" label="Links" active=${railTab === 'links'} onClick=${() => setRailTab('links')} />
-        <${RailTab} icon="feather" label="Chat" active=${railTab === 'chat'} onClick=${() => setRailTab('chat')} />
-      </div>
-      ${railTab === 'info'
-        ? html`<div style=${{ flex: 1, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <${InfoboxCard} fm=${fm} kind=${page.kind} schemas=${schemas} pages=${pages} />
-            <${SummaryCard} page=${page} onSave=${onSave} />
-            <${TagsCard} tags=${meta?.tags} />
-            <${ContainsCard} path=${path} pages=${pages} relations=${relations} />
-            <${OnMapCard} path=${path} maps=${atlasMaps} campaignId=${campaignId} />
-            <div class="ck-rail-foot">${[edited && `Edited ${edited}`, `${words} words`].filter(Boolean).join(' · ')}</div>
-          </div>`
-        : railTab === 'links'
-        ? html`<div style=${{ flex: 1, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <${OutlineCard} outline=${outline} scrollRef=${scrollRef} />
-            <${LocalGraphCard} path=${path} pages=${pages} links=${links} relations=${relations} />
-            <${OutgoingLinksCard} path=${path} pages=${pages} links=${links} />
-            <${BacklinksCard} path=${path} pages=${pages} links=${links} />
-            <${RelationsCard} path=${path} pages=${pages} relations=${relations} />
-          </div>`
-        : html`<${RailChat} />`}
-    </aside>`}
   </div>`;
+}
+
+// The page rail — Info / Links / Chat. Lifted out of ReadView so it persists
+// across read↔edit (people want the Keeper chat + backlinks while writing too).
+function PageRail({ page, path, pages, links, relations, schemas, atlasMaps, campaignId, onSave, railTab, setRailTab, railW, onRailResize, onGotoHeading }) {
+  const { fm, body } = splitDoc(page.content);
+  const prose = body.replace(/^\s*#\s+.*\n+/, '');
+  const outline = useMemo(() => parseOutline(prose), [prose]);
+  const meta = (pages || []).find((p) => p.path === path);
+  const words = prose.trim() ? prose.trim().split(/\s+/).length : 0;
+  const edited = meta?.modified ? new Date(meta.modified * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : null;
+
+  return html`<aside style=${{ width: railW, flex: `0 0 ${railW}px`, position: 'relative', borderLeft: '1px solid var(--rule-soft)', background: 'var(--paper)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <${ResizeHandle} side="left" onMouseDown=${onRailResize} />
+    <div style=${{ display: 'flex', padding: '0 8px', borderBottom: '1px solid var(--rule-soft)' }}>
+      <${RailTab} icon="book" label="Info" active=${railTab === 'info'} onClick=${() => setRailTab('info')} />
+      <${RailTab} icon="link" label="Links" active=${railTab === 'links'} onClick=${() => setRailTab('links')} />
+      <${RailTab} icon="feather" label="Chat" active=${railTab === 'chat'} onClick=${() => setRailTab('chat')} />
+    </div>
+    ${railTab === 'info'
+      ? html`<div style=${{ flex: 1, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <${InfoboxCard} fm=${fm} kind=${page.kind} schemas=${schemas} pages=${pages} />
+          <${SummaryCard} page=${page} onSave=${onSave} />
+          <${TagsCard} tags=${meta?.tags} />
+          <${ContainsCard} path=${path} pages=${pages} relations=${relations} />
+          <${OnMapCard} path=${path} maps=${atlasMaps} campaignId=${campaignId} />
+          <div class="ck-rail-foot">${[edited && `Edited ${edited}`, `${words} words`].filter(Boolean).join(' · ')}</div>
+        </div>`
+      : railTab === 'links'
+      ? html`<div style=${{ flex: 1, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <${OutlineCard} outline=${outline} onGoto=${onGotoHeading} />
+          <${LocalGraphCard} path=${path} pages=${pages} links=${links} relations=${relations} />
+          <${OutgoingLinksCard} path=${path} pages=${pages} links=${links} />
+          <${BacklinksCard} path=${path} pages=${pages} links=${links} />
+          <${RelationsCard} path=${path} pages=${pages} relations=${relations} />
+        </div>`
+      : html`<${RailChat} />`}
+  </aside>`;
 }
 
 function RailTab({ icon, label, active, onClick }) {
@@ -663,13 +655,30 @@ export function PageScreen() {
   const [zen, setZen] = useState(() => loadFlag('ck_zen', false)); // edit mode: hide the file tree too
   const [rev, setRev] = useState(0); // bumped on external reload to re-key the editor
 
+  // Rail (Info/Links/Chat) lives at screen level so it survives read↔edit.
+  // navigate('page', { path, rail }) (e.g. "Ask Keeper") opens the requested tab.
+  const routeRail = store.route.params?.rail;
+  const [railTab, setRailTab] = useState(routeRail || 'info');
+  useEffect(() => { if (routeRail) setRailTab(routeRail); }, [routeRail]);
+  const [railW, onRailResize] = useSidebarWidth('ck_page_rail_w', 300, { min: 240, max: 560, fromRight: true });
+  const readScrollRef = useScrollMemory(uiKey, 'readScroll');
+
   const toggleRail = () => setRailHidden((h) => { saveFlag('ck_rail_hidden', !h); return !h; });
   const toggleZen = () => setZen((z) => { saveFlag('ck_zen', !z); return !z; });
+  const showRail = (tab) => { setRailHidden(false); saveFlag('ck_rail_hidden', false); setRailTab(tab); };
+
+  // Outline jump: the read scroller in read mode, the live editor in edit mode.
+  const onGotoHeading = (i) => {
+    if (mode === 'read') {
+      const hs = readScrollRef.current?.querySelectorAll('.ck-prose h1, .ck-prose h2, .ck-prose h3');
+      if (hs && hs[i]) hs[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else gotoHeading(i);
+  };
 
   // 14E: ⌘⇧K / View-menu commands for the toggles this screen owns.
   useEffect(() => {
     const onCmd = (e) => {
-      if (e.detail === 'toggle-rail' && mode === 'read') toggleRail();
+      if (e.detail === 'toggle-rail') toggleRail();
       else if (e.detail === 'zen' && mode === 'edit') toggleZen();
     };
     window.addEventListener('ck:cmd', onCmd);
@@ -775,10 +784,10 @@ export function PageScreen() {
   const topbar = html`<${Topbar} crumbs=${crumbs}
     right=${html`<div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
       ${savedChip}
-      ${mode === 'read' && html`<button onClick=${toggleRail} title=${railHidden ? 'Show side panel' : 'Hide side panel'}
+      <button onClick=${toggleRail} title=${railHidden ? 'Show side panel' : 'Hide side panel'}
         style=${{ padding: '6px 8px', color: railHidden ? 'var(--ink-faint)' : 'var(--ink-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
         <${Icon} name=${railHidden ? 'chev-l' : 'chev-r'} size=${14} />
-      </button>`}
+      </button>
       ${mode === 'edit' && html`<button onClick=${toggleZen} title=${zen ? 'Leave zen mode' : 'Zen mode — hide the sidebar'}
         style=${{ padding: '6px 8px', color: zen ? 'var(--burgundy)' : 'var(--ink-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
         <${Icon} name="sun" size=${14} />
@@ -810,20 +819,20 @@ export function PageScreen() {
     });
   });
 
-  // 14B: selection → Keeper composer as a quote (read mode, Chat rail tab).
+  // 14B: selection → Keeper composer as a quote, in the Chat rail tab (the rail
+  // now rides along in edit mode, so no mode switch needed).
   const quoteToKeeper = (text) => {
     const draft = `${text.trim().split('\n').map((l) => `> ${l}`).join('\n')}\n\n`;
     setState({ keeper: {
       chatId: null, events: [], attachments: [], live: null, error: null,
       ...(store.keeper || {}), open: true, draft,
     } });
-    navigate('page', { path, rail: 'chat' });
-    changeMode('read');
+    showRail('chat');
   };
 
   // 20A: editor `/` ASK-KEEPER rows. A skill row pulls that skill; `/keeper …`
-  // is an ad-hoc prompt. The Keeper rail lives in read mode, so surface it and
-  // prefill the composer — pull-not-push, nothing fires until the user sends.
+  // is an ad-hoc prompt. Surface the Chat rail and prefill the composer —
+  // pull-not-push, nothing fires until the user sends.
   const askKeeper = ({ skill, prompt, selection }) => {
     let draft = skill
       ? `Use the "${skill.name}" skill to help me develop this page.`
@@ -837,8 +846,7 @@ export function PageScreen() {
       chatId: null, events: [], attachments: [], live: null, error: null,
       ...(store.keeper || {}), open: true, draft,
     } });
-    navigate('page', { path, rail: 'chat' });
-    changeMode('read');
+    showRail('chat');
   };
 
   return html`<${Shell}
@@ -846,18 +854,24 @@ export function PageScreen() {
       : html`<${FileTree} campaign=${c} tree=${tree} active=${(page && page.title) || null} onOpen=${(p, e) => openPageEvt(p.path, e)} act=${act} />`}
     topbar=${topbar} tabstrip=${html`<${TabStrip} />`} bodyStyle=${{ padding: 0 }}>
     <div style=${{ display: 'flex', height: '100%', minHeight: 0 }}>
-      ${page === null
-        ? html`<div style=${{ flex: 1, padding: 40, color: 'var(--ink-faint)', fontStyle: 'italic' }}>Loading…</div>`
-        : mode === 'read'
-          ? html`<${ReadView} page=${page} path=${path} pages=${pages} links=${(store.vaultLinks || {}).links} relations=${store.vaultRelations} schemas=${store.kindSchemas} atlasMaps=${store.atlasMaps} campaignId=${c.campaign_id} onSave=${doSave} onBroken=${openBroken} railHidden=${railHidden} />`
-          : html`<${EditScroll} uiKey=${uiKey}>
-              <div style=${{ maxWidth: 720, margin: '0 auto', padding: '0 52px' }}>
-                <${Provenance} path=${path} />
-                <${CmEditor} key=${'cm:' + rev + ':' + path} content=${page.content} uiKey=${uiKey} pages=${pages} snippets=${store.snippets} skills=${editorSkills}
-                  onSave=${doSave} onCreate=${(name, kind) => createVaultPage(name, kind || 'lore', '')} onState=${setSaveState}
-                  onExtract=${extractToPage} onQuote=${quoteToKeeper} onAskKeeper=${askKeeper} />
-              </div>
-            </${EditScroll}>`}
+      <div style=${{ flex: 1, display: 'flex', minWidth: 0, minHeight: 0 }}>
+        ${page === null
+          ? html`<div style=${{ flex: 1, padding: 40, color: 'var(--ink-faint)', fontStyle: 'italic' }}>Loading…</div>`
+          : mode === 'read'
+            ? html`<${ReadView} page=${page} path=${path} pages=${pages} campaignId=${c.campaign_id} onBroken=${openBroken} scrollRef=${readScrollRef} />`
+            : html`<${EditScroll} uiKey=${uiKey}>
+                <div style=${{ maxWidth: 720, margin: '0 auto', padding: '0 52px' }}>
+                  <${Provenance} path=${path} />
+                  <${CmEditor} key=${'cm:' + rev + ':' + path} content=${page.content} uiKey=${uiKey} pages=${pages} snippets=${store.snippets} skills=${editorSkills}
+                    onSave=${doSave} onCreate=${(name, kind) => createVaultPage(name, kind || 'lore', '')} onState=${setSaveState}
+                    onExtract=${extractToPage} onQuote=${quoteToKeeper} onAskKeeper=${askKeeper} />
+                </div>
+              </${EditScroll}>`}
+      </div>
+      ${page && !railHidden && html`<${PageRail} page=${page} path=${path} pages=${pages}
+        links=${(store.vaultLinks || {}).links} relations=${store.vaultRelations} schemas=${store.kindSchemas}
+        atlasMaps=${store.atlasMaps} campaignId=${c.campaign_id} onSave=${doSave}
+        railTab=${railTab} setRailTab=${setRailTab} railW=${railW} onRailResize=${onRailResize} onGotoHeading=${onGotoHeading} />`}
     </div>
   </${Shell}>`;
 }

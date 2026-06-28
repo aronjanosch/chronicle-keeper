@@ -12,14 +12,20 @@ const AGENTS_MD_CAP: usize = 6_000; // ~2k tokens
 const BRIEF_CAP: usize = 6_000; // ~2k tokens (matches brief::BRIEF_BODY_CAP)
 const PAGE_LIST_CAP: usize = 12_000; // ~4k tokens (~150 pages with summaries)
 const RECENT_SESSIONS: usize = 10;
+const RECENT_PAGES: usize = 8;
 
-/// Layers 0–2: identity (config.toml) + standing instructions (AGENTS.md) +
-/// World Brief (.ck/keeper/BRIEF.md). Absent layers are simply omitted.
+/// Layers 0–2: identity (config.toml) + standing instructions (AGENTS.md,
+/// vault-first then world-root fallback) + World Brief (.ck/keeper/BRIEF.md).
+/// Absent layers are simply omitted.
 pub fn world_context(world_root: &Path, cfg: &WorldConfig) -> String {
     let mut out = String::new();
     out.push_str(&identity(cfg));
 
-    if let Some(agents) = read_capped(&world_root.join("AGENTS.md"), AGENTS_MD_CAP) {
+    // Obsidian users keep AGENTS.md inside the vault; the canonical home is the
+    // world root. First non-empty file wins, vault taking precedence.
+    let agents = read_capped(&cfg.codex_dir(world_root).join("AGENTS.md"), AGENTS_MD_CAP)
+        .or_else(|| read_capped(&world_root.join("AGENTS.md"), AGENTS_MD_CAP));
+    if let Some(agents) = agents {
         out.push_str("\n## Standing instructions from the user\n\n");
         out.push_str(&agents);
         out.push('\n');
@@ -170,6 +176,17 @@ pub fn digest(world_root: &Path, cfg: &WorldConfig) -> String {
         }
     }
 
+    // Always emit, independent of the cap degradation above: a just-created
+    // page must stay salient even when the full list falls back to folders.
+    let recent = recent_pages(&pages, RECENT_PAGES);
+    if !recent.is_empty() {
+        out.push_str("\n## Recently edited pages\n\n");
+        for line in recent {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+
     let sessions = recent_sessions(world_root);
     if !sessions.is_empty() {
         out.push_str("\n## Recent sessions\n\n");
@@ -179,6 +196,30 @@ pub fn digest(world_root: &Path, cfg: &WorldConfig) -> String {
         }
     }
     out
+}
+
+/// Newest-first `- {path}{ [kind]} — {summary}` lines, by file mtime. Always
+/// present in the digest so freshly built pages stay visible even when the
+/// full page list degrades past the cap.
+fn recent_pages(pages: &[vault::PageInfo], n: usize) -> Vec<String> {
+    let mut sorted: Vec<&vault::PageInfo> = pages.iter().collect();
+    sorted.sort_by_key(|p| std::cmp::Reverse(p.modified.unwrap_or(0)));
+    sorted
+        .into_iter()
+        .take(n)
+        .map(|p| {
+            let kind = match p.kind.as_deref().unwrap_or("") {
+                "" => String::new(),
+                k => format!(" [{k}]"),
+            };
+            let summary = if p.summary.trim().is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", p.summary.trim())
+            };
+            format!("- {}{kind}{summary}", p.path)
+        })
+        .collect()
 }
 
 /// Newest-first `#NNN — title (date)` lines for the digest.
@@ -278,6 +319,45 @@ mod tests {
     }
 
     #[test]
+    fn agents_md_read_from_codex() {
+        let root = tmp_world("agents-codex");
+        std::fs::write(root.join("Codex/AGENTS.md"), "Answer in German.").unwrap();
+        let ctx = world_context(&root, &cfg("W"));
+        assert!(ctx.contains("Standing instructions from the user"));
+        assert!(ctx.contains("Answer in German."));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn agents_md_codex_wins_over_root() {
+        let root = tmp_world("agents-prec");
+        std::fs::write(root.join("Codex/AGENTS.md"), "From the vault.").unwrap();
+        std::fs::write(root.join("AGENTS.md"), "From the root.").unwrap();
+        let ctx = world_context(&root, &cfg("W"));
+        assert!(ctx.contains("From the vault."));
+        assert!(!ctx.contains("From the root."));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn agents_md_in_codex_not_listed_as_page() {
+        let root = tmp_world("agents-notpage");
+        std::fs::write(root.join("Codex/AGENTS.md"), "Instructions.").unwrap();
+        std::fs::write(
+            root.join("Codex/Thornhold.md"),
+            "---\nkind: place\nsummary: A town.\n---\n\nBody.\n",
+        )
+        .unwrap();
+        let pages = vault::list_pages(&cfg("W").codex_dir(&root)).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].path, "Thornhold.md");
+        let d = digest(&root, &cfg("W"));
+        assert!(d.contains("1 pages."));
+        assert!(!d.contains("AGENTS"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn brief_is_data_delimited() {
         let root = tmp_world("brief");
         std::fs::create_dir_all(root.join(".ck/keeper")).unwrap();
@@ -315,10 +395,13 @@ mod tests {
             .unwrap();
         }
         let d = digest(&root, &cfg("W"));
-        assert!(d.contains("summaries omitted"));
-        assert!(d.contains("NPCs/Page0.md")); // still a full page map
-        assert!(!d.contains(&long)); // but no summaries
-        assert!(!d.contains("Folders:"));
+        // Inspect only the main page list — the "Recently edited pages" block
+        // below legitimately carries summaries for its (capped) top-N.
+        let main = &d[..d.find("## Recently edited pages").unwrap_or(d.len())];
+        assert!(main.contains("summaries omitted"));
+        assert!(main.contains("NPCs/Page0.md")); // still a full page map
+        assert!(!main.contains(&long)); // but no summaries
+        assert!(!main.contains("Folders:"));
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -338,6 +421,54 @@ mod tests {
         assert!(d.contains("Folders:"));
         assert!(d.contains("- NPCs/"));
         assert!(d.contains("use list_pages / search_pages"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    fn set_mtime(path: &Path, secs: u64) {
+        let f = std::fs::File::options().write(true).open(path).unwrap();
+        f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+    }
+
+    #[test]
+    fn digest_recent_pages_newest_first() {
+        let root = tmp_world("recent");
+        for (name, mtime) in [("Old", 1_000u64), ("Mid", 2_000), ("New", 3_000)] {
+            let p = root.join(format!("Codex/{name}.md"));
+            std::fs::write(&p, format!("---\nsummary: {name} page.\n---\n\nx\n")).unwrap();
+            set_mtime(&p, mtime);
+        }
+        let d = digest(&root, &cfg("W"));
+        assert!(d.contains("## Recently edited pages"));
+        // Within the recent block, newest first.
+        let block = &d[d.find("## Recently edited pages").unwrap()..];
+        let b_new = block.find("New.md").unwrap();
+        let b_mid = block.find("Mid.md").unwrap();
+        let b_old = block.find("Old.md").unwrap();
+        assert!(b_new < b_mid && b_mid < b_old);
+        assert!(d.contains("New.md — New page.")); // summaries carried
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn digest_recent_pages_survive_list_degradation() {
+        let root = tmp_world("recentbig");
+        std::fs::create_dir_all(root.join("Codex/NPCs")).unwrap();
+        let name = "n".repeat(240); // long names so bare paths overflow the cap
+        for i in 0..60 {
+            std::fs::write(
+                root.join(format!("Codex/NPCs/{name}{i}.md")),
+                "---\nsummary: s\n---\n\nx\n",
+            )
+            .unwrap();
+        }
+        let fresh = root.join("Codex/FreshModule.md");
+        std::fs::write(&fresh, "---\nsummary: Just built.\n---\n\nx\n").unwrap();
+        set_mtime(&fresh, 9_999_999_999);
+        let d = digest(&root, &cfg("W"));
+        assert!(d.contains("Folders:")); // main list degraded
+        assert!(d.contains("## Recently edited pages"));
+        assert!(d.contains("FreshModule.md — Just built.")); // still salient
         std::fs::remove_dir_all(&root).ok();
     }
 

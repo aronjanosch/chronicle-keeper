@@ -144,6 +144,13 @@ fn process(
         }
         return;
     }
+    if parts
+        .last()
+        .map(|n| crate::vault::is_reserved_page(n))
+        .unwrap_or(false)
+    {
+        return;
+    }
 
     {
         let mut map = suppress.lock().unwrap_or_else(|e| e.into_inner());

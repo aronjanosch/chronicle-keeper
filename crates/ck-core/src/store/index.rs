@@ -538,7 +538,9 @@ fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {
             if !vault::is_reserved_dir(&name) {
                 collect_md(&path, out);
             }
-        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md")
+            && !vault::is_reserved_page(&name)
+        {
             out.push(path);
         }
     }
@@ -1412,6 +1414,24 @@ mod tests {
         assert!(search(&conn, "\"weird:[query]").unwrap().is_empty()); // no syntax error
         let tags = tag_counts(&conn).unwrap();
         assert_eq!(tags.len(), 2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reserved_pages_not_indexed() {
+        let dir = tmp_vault("reserved");
+        write(&dir, "AGENTS.md", "Always answer in German please.\n");
+        write(
+            &dir,
+            "Rivendell.md",
+            "---\nkind: place\n---\nElf haven valley.\n",
+        );
+        let conn = open_index(&dir).unwrap();
+        rebuild(&conn, &dir).unwrap();
+        assert!(search(&conn, "German").unwrap().is_empty());
+        let hits = search(&conn, "valley").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "Rivendell.md");
         std::fs::remove_dir_all(&dir).ok();
     }
 

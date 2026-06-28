@@ -21,4 +21,4 @@ The marketing landing page + documentation site, published to **GitHub Pages**.
 `main` that touches `site/**`. **One-time setup in the public repo:**
 Settings → Pages → Source → **GitHub Actions**.
 
-Lives at `https://<owner>.github.io/chronicle-keeper-world/`.
+Lives at `https://<owner>.github.io/chronicle-keeper/`.

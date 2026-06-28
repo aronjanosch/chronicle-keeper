@@ -21,8 +21,8 @@
         <a href="../#features">Features</a>
         <a href="../#pipeline">How it works</a>
         <a href="getting-started.html" class="is-active">Docs</a>
-        <a href="https://github.com/aronjanosch/chronicle-keeper-world">GitHub</a>
-        <a class="btn btn-primary btn-sm" href="https://github.com/aronjanosch/chronicle-keeper-world/releases" style="color:#FBF6E9">Download</a>
+        <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a>
+        <a class="btn btn-primary btn-sm" href="https://github.com/aronjanosch/chronicle-keeper/releases" style="color:#FBF6E9">Download</a>
       </nav>
     </div>
   </header>
@@ -61,10 +61,18 @@
       <div class="prose">
         <h2 id="where">Where it lives</h2>
         <p>Press <strong>⌘J</strong> for the Keeper panel, docked beside whatever you're looking at, or open the full Keeper screen for the chat list. Ask it anything about your world — "who rules Ashfall now?", "did we ever name the duke's daughter?", "summarise the party's beef with the Smiths' Guild."</p>
+        <p>Prefer to talk? Tap the <strong>microphone</strong> in the composer and dictate — your speech is transcribed <strong>on-device</strong> by the same engine that handles your session recordings, so nothing leaves your machine. Stop when you're done and the text lands in the box, ready to edit or send.</p>
 
         <h2 id="tools">How it answers</h2>
         <p>The Keeper isn't guessing from a stale snapshot — it actively <strong>searches</strong> your world to answer. It looks across pages first, then session summaries, then transcripts, reads what's relevant, and replies with <code>[[citations]]</code> you can click. When it proposes changes, you see them as <strong>diff cards</strong> before anything is written.</p>
         <figure><img src="../assets/screenshots/keeper.png" alt="The Keeper chat showing search and read tool calls then a cited answer" /><figcaption>The Keeper searches and reads your world (the tool calls are visible), then answers with citations.</figcaption></figure>
+
+        <h2 id="skills">Skills it can pull — and write</h2>
+        <p>Skills are short references the Keeper reaches for on demand: a game system's rules, your house rules, a prep checklist, a lore-style convention. Only each skill's name and one-line description sit in context at all times; the full text loads <em>only</em> when it's needed — so a deep rules reference costs nothing until the moment it's used.</p>
+        <p>Type <code>/</code> in the composer to pull one by hand, and any skill tagged for a page kind shows up as a one-click chip on those pages. Better still, the Keeper can <strong>author its own</strong>: after a workflow you liked, say "save that as a skill" and it drafts the name, description and body for you to approve. Everything lives in <strong>Settings → Keeper skills</strong>, where you can enable, disable or delete any of them — built-in or your own — and skills are shared across every world.</p>
+
+        <h2 id="web">Reaching beyond your world</h2>
+        <p>When you're inventing — etymology for a name, a scrap of real mythology, a historical detail to borrow — the Keeper can <strong>search the web and read a page</strong>. It always asks first before going out to the internet, and what it finds stays clearly separate from your canon: reference for you, never written into the codex unless you say so.</p>
 
         <h2 id="permissions">You're in control</h2>
         <p>Each message runs at a permission level you choose:</p>
@@ -84,6 +92,9 @@
           <li><strong>World Brief</strong> — a living overview it writes and refreshes (and flags when it's gone stale), giving every AI feature the same shared sense of your world.</li>
           <li><strong>Attachments</strong> — pin specific pages, a session summary, or a transcript range into a chat to focus the conversation, or drop in a text file.</li>
         </ul>
+
+        <h2 id="foundry">Foundry VTT bridge</h2>
+        <p>If you run your games in <strong>Foundry VTT</strong>, the Keeper can reach into your live world: list its actors and scenes, read a character sheet in whatever system you play, look something up in a compendium, and post to chat. It can even <strong>stat an NPC</strong> from a Codex page straight into Foundry. Reads are free; anything that writes asks first. Connect it in <strong>Settings → Foundry</strong>.</p>
 
         <h2 id="update-codex">Update the Codex after a session</h2>
         <p>When you finish a <a href="workflow.html">session write-up</a>, the Keeper can read the summary and propose edits to your wiki — new NPCs met, a town's status changed, a thread resolved. Each proposal is <strong>grounded against the transcript</strong> (with the citation that backs it) and shown as a reviewable diff. Nothing is written until you commit, so your canon only changes on your say-so.</p>
@@ -107,7 +118,7 @@
     <div class="wrap">
       <div class="legal" style="border:0;margin:0;padding:0">
         <span>© <span data-year>2026</span> Chronicle Keeper · MIT licensed · Built with ❤️ from Germany</span>
-        <span><a href="../">Home</a> · <a href="https://github.com/aronjanosch/chronicle-keeper-world">GitHub</a></span>
+        <span><a href="../">Home</a> · <a href="https://github.com/aronjanosch/chronicle-keeper">GitHub</a></span>
       </div>
     </div>
   </footer>

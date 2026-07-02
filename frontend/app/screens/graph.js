@@ -6,7 +6,7 @@ import { navigate, useStore } from '../core.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Empty, openContextMenu } from '../ui.js';
 import { loadVaultTree, loadVaultLinks, loadRelations } from '../actions.js';
-import { buildGraph, GraphCanvas, colorForKind } from '../graph.js';
+import { buildGraph, GraphCanvas, colorForKind, localScope } from '../graph.js';
 import { KINDS } from './codex.js';
 import { openPageEvt } from '../tabs.js';
 import { openInNewTab } from '../core.js';
@@ -55,6 +55,8 @@ function Controls({ api }) {
   </div>`;
 }
 
+const MAX_DEPTH = 4;
+
 export function GraphScreen() {
   const store = useStore();
   const c = store.campaign;
@@ -63,6 +65,12 @@ export function GraphScreen() {
   const [hiddenNodes, setHiddenNodes] = useState(() => new Set());
   const [hideOrphans, setHideOrphans] = useState(false);
   const [query, setQuery] = useState('');
+  // Phase 21A: default to standing on whatever page you came from (an explicit
+  // centerPath route param wins — set by "Open in full graph" — else the last
+  // page you had open). No prior page (fresh world) → global is the only option.
+  const [centerPath, setCenterPath] = useState(() => store.route?.params?.centerPath || store.currentPage?.path || null);
+  const [scope, setScope] = useState(() => (store.route?.params?.centerPath || store.currentPage?.path ? 'local' : 'global'));
+  const [depth, setDepth] = useState(1);
 
   useEffect(() => {
     if (!c) return;
@@ -93,13 +101,37 @@ export function GraphScreen() {
     return next;
   });
 
-  const visible = graph.nodes.filter((n) => !hiddenKinds.has(n.kind) && !hiddenNodes.has(n.path) && !(hideOrphans && n.degree === 0));
+  const centerNode = centerPath ? graph.nodes.find((n) => n.path === centerPath) : null;
+  // A stale centerPath (its page got deleted) makes localScope return null —
+  // same as global, no separate error state to design for.
+  const effectiveScope = centerNode ? scope : 'global';
+  const scopePaths = useMemo(
+    () => (effectiveScope === 'local' ? localScope(graph.nodes, graph.edges, centerPath, depth) : null),
+    [effectiveScope, centerPath, depth, graph],
+  );
+
+  const outOfScopeHidden = useMemo(() => {
+    if (!scopePaths) return hiddenNodes;
+    const s = new Set(hiddenNodes);
+    for (const n of graph.nodes) if (!scopePaths.has(n.path)) s.add(n.path);
+    return s;
+  }, [scopePaths, hiddenNodes, graph]);
+
+  // Re-fit once the scoped node set settles so switching center/depth doesn't
+  // strand the view on empty canvas.
+  useEffect(() => {
+    const t = setTimeout(() => apiRef.current?.fit(), 60);
+    return () => clearTimeout(t);
+  }, [scopePaths]);
+
+  const visible = graph.nodes.filter((n) => !hiddenKinds.has(n.kind) && !outOfScopeHidden.has(n.path) && !(hideOrphans && n.degree === 0));
   const filtered = visible.length !== graph.nodes.length;
 
   const nodeMenu = (n, e) => openContextMenu(e, [
     { label: 'Open', icon: 'book', onClick: () => navigate('page', { path: n.path }) },
     { label: 'Open in new tab', icon: 'plus', onClick: () => openInNewTab(n.path) },
     { label: 'Focus', icon: 'search', onClick: () => apiRef.current?.focus(n.path) },
+    { label: 'Center graph here', icon: 'link', onClick: () => { setCenterPath(n.path); setScope('local'); } },
     '-',
     { label: 'Hide from graph', icon: 'eye', onClick: () => setHiddenNodes((prev) => new Set(prev).add(n.path)) },
   ]);
@@ -117,20 +149,37 @@ export function GraphScreen() {
     <div style=${{ position: 'relative', height: '100%', background: 'var(--paper)' }}>
       ${graph.nodes.length
         ? html`<${GraphCanvas} nodes=${graph.nodes} edges=${graph.edges}
-            hiddenKinds=${hiddenKinds} hiddenPaths=${hiddenNodes} hideOrphans=${hideOrphans} matches=${matches} apiRef=${apiRef}
+            hiddenKinds=${hiddenKinds} hiddenPaths=${outOfScopeHidden} hideOrphans=${hideOrphans} matches=${matches} apiRef=${apiRef}
             onOpen=${(path, e) => openPageEvt(path, e)} onNodeMenu=${nodeMenu} />
           ${hiddenNodes.size > 0 && html`<div style=${{ ...overlayBox, right: 14, top: 50, padding: '5px 10px', cursor: 'pointer' }}
             title="Show the individually hidden pages again" onClick=${() => setHiddenNodes(new Set())}>
             ${hiddenNodes.size} hidden · show
           </div>`}
-          <div style=${{ ...overlayBox, left: 14, top: 12, padding: '5px 10px' }}>
+          <div style=${{ ...overlayBox, left: 14, top: 12, padding: '5px 10px', flexWrap: 'wrap', rowGap: 6, maxWidth: 420 }}>
+            <button title=${centerNode ? (effectiveScope === 'local' ? 'Show the whole world' : `Center on ${centerNode.title}`) : 'Open a page first to center on it'}
+              disabled=${!centerNode}
+              onClick=${() => setScope((s) => (s === 'local' ? 'global' : 'local'))}
+              style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, padding: '2px 8px', borderRadius: 999,
+                border: '1px solid var(--rule)', background: effectiveScope === 'local' ? 'var(--burgundy)' : 'none',
+                color: effectiveScope === 'local' ? 'var(--paper)' : 'var(--ink-soft)',
+                cursor: centerNode ? 'pointer' : 'default', opacity: centerNode ? 1 : 0.4 }}>
+              ${effectiveScope === 'local' ? 'Local' : 'Global'}
+            </button>
+            ${effectiveScope === 'local' && centerNode && html`<span style=${{ fontSize: 11.5, color: 'var(--ink-soft)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              title=${centerNode.title}>${centerNode.title}</span>
+              <span style=${{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                <button title="Fewer hops" disabled=${depth <= 1} onClick=${() => setDepth((d) => Math.max(1, d - 1))} style=${ctlBtn}>−</button>
+                <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, minWidth: 46, textAlign: 'center' }}>${depth} hop${depth > 1 ? 's' : ''}</span>
+                <button title="More hops" disabled=${depth >= MAX_DEPTH} onClick=${() => setDepth((d) => Math.min(MAX_DEPTH, d + 1))} style=${ctlBtn}>+</button>
+              </span>`}
+            <span style=${{ width: 1, height: 14, background: 'var(--rule-soft)' }} />
             <input value=${query} placeholder="Find page…"
               onInput=${(e) => setQuery(e.target.value)}
               onKeyDown=${(e) => {
                 if (e.key === 'Enter' && matches && matches.size) apiRef.current?.focus(matches.values().next().value);
                 if (e.key === 'Escape') setQuery('');
               }}
-              style=${{ background: 'none', border: 'none', outline: 'none', fontSize: 12.5, color: 'var(--ink)', width: 150, fontFamily: 'inherit' }} />
+              style=${{ background: 'none', border: 'none', outline: 'none', fontSize: 12.5, color: 'var(--ink)', width: 130, fontFamily: 'inherit' }} />
             ${matches && html`<span style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, color: matches.size ? 'var(--ochre)' : 'var(--ink-faint)' }}>
               ${matches.size ? `${matches.size} ⏎` : 'no match'}
             </span>`}

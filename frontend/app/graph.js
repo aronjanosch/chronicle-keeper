@@ -41,6 +41,31 @@ export function buildGraph(pages, links, relations) {
   return { nodes, edges: [...seen.values()] };
 }
 
+// Phase 21A: node paths within `depth` hops of `centerPath` (inclusive),
+// traversed undirected over both wikilinks and typed relations. `null` when
+// there's no valid center — callers treat that as "show everything".
+export function localScope(nodes, edges, centerPath, depth) {
+  const center = (nodes || []).find((n) => n.path === centerPath);
+  if (!center) return null;
+  const adj = new Map();
+  for (const e of edges || []) {
+    (adj.get(e.a) || adj.set(e.a, new Set()).get(e.a)).add(e.b);
+    (adj.get(e.b) || adj.set(e.b, new Set()).get(e.b)).add(e.a);
+  }
+  const seen = new Set([center]);
+  let frontier = [center];
+  for (let d = 0; d < depth && frontier.length; d++) {
+    const next = [];
+    for (const n of frontier) {
+      for (const nb of adj.get(n) || []) {
+        if (!seen.has(nb)) { seen.add(nb); next.push(nb); }
+      }
+    }
+    frontier = next;
+  }
+  return new Set([...seen].map((n) => n.path));
+}
+
 // One simulation tick: pairwise repulsion, spring along edges, center gravity.
 export function tick(nodes, edges, cx, cy, alpha) {
   // constants scale with graph size so big worlds spread instead of clumping

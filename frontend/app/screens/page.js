@@ -349,6 +349,10 @@ function LocalGraphCard({ path, pages, links, relations }) {
       })}
       <circle cx=${cx} cy=${cy} r="6.5" fill=${colorForKind(me?.kind)} stroke="var(--burgundy-700)" stroke-width="1.5" />
     </svg>
+    <div class="ck-rail-link" style=${{ justifyContent: 'center', marginTop: 4 }}
+      onClick=${() => navigate('graph', { centerPath: path })}>
+      <${Icon} name="link" size=${12} className="ck-ink-muted" /><span>Open in full graph</span>
+    </div>
   </${RailCard}>`;
 }
 

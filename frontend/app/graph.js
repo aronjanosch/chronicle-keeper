@@ -41,6 +41,51 @@ export function buildGraph(pages, links, relations) {
   return { nodes, edges: [...seen.values()] };
 }
 
+// Phase 21B: predicates that describe a strict hierarchy (child → parent) —
+// the ones a tree layout (not force) makes legible.
+export const HIERARCHY_PREDICATES = new Set(['parent', 'part_of']);
+
+// Layered tree layout over hierarchy edges (edge.a = child, edge.b = parent).
+// Mutates node.x/.y in place; returns the set of nodes it placed (empty when
+// no hierarchy edge is visible — caller falls back to force). Cycle-guarded:
+// hand-authored parent/part_of chains can loop, so a node already on the
+// current root-to-here path is placed as a leaf instead of recursed into.
+export function treeLayout(nodes, edges, predicates, width) {
+  const childrenOf = new Map();
+  const hasParent = new Set();
+  const involved = new Set();
+  for (const e of edges) {
+    if (!e.predicate || !predicates.has(e.predicate)) continue;
+    involved.add(e.a); involved.add(e.b);
+    hasParent.add(e.a);
+    (childrenOf.get(e.b) || childrenOf.set(e.b, []).get(e.b)).push(e.a);
+  }
+  if (!involved.size) return involved;
+  const roots = [...involved].filter((n) => !hasParent.has(n));
+  if (!roots.length) roots.push([...involved][0]); // all-cycle fallback
+  const LEVEL_H = 120, LEAF_W = 90;
+  let cursor = 0;
+  const path = new Set();
+  const place = (node, depth) => {
+    node.y = depth * LEVEL_H;
+    if (path.has(node)) { node.x = cursor++ * LEAF_W; return node.x; }
+    path.add(node);
+    const kids = (childrenOf.get(node) || []).filter((k) => k !== node);
+    if (kids.length) {
+      const xs = kids.map((k) => place(k, depth + 1));
+      node.x = (Math.min(...xs) + Math.max(...xs)) / 2;
+    } else {
+      node.x = cursor++ * LEAF_W;
+    }
+    path.delete(node);
+    return node.x;
+  };
+  roots.forEach((r) => place(r, 0));
+  const offset = (width || 900) / 2 - (cursor * LEAF_W) / 2;
+  for (const n of involved) n.x += offset;
+  return involved;
+}
+
 // Phase 21A: node paths within `depth` hops of `centerPath` (inclusive),
 // traversed undirected over both wikilinks and typed relations. `null` when
 // there's no valid center — callers treat that as "show everything".
@@ -106,7 +151,7 @@ const nodeRadius = (n) => 2.5 + Math.min(6, Math.sqrt(n.degree) * 1.3);
 // zoom (wheel), click → select + spotlight neighbors, double-click →
 // onOpen(path). Kind/orphan filters and search matches arrive as props;
 // apiRef exposes { zoom, fit, relayout, focus } for external controls.
-export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hiddenKinds, hiddenPaths, hideOrphans, matches, apiRef }) {
+export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hiddenKinds, hiddenPaths, hideOrphans, hiddenPredicates, showLinks, layoutMode, matches, apiRef }) {
   const hostRef = useRef(null);
   const stateRef = useRef(null);
 
@@ -119,6 +164,7 @@ export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hidde
     const ctx = canvas.getContext('2d');
     const st = { tx: 0, ty: 0, scale: 1, hover: null, sel: null, alpha: 1, raf: 0,
       cooling: false, hidden: new Set(), hiddenPaths: new Set(), hideOrphans: false, matches: null,
+      hiddenPredicates: new Set(), showLinks: true, frozen: false, filteredDegree: new Map(),
       dimT: 0, warmup: 0 };
     stateRef.current = st;
 
@@ -127,7 +173,9 @@ export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hidde
       (adj.get(e.a) || adj.set(e.a, new Set()).get(e.a)).add(e.b);
       (adj.get(e.b) || adj.set(e.b, new Set()).get(e.b)).add(e.a);
     }
-    const vis = (n) => !st.hidden.has(n.kind) && !st.hiddenPaths.has(n.path) && !(st.hideOrphans && n.degree === 0);
+    const edgeVis = (e) => (e.predicate ? !st.hiddenPredicates.has(e.predicate) : st.showLinks);
+    const vis = (n) => !st.hidden.has(n.kind) && !st.hiddenPaths.has(n.path)
+      && !(st.hideOrphans && (st.filteredDegree.get(n) || 0) === 0);
 
     const size = () => {
       const r = host.getBoundingClientRect();
@@ -138,6 +186,7 @@ export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hidde
       return r;
     };
     let rect = size();
+    st.rect = rect;
 
     const edgeLabel = (e) => {
       ctx.font = 'italic 8.5px ui-monospace, monospace';
@@ -160,7 +209,7 @@ export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hidde
       const focus = st.sel || st.hover;
       const nbrs = focus ? adj.get(focus) : null;
       for (const e of edges) {
-        if (!vis(e.a) || !vis(e.b)) continue;
+        if (!vis(e.a) || !vis(e.b) || !edgeVis(e)) continue;
         const lit = !focus || e.a === focus || e.b === focus;
         ctx.globalAlpha = lit ? 1 : lerp(1, 0.07, ease(st.dimT));
         ctx.strokeStyle = e.predicate ? 'rgba(90,72,65,.28)' : 'rgba(31,24,19,.10)';
@@ -228,10 +277,11 @@ export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hidde
     };
 
     const cool = () => {
+      if (st.frozen) { st.cooling = false; draw(); return; }
       if (st.alpha > 0.02) {
         st.warmup = Math.min(1, st.warmup + 1 / 35);
         const an = nodes.filter(vis);
-        const ae = edges.filter((e) => vis(e.a) && vis(e.b));
+        const ae = edges.filter((e) => vis(e.a) && vis(e.b) && edgeVis(e));
         for (let k = 0; k < 3; k++) tick(an, ae, rect.width / (2 * st.scale), rect.height / (2 * st.scale), st.alpha * st.warmup);
         st.alpha *= 0.985;
         draw();
@@ -247,6 +297,7 @@ export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hidde
     };
     st.draw = draw;
     st.heat = heat;
+    st.edgeVis = edgeVis;
     st.cooling = true;
     st.raf = requestAnimationFrame(cool);
 
@@ -290,6 +341,11 @@ export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hidde
         draw();
       },
       relayout() {
+        if (st.frozen) {
+          treeLayout(nodes, edges.filter(edgeVis), HIERARCHY_PREDICATES, rect.width);
+          draw();
+          return;
+        }
         st.warmup = 0;
         const ring = Math.max(260, nodes.length * 4);
         nodes.forEach((n, i) => {
@@ -326,7 +382,7 @@ export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hidde
           const p = toWorld(e);
           drag.node.x = p.x; drag.node.y = p.y;
           drag.node.vx = 0; drag.node.vy = 0;
-          heat(0.25);
+          if (st.frozen) draw(); else heat(0.25);
         } else {
           st.interacted = true;
           st.tx += dx; st.ty += dy;
@@ -372,7 +428,7 @@ export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hidde
       st.scale = next;
       draw();
     };
-    const onResize = () => { rect = size(); draw(); };
+    const onResize = () => { rect = size(); st.rect = rect; draw(); };
 
     canvas.addEventListener('mousedown', onDown);
     window.addEventListener('mousemove', onMove);
@@ -396,16 +452,35 @@ export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hidde
   }, [nodes, edges]);
 
   // Filters reheat the layout so visible nodes re-settle; search only redraws.
+  // Phase 21B: a predicate-only view (links off) with a hierarchy edge visible
+  // freezes into a tree instead of reheating the force sim.
   useEffect(() => {
     const st = stateRef.current;
     if (!st) return;
     st.hidden = hiddenKinds || new Set();
     st.hiddenPaths = hiddenPaths || new Set();
     st.hideOrphans = !!hideOrphans;
+    st.hiddenPredicates = hiddenPredicates || new Set();
+    st.showLinks = showLinks !== false;
+    const filteredDegree = new Map();
+    for (const e of edges) {
+      if (!st.edgeVis(e)) continue;
+      filteredDegree.set(e.a, (filteredDegree.get(e.a) || 0) + 1);
+      filteredDegree.set(e.b, (filteredDegree.get(e.b) || 0) + 1);
+    }
+    st.filteredDegree = filteredDegree;
     if (st.sel && (st.hidden.has(st.sel.kind) || st.hiddenPaths.has(st.sel.path))) st.sel = null;
     if (st.hover && st.hiddenPaths.has(st.hover.path)) st.hover = null;
-    st.heat(0.3);
-  }, [hiddenKinds, hiddenPaths, hideOrphans, nodes, edges]);
+    if (layoutMode === 'tree') {
+      const placed = treeLayout(nodes, edges.filter((e) => st.edgeVis(e)), HIERARCHY_PREDICATES, (st.rect || {}).width);
+      st.frozen = placed.size > 0;
+      st.draw();
+      if (st.frozen) st.api.fit();
+    } else {
+      st.frozen = false;
+      st.heat(0.3);
+    }
+  }, [hiddenKinds, hiddenPaths, hideOrphans, hiddenPredicates, showLinks, layoutMode, nodes, edges]);
   useEffect(() => {
     const st = stateRef.current;
     if (!st) return;

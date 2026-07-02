@@ -6,7 +6,7 @@ import { navigate, useStore } from '../core.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Empty, openContextMenu } from '../ui.js';
 import { loadVaultTree, loadVaultLinks, loadRelations } from '../actions.js';
-import { buildGraph, GraphCanvas, colorForKind, localScope } from '../graph.js';
+import { buildGraph, GraphCanvas, colorForKind, localScope, HIERARCHY_PREDICATES } from '../graph.js';
 import { KINDS } from './codex.js';
 import { openPageEvt } from '../tabs.js';
 import { openInNewTab } from '../core.js';
@@ -17,8 +17,8 @@ const overlayBox = {
   borderRadius: 8, fontSize: 11.5, color: 'var(--ink-soft)', boxShadow: 'var(--shadow-raised)',
 };
 
-function Legend({ hiddenKinds, onToggleKind, hideOrphans, onToggleOrphans }) {
-  return html`<div style=${{ ...overlayBox, left: 14, bottom: 12, gap: 12, flexWrap: 'wrap' }}>
+function Legend({ hiddenKinds, onToggleKind, hideOrphans, onToggleOrphans, predicates, hiddenPredicates, onTogglePredicate, showLinks, onToggleLinks }) {
+  return html`<div style=${{ ...overlayBox, left: 14, bottom: 12, gap: 12, flexWrap: 'wrap', maxWidth: 640 }}>
     ${KINDS.map((k) => {
       const off = hiddenKinds.has(k.value);
       return html`<span key=${k.value} title=${off ? `Show ${k.label}` : `Hide ${k.label}`}
@@ -27,14 +27,43 @@ function Legend({ hiddenKinds, onToggleKind, hideOrphans, onToggleOrphans }) {
         <span style=${{ width: 8, height: 8, borderRadius: 999, background: colorForKind(k.value) }} />${k.label}
       </span>`;
     })}
-    <span style=${{ display: 'flex', alignItems: 'center', gap: 5 }}>
-      <span style=${{ width: 14, height: 2, background: 'rgba(90,72,65,.45)' }} />typed relation
+    <span onClick=${onToggleLinks} title=${showLinks ? 'Hide wikilinks' : 'Show wikilinks'}
+      style=${{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', borderLeft: '1px solid var(--rule-soft)', paddingLeft: 12, opacity: showLinks ? 1 : 0.35, textDecoration: showLinks ? 'none' : 'line-through' }}>
+      <span style=${{ width: 14, height: 2, background: 'rgba(31,24,19,.35)' }} />links
     </span>
+    ${predicates.map((p) => {
+      const off = hiddenPredicates.has(p);
+      return html`<span key=${p} title=${off ? `Show ${p} edges` : `Hide ${p} edges`}
+        onClick=${() => onTogglePredicate(p)}
+        style=${{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', opacity: off ? 0.35 : 1, textDecoration: off ? 'line-through' : 'none' }}>
+        <span style=${{ width: 14, height: 2, background: 'rgba(90,72,65,.45)' }} />${p}
+      </span>`;
+    })}
     <span onClick=${onToggleOrphans} title="Pages without any links"
       style=${{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', borderLeft: '1px solid var(--rule-soft)', paddingLeft: 12, color: hideOrphans ? 'var(--burgundy)' : 'inherit' }}>
       ${hideOrphans ? 'orphans hidden' : 'hide orphans'}
     </span>
   </div>`;
+}
+
+// Phase 21C: presets are just saved knob settings — a preset button sets
+// showLinks + which predicates are visible, nothing else. Family/Containment
+// land on hierarchy predicates, so the layout auto-switches to tree.
+const PRESETS = [
+  { label: 'World', links: true, predicates: null },
+  { label: 'Family', links: false, predicates: ['parent', 'child', 'spouse'] },
+  { label: 'Allegiances', links: false, predicates: ['member_of', 'ally', 'enemy'] },
+  { label: 'Containment', links: false, predicates: ['part_of'] },
+];
+
+function Presets({ onApply }) {
+  return html`<span style=${{ display: 'flex', alignItems: 'center', gap: 4 }}>
+    ${PRESETS.map((p) => html`<button key=${p.label} title=${`Preset: ${p.label}`} onClick=${() => onApply(p)}
+      style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, padding: '2px 8px', borderRadius: 999,
+        border: '1px solid var(--rule)', background: 'none', color: 'var(--ink-soft)', cursor: 'pointer' }}>
+      ${p.label}
+    </button>`)}
+  </span>`;
 }
 
 const ctlBtn = {
@@ -64,6 +93,9 @@ export function GraphScreen() {
   const [hiddenKinds, setHiddenKinds] = useState(() => new Set());
   const [hiddenNodes, setHiddenNodes] = useState(() => new Set());
   const [hideOrphans, setHideOrphans] = useState(false);
+  // Phase 21B: which typed-relation predicates to draw, plus untyped wikilinks.
+  const [hiddenPredicates, setHiddenPredicates] = useState(() => new Set());
+  const [showLinks, setShowLinks] = useState(true);
   const [query, setQuery] = useState('');
   // Phase 21A: default to standing on whatever page you came from (an explicit
   // centerPath route param wins — set by "Open in full graph" — else the last
@@ -100,6 +132,26 @@ export function GraphScreen() {
     if (next.has(k)) next.delete(k); else next.add(k);
     return next;
   });
+
+  // Phase 21B: predicate vocabulary is a frontmatter convention, not a fixed
+  // enum — list whatever the world actually uses.
+  const predicates = useMemo(
+    () => [...new Set(relations.map((r) => r.predicate).filter(Boolean))].sort(),
+    [relations],
+  );
+  const togglePredicate = (p) => setHiddenPredicates((prev) => {
+    const next = new Set(prev);
+    if (next.has(p)) next.delete(p); else next.add(p);
+    return next;
+  });
+  const applyPreset = (p) => {
+    setShowLinks(p.links);
+    setHiddenPredicates(p.predicates ? new Set(predicates.filter((x) => !p.predicates.includes(x))) : new Set());
+  };
+  // Links off + a hierarchy predicate (parent/part_of) visible → tree reads
+  // better than force; any other combination (incl. "World") stays force.
+  const layoutMode = !showLinks && predicates.some((p) => !hiddenPredicates.has(p) && HIERARCHY_PREDICATES.has(p))
+    ? 'tree' : 'force';
 
   const centerNode = centerPath ? graph.nodes.find((n) => n.path === centerPath) : null;
   // A stale centerPath (its page got deleted) makes localScope return null —
@@ -149,13 +201,15 @@ export function GraphScreen() {
     <div style=${{ position: 'relative', height: '100%', background: 'var(--paper)' }}>
       ${graph.nodes.length
         ? html`<${GraphCanvas} nodes=${graph.nodes} edges=${graph.edges}
-            hiddenKinds=${hiddenKinds} hiddenPaths=${outOfScopeHidden} hideOrphans=${hideOrphans} matches=${matches} apiRef=${apiRef}
+            hiddenKinds=${hiddenKinds} hiddenPaths=${outOfScopeHidden} hideOrphans=${hideOrphans}
+            hiddenPredicates=${hiddenPredicates} showLinks=${showLinks} layoutMode=${layoutMode}
+            matches=${matches} apiRef=${apiRef}
             onOpen=${(path, e) => openPageEvt(path, e)} onNodeMenu=${nodeMenu} />
           ${hiddenNodes.size > 0 && html`<div style=${{ ...overlayBox, right: 14, top: 50, padding: '5px 10px', cursor: 'pointer' }}
             title="Show the individually hidden pages again" onClick=${() => setHiddenNodes(new Set())}>
             ${hiddenNodes.size} hidden · show
           </div>`}
-          <div style=${{ ...overlayBox, left: 14, top: 12, padding: '5px 10px', flexWrap: 'wrap', rowGap: 6, maxWidth: 420 }}>
+          <div style=${{ ...overlayBox, left: 14, top: 12, padding: '5px 10px', flexWrap: 'wrap', rowGap: 6, maxWidth: 520 }}>
             <button title=${centerNode ? (effectiveScope === 'local' ? 'Show the whole world' : `Center on ${centerNode.title}`) : 'Open a page first to center on it'}
               disabled=${!centerNode}
               onClick=${() => setScope((s) => (s === 'local' ? 'global' : 'local'))}
@@ -183,13 +237,17 @@ export function GraphScreen() {
             ${matches && html`<span style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, color: matches.size ? 'var(--ochre)' : 'var(--ink-faint)' }}>
               ${matches.size ? `${matches.size} ⏎` : 'no match'}
             </span>`}
+            ${predicates.length > 0 && html`<span style=${{ width: 1, height: 14, background: 'var(--rule-soft)' }} />
+              <${Presets} onApply=${applyPreset} />`}
           </div>
           <${Controls} api=${apiRef} />
           <div style=${{ position: 'absolute', right: 14, bottom: 12, fontSize: 10.5, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>
             click select · double-click open · drag moves
           </div>
           <${Legend} hiddenKinds=${hiddenKinds} onToggleKind=${toggleKind}
-            hideOrphans=${hideOrphans} onToggleOrphans=${() => setHideOrphans((v) => !v)} />`
+            hideOrphans=${hideOrphans} onToggleOrphans=${() => setHideOrphans((v) => !v)}
+            predicates=${predicates} hiddenPredicates=${hiddenPredicates} onTogglePredicate=${togglePredicate}
+            showLinks=${showLinks} onToggleLinks=${() => setShowLinks((v) => !v)} />`
         : html`<div style=${{ padding: 40 }}><${Empty} icon="link" title="Nothing to map yet">Create some pages and link them with <code>[[wikilinks]]</code>.</${Empty}></div>`}
     </div>
   </${Shell}>`;

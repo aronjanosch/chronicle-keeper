@@ -360,18 +360,24 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
     msgs.push(Msg::System(sys));
     msgs.extend(history);
 
+    let keeper_tools = crate::config::keeper_tools(&state.with_db(crate::config::get_config_map)?);
     let mut registry = tools::read_tools();
     registry.extend(tools::memory_tools());
     if mode != Mode::ReadOnly {
         registry.extend(tools::write_tools());
         registry.extend(tools::structural_tools());
-        registry.extend(tools::shell_tools());
-        registry.extend(tools::web_tools());
+        if keeper_tools.shell {
+            registry.extend(tools::shell_tools());
+        }
+        if keeper_tools.web {
+            registry.extend(tools::web_tools());
+        }
         // Only offered when the bridge is configured — otherwise the tool would
         // just fail on every call.
-        if crate::foundry::load_settings(state)
-            .map(|s| s.is_complete())
-            .unwrap_or(false)
+        if keeper_tools.foundry
+            && crate::foundry::load_settings(state)
+                .map(|s| s.is_complete())
+                .unwrap_or(false)
         {
             registry.extend(tools::foundry_tools());
         }

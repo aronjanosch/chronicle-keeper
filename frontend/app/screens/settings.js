@@ -144,6 +144,55 @@ function SkillsCard() {
   </${SettingsCard}>`;
 }
 
+function CapabilityRow({ label, hint, enabled, disabled, disabledHint, onToggle }) {
+  return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', background: 'var(--surface)', border: '1px solid var(--rule-soft)', borderRadius: 6, opacity: disabled ? 0.55 : 1 }}>
+    <div style=${{ flex: 1, minWidth: 0 }}>
+      <div style=${{ fontSize: 13.5, fontWeight: 500, color: 'var(--ink)' }}>${label}</div>
+      <div style=${{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 2, lineHeight: 1.4 }}>${disabled ? disabledHint : hint}</div>
+    </div>
+    <${Btn} kind="ghost" size="sm" disabled=${disabled} onClick=${onToggle}>${enabled ? 'Enabled' : 'Disabled'}</${Btn}>
+  </div>`;
+}
+
+function CapabilitiesCard() {
+  const [foundryConfigured, setFoundryConfigured] = useState(false);
+  useEffect(() => {
+    loadFoundrySettings()
+      .then((s) => setFoundryConfigured(!!(s.server_url && s.user_id && s.password_set)))
+      .catch(() => {});
+  }, []);
+  const cfg = store.config || {};
+  function flip(key) {
+    saveConfig({ [key]: !cfg[key] })
+      .then(() => setOp(!cfg[key] ? 'Capability enabled' : 'Capability disabled', 'done'))
+      .catch((e) => setOp(e.message, 'err'));
+  }
+  return html`<${SettingsCard} icon="shield" title="Keeper capabilities" desc="Turn whole tool groups off and the Keeper never sees them — the model can't reach for what isn't in its toolbox. Separate from the per-action “ask first” confirmations, which stay on regardless.">
+    <div style=${{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 12 }}>
+      <${CapabilityRow}
+        label="Web"
+        hint="web_search and web_fetch — lets the Keeper look things up online. Off by default: nothing leaves this machine unless you opt in."
+        enabled=${cfg.keeper_tools_web}
+        onToggle=${() => flip('keeper_tools_web')}
+      />
+      <${CapabilityRow}
+        label="Foundry VTT bridge"
+        hint="The 10 Foundry tools (read scene/actor state, post to chat). Also requires the bridge below to be configured."
+        disabled=${!foundryConfigured}
+        disabledHint="Configure the Foundry bridge below to enable this."
+        enabled=${cfg.keeper_tools_foundry}
+        onToggle=${() => flip('keeper_tools_foundry')}
+      />
+      <${CapabilityRow}
+        label="Shell"
+        hint="run_command — a power escape-hatch for batch edits across the vault. Already asks before every run; this is a hard kill-switch on top."
+        enabled=${cfg.keeper_tools_shell}
+        onToggle=${() => flip('keeper_tools_shell')}
+      />
+    </div>
+  </${SettingsCard}>`;
+}
+
 function FoundryCard() {
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState('');
@@ -298,6 +347,8 @@ export function SettingsScreen({ store }) {
         <${TemplatesCard} />
 
         <${SkillsCard} />
+
+        <${CapabilitiesCard} />
 
         <${FoundryCard} />
 

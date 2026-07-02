@@ -35,6 +35,12 @@ fn default_config() -> Vec<(&'static str, String)> {
         // after this many seconds without progress.
         ("transcription_timeout_seconds", "600".into()),
         ("current_campaign_id", "".into()),
+        // Phase 26 capability toggles — see docs/internal/keeper-tool-toggles-spec.md.
+        // Toggle = model never sees the tool (prompt size + hard guarantee); distinct
+        // from per-call ask-first gating, which stays on regardless.
+        ("keeper_tools_web", "false".into()),
+        ("keeper_tools_foundry", "true".into()),
+        ("keeper_tools_shell", "true".into()),
     ]
 }
 
@@ -101,6 +107,9 @@ pub struct ConfigResponse {
     /// Hard cap (seconds) on a single transcription run before it's aborted.
     pub transcription_timeout_seconds: i64,
     pub has_litellm_key: bool,
+    pub keeper_tools_web: bool,
+    pub keeper_tools_foundry: bool,
+    pub keeper_tools_shell: bool,
 }
 
 /// Partial update payload — mirrors the Python `UpdateConfigRequest`.
@@ -120,6 +129,9 @@ pub struct UpdateConfigRequest {
     pub transcription_provider: Option<String>,
     pub transcription_accelerator: Option<String>,
     pub transcription_timeout_seconds: Option<i64>,
+    pub keeper_tools_web: Option<bool>,
+    pub keeper_tools_foundry: Option<bool>,
+    pub keeper_tools_shell: Option<bool>,
 }
 
 fn ensure_defaults(conn: &Connection) -> AppResult<()> {
@@ -172,6 +184,29 @@ fn get_int(map: &HashMap<String, String>, key: &str) -> i64 {
     map.get(key).and_then(|v| v.parse().ok()).unwrap_or(0)
 }
 
+fn get_bool(map: &HashMap<String, String>, key: &str, default: bool) -> bool {
+    map.get(key).map(|v| v == "true").unwrap_or(default)
+}
+
+/// Which optional Keeper tool groups are enabled — see
+/// `docs/internal/keeper-tool-toggles-spec.md`. Toggle off means the group
+/// never enters the tool registry (distinct from per-call ask-first gating,
+/// which always applies regardless of this setting).
+#[derive(Debug, Clone, Copy)]
+pub struct KeeperToolsConfig {
+    pub web: bool,
+    pub foundry: bool,
+    pub shell: bool,
+}
+
+pub fn keeper_tools(map: &HashMap<String, String>) -> KeeperToolsConfig {
+    KeeperToolsConfig {
+        web: get_bool(map, "keeper_tools_web", false),
+        foundry: get_bool(map, "keeper_tools_foundry", true),
+        shell: get_bool(map, "keeper_tools_shell", true),
+    }
+}
+
 pub fn to_response(map: &HashMap<String, String>) -> ConfigResponse {
     let pref = get_str(map, "transcription_provider");
     ConfigResponse {
@@ -204,6 +239,9 @@ pub fn to_response(map: &HashMap<String, String>) -> ConfigResponse {
             }
         },
         has_litellm_key: !get_str(map, "litellm_api_key").is_empty(),
+        keeper_tools_web: get_bool(map, "keeper_tools_web", false),
+        keeper_tools_foundry: get_bool(map, "keeper_tools_foundry", true),
+        keeper_tools_shell: get_bool(map, "keeper_tools_shell", true),
     }
 }
 
@@ -272,6 +310,18 @@ pub fn apply_update(conn: &Connection, req: &UpdateConfigRequest) -> AppResult<(
     set(
         "transcription_timeout_seconds",
         req.transcription_timeout_seconds.map(|n| n.to_string()),
+    )?;
+    set(
+        "keeper_tools_web",
+        req.keeper_tools_web.map(|b| b.to_string()),
+    )?;
+    set(
+        "keeper_tools_foundry",
+        req.keeper_tools_foundry.map(|b| b.to_string()),
+    )?;
+    set(
+        "keeper_tools_shell",
+        req.keeper_tools_shell.map(|b| b.to_string()),
     )?;
     Ok(())
 }

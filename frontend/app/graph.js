@@ -282,7 +282,12 @@ export function GraphCanvas({ nodes, edges, onOpen, onNodeMenu, focusPath, hidde
         st.warmup = Math.min(1, st.warmup + 1 / 35);
         const an = nodes.filter(vis);
         const ae = edges.filter((e) => vis(e.a) && vis(e.b) && edgeVis(e));
-        for (let k = 0; k < 3; k++) tick(an, ae, rect.width / (2 * st.scale), rect.height / (2 * st.scale), st.alpha * st.warmup);
+        // Gravity target is the current screen-center in world space — must
+        // account for pan (tx/ty), not just scale, or fit()/drag mid-cool
+        // (Phase 21A's auto-fit on scope/depth change) drags the sim toward
+        // a stale point and the graph drifts off-center as it keeps cooling.
+        const gx = (rect.width / 2 - st.tx) / st.scale, gy = (rect.height / 2 - st.ty) / st.scale;
+        for (let k = 0; k < 3; k++) tick(an, ae, gx, gy, st.alpha * st.warmup);
         st.alpha *= 0.985;
         draw();
         st.raf = requestAnimationFrame(cool);

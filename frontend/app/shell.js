@@ -1,6 +1,6 @@
 // App shell: sidebar + topbar + body slot. Ported from the design's shell.jsx,
 // wired to the store's router.
-import { html, useState } from '../vendor/htm-preact-standalone.mjs';
+import { html, useState, useEffect } from '../vendor/htm-preact-standalone.mjs';
 import { navigate, navigateBack, navigateForward, store, useStore } from './core.js';
 import { Icon, Sigil, BrandMark } from './ui.js';
 
@@ -111,9 +111,22 @@ export function navToWorldDest(dest, campaignId) {
   navigate(dest.screen, dest.key === 'settings' ? undefined : { id: campaignId });
 }
 
+// Reads the real Tauri bundle version so the sidebar tagline never drifts from
+// tauri.conf.json again; falls back to a static string in standalone/browser dev.
+function useAppVersion() {
+  const [version, setVersion] = useState('1.0.0');
+  useEffect(() => {
+    const tauri = window.__TAURI__;
+    if (!tauri?.app?.getVersion) return;
+    tauri.app.getVersion().then(setVersion).catch(() => {});
+  }, []);
+  return version;
+}
+
 export function Sidebar({ variant = 'library', active, campaign }) {
   const warn = store.providerStatus && store.providerStatus.ok === false ? store.providerStatus : null;
   const [width, onResize] = useSidebarWidth('ck_sidebar_w');
+  const version = useAppVersion();
   return html`<aside style=${{
     background: 'var(--paper-deep)', borderRight: '1px solid var(--rule)',
     padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 2,
@@ -125,7 +138,7 @@ export function Sidebar({ variant = 'library', active, campaign }) {
       <${BrandMark} size=${30} />
       <div style=${{ lineHeight: 1.15 }}>
         <div style=${{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 500, letterSpacing: '-0.01em' }}>Chronicle Keeper</div>
-        <div style=${{ fontSize: 10, fontWeight: 500, color: 'var(--ink-faint)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 2 }}>v0.5 · worldbuilding</div>
+        <div style=${{ fontSize: 10, fontWeight: 500, color: 'var(--ink-faint)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 2 }}>v${version} · worldbuilding</div>
       </div>
     </div>
 

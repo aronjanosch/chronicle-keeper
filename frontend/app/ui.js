@@ -62,7 +62,18 @@ function customIcon(name, p) {
     case 'mic':     return html`<svg ...${p}><rect x="6" y="2" width="4" height="8" rx="2"/><path d="M3.5 8a4.5 4.5 0 0 0 9 0M8 12.5V14M5.5 14h5"/></svg>`;
     case 'tag':     return html`<svg ...${p}><path d="M2 8V3a1 1 0 0 1 1-1h5l6 6-6 6-6-6Z"/><circle cx="5" cy="5" r=".7" fill="currentColor"/></svg>`;
     case 'users':   return html`<svg ...${p}><circle cx="6" cy="6" r="2.4"/><path d="M2 13c0-2.4 1.8-4 4-4s4 1.6 4 4M10 6.5a2 2 0 1 0 0-4M14 13c0-2-1.4-3.4-3-3.8"/></svg>`;
-    case 'cog':     return html`<svg ...${p}><circle cx="8" cy="8" r="2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M3.3 12.7l1.4-1.4M11.3 4.7l1.4-1.4"/></svg>`;
+    case 'cog':     return html`<svg ...${p}>
+      <circle cx="8" cy="8" r="3.6"/>
+      <circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none"/>
+      <rect x="7.1" y="1.8" width="1.8" height="3" rx="0.3" fill="currentColor" stroke="none" />
+      <rect x="7.1" y="1.8" width="1.8" height="3" rx="0.3" fill="currentColor" stroke="none" transform="rotate(45 8 8)" />
+      <rect x="7.1" y="1.8" width="1.8" height="3" rx="0.3" fill="currentColor" stroke="none" transform="rotate(90 8 8)" />
+      <rect x="7.1" y="1.8" width="1.8" height="3" rx="0.3" fill="currentColor" stroke="none" transform="rotate(135 8 8)" />
+      <rect x="7.1" y="1.8" width="1.8" height="3" rx="0.3" fill="currentColor" stroke="none" transform="rotate(180 8 8)" />
+      <rect x="7.1" y="1.8" width="1.8" height="3" rx="0.3" fill="currentColor" stroke="none" transform="rotate(225 8 8)" />
+      <rect x="7.1" y="1.8" width="1.8" height="3" rx="0.3" fill="currentColor" stroke="none" transform="rotate(270 8 8)" />
+      <rect x="7.1" y="1.8" width="1.8" height="3" rx="0.3" fill="currentColor" stroke="none" transform="rotate(315 8 8)" />
+    </svg>`;
     case 'search':  return html`<svg ...${p}><circle cx="7" cy="7" r="4.2"/><path d="m10.2 10.2 3 3"/></svg>`;
     case 'dots':    return html`<svg ...${p}><circle cx="3.5" cy="8" r=".9" fill="currentColor"/><circle cx="8" cy="8" r=".9" fill="currentColor"/><circle cx="12.5" cy="8" r=".9" fill="currentColor"/></svg>`;
     case 'time':    return html`<svg ...${p}><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 1.5"/></svg>`;

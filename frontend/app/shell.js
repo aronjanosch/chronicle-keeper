@@ -2,6 +2,7 @@
 // wired to the store's router.
 import { html, useState, useEffect } from '../vendor/htm-preact-standalone.mjs';
 import { navigate, navigateBack, navigateForward, store, useStore } from './core.js';
+import { dismissUpdate } from './actions.js';
 import { Icon, Sigil, BrandMark } from './ui.js';
 
 // Drag-resizable sidebar width, persisted per key. Returns [width, onMouseDown].
@@ -125,6 +126,7 @@ function useAppVersion() {
 
 export function Sidebar({ variant = 'library', active, campaign }) {
   const warn = store.providerStatus && store.providerStatus.ok === false ? store.providerStatus : null;
+  const update = store.updateInfo;
   const [width, onResize] = useSidebarWidth('ck_sidebar_w');
   const version = useAppVersion();
   return html`<aside style=${{
@@ -169,6 +171,19 @@ export function Sidebar({ variant = 'library', active, campaign }) {
 
     <div style=${{ flex: 1 }} />
     <${NavItem} icon="cog" label="Settings" active=${active === 'settings'} onClick=${() => navigate('settings')} />
+    ${update && html`<div title="Open release page"
+      style=${{ margin: '8px 4px 0', padding: '10px 12px', background: 'var(--moss-50)', border: '1px solid rgba(74,93,58,.3)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--ink-soft)' }}>
+      <span style=${{ width: 8, height: 8, borderRadius: '50%', background: 'var(--moss)', flex: '0 0 auto' }} />
+      <div style=${{ lineHeight: 1.3, flex: 1, cursor: 'pointer' }}
+        onClick=${() => window.__TAURI__?.opener?.openUrl(update.url)}>
+        <div style=${{ color: 'var(--moss)', fontWeight: 600 }}>Update available</div>
+        <div>v${update.version} · download</div>
+      </div>
+      <button onClick=${() => dismissUpdate(update.tag)} title="Dismiss"
+        style=${{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-faint)', display: 'flex', padding: 2 }}>
+        <${Icon} name="x" size=${12} />
+      </button>
+    </div>`}
     ${warn && html`<div onClick=${() => navigate('settings')} title="Open Settings"
       style=${{ margin: '8px 4px 0', padding: '10px 12px', background: 'var(--ochre-50)', border: '1px solid rgba(168,115,40,.28)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--ink-soft)', cursor: 'pointer' }}>
       <span style=${{ width: 8, height: 8, borderRadius: '50%', background: 'var(--ochre)', flex: '0 0 auto' }} />

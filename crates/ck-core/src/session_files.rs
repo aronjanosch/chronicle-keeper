@@ -261,55 +261,6 @@ pub fn write_summary_md(
     std::fs::write(summary_md_path(session_path), content.as_bytes())
 }
 
-// ── Migration helpers ─────────────────────────────────────────────
-
-/// Copy audio from `src` into `dst/` and verify each copy by size. Copy-only,
-/// never deletes. A missing `src` is Ok(0) — originals may be long gone while
-/// transcript/summary still exist.
-pub fn copy_audio_files(src: &Path, dst: &Path) -> std::io::Result<usize> {
-    if !src.is_dir() {
-        return Ok(0);
-    }
-    std::fs::create_dir_all(dst)?;
-    let mut copied: Vec<(PathBuf, PathBuf)> = Vec::new();
-    collect_and_copy_audio(src, dst, &mut copied)?;
-    for (from, to) in &copied {
-        if from.metadata()?.len() != to.metadata()?.len() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("size mismatch after copy: {}", to.display()),
-            ));
-        }
-    }
-    Ok(copied.len())
-}
-
-fn collect_and_copy_audio(
-    src: &Path,
-    dst: &Path,
-    copied: &mut Vec<(PathBuf, PathBuf)>,
-) -> std::io::Result<()> {
-    const AUDIO_EXTS: &[&str] = &["flac", "wav", "mp3", "m4a", "ogg"];
-    for entry in std::fs::read_dir(src)?.flatten() {
-        let from = entry.path();
-        if from.is_dir() {
-            let sub = dst.join(entry.file_name());
-            std::fs::create_dir_all(&sub)?;
-            collect_and_copy_audio(&from, &sub, copied)?;
-        } else if from
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| AUDIO_EXTS.contains(&e.to_lowercase().as_str()))
-            .unwrap_or(false)
-        {
-            let to = dst.join(entry.file_name());
-            std::fs::copy(&from, &to)?;
-            copied.push((from, to));
-        }
-    }
-    Ok(())
-}
-
 // ── Internal helpers ──────────────────────────────────────────────
 
 fn yaml_escape(s: &str) -> String {
@@ -319,13 +270,6 @@ fn yaml_escape(s: &str) -> String {
 /// Zero-pad a session number to 3 digits (expands for 4+ digit numbers).
 pub fn padded_number(n: i64) -> String {
     format!("{n:03}")
-}
-
-/// Compute the vault session path: `<world_root>/Sessions/<NNN>/`.
-/// `vault_codex_path` is the campaign's `vault_path` column (= `<world_root>/Codex`).
-pub fn vault_session_path(vault_codex_path: &str, number: i64) -> Option<PathBuf> {
-    let world_root = Path::new(vault_codex_path).parent()?;
-    Some(world_root.join("Sessions").join(padded_number(number)))
 }
 
 #[cfg(test)]
@@ -344,16 +288,6 @@ mod tests {
         assert!(!is_vault_session_path(
             "/home/aron/Sessions-backup/ashfall/1"
         )); // parent not exactly "Sessions"
-    }
-
-    #[test]
-    fn vault_session_path_rounds_correctly() {
-        let p = vault_session_path("/home/aron/Ashfall/Codex", 1).unwrap();
-        assert!(p.ends_with("Sessions/001"));
-        let p2 = vault_session_path("/home/aron/Ashfall/Codex", 42).unwrap();
-        assert!(p2.ends_with("Sessions/042"));
-        let p3 = vault_session_path("/home/aron/Ashfall/Codex", 1000).unwrap();
-        assert!(p3.ends_with("Sessions/1000"));
     }
 
     #[test]

@@ -7,7 +7,6 @@ mod codex_update;
 mod foundry;
 mod index;
 mod llm;
-mod migration;
 mod prompts;
 mod sessions;
 mod transcribe;
@@ -157,6 +156,10 @@ pub fn router(state: AppState) -> Router {
             "/campaigns/:id/agent/chats/:cid/messages",
             post(agent::send_message),
         )
+        .route(
+            "/campaigns/:id/agent/chats/:cid/compact",
+            post(agent::compact_chat),
+        )
         .route("/campaigns/:id/agent/chats/:cid/abort", post(agent::abort))
         .route(
             "/campaigns/:id/agent/chats/:cid/approve",
@@ -223,9 +226,6 @@ pub fn router(state: AppState) -> Router {
             "/prompt-templates/:id",
             axum::routing::put(prompts::update).delete(prompts::delete),
         )
-        // migration (0.X → 1.0 world format)
-        .route("/migrations/status", get(migration::status))
-        .route("/migrations/run", post(migration::run))
         // summarization + export + llm providers
         .route("/summarize", post(llm::summarize))
         .route("/summarize/stream", post(llm::summarize_stream))

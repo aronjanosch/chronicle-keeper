@@ -1,7 +1,7 @@
 // Entry: boot, router, global op banner + modal host.
 import { html, render, useEffect } from '../vendor/htm-preact-standalone.mjs';
-import { useStore, loadApiBase, setOp, setState } from './core.js';
-import { loadCampaigns, loadConfig, refreshProviderStatus, checkMigration } from './actions.js';
+import { useStore, loadApiBase, setOp } from './core.js';
+import { loadCampaigns, loadConfig, refreshProviderStatus, checkForUpdate } from './actions.js';
 import { Icon, Spinner, ContextMenuHost } from './ui.js';
 import { ModalHost } from './modals.js';
 import { useGlobalHotkeys } from './screens/palette.js';
@@ -23,7 +23,6 @@ import { AtlasScreen } from './screens/atlas.js';
 import { TimelineScreen } from './screens/timeline.js';
 import { GraphScreen } from './screens/graph.js';
 import { KeeperScreen } from './screens/keeper.js';
-import { MigrationScreen } from './screens/migration.js';
 
 function OpBanner({ op }) {
   if (!op) return null;
@@ -47,17 +46,8 @@ function App() {
   useEffect(() => {
     loadCampaigns();
     loadConfig().then(() => refreshProviderStatus()).catch(() => {});
-    checkMigration();
+    checkForUpdate();
   }, []);
-  // Show migration screen if unmigrated sessions detected. Result view stays
-  // until user dismisses it (onSkip clears migrationStatus).
-  const needsMigration = store.migrationStatus?.needs_migration || store.migrationResult != null;
-  if (needsMigration) {
-    const dismiss = () => setState({ migrationStatus: null, migrationResult: null });
-    return html`<div style=${{ height: '100%' }}>
-      <${MigrationScreen} store=${store} onSkip=${dismiss} />
-    </div>`;
-  }
 
   const r = store.route.name;
   let screen;

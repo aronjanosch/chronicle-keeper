@@ -170,8 +170,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         )?;
     }
 
-    // The 0.X→1.0 migration's INSERT OR IGNORE keys on `artifact_id` being
-    // unique. Created after the backfill above so every row already has a UUID.
+    // Enforced after the backfill above so every row already has a UUID.
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_artifact_id ON artifacts(artifact_id)",
         [],

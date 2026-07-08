@@ -915,33 +915,6 @@ export async function runExport(summaryId) {
   } catch (e) { setOp(e.message, 'err'); }
 }
 
-// ── Migration ─────────────────────────────────────────────────────
-export async function checkMigration() {
-  try {
-    const status = await apiFetch('/migrations/status');
-    setState({ migrationStatus: status });
-  } catch (e) {
-    // Non-fatal — if status check fails, don't block the app.
-    console.warn('checkMigration failed:', e);
-  }
-}
-
-export async function runMigration() {
-  setState({ migrationRunning: true, migrationResult: null });
-  try {
-    const result = await apiJson('/migrations/run', 'POST', {});
-    setState({ migrationRunning: false, migrationResult: result, migrationStatus: { needs_migration: false, campaigns: [] } });
-    return result;
-  } catch (e) {
-    setState({ migrationRunning: false, migrationResult: { ok: false, errors: [e.message] } });
-    throw e;
-  } finally {
-    // Boot loads ran against an empty DB — refetch what migration changed.
-    loadCampaigns().catch(() => {});
-    loadConfig().then(() => refreshProviderStatus()).catch(() => {});
-  }
-}
-
 // ── Config + LLM providers ────────────────────────────────────────
 export async function loadConfig() {
   const config = await apiFetch('/config');
@@ -1025,4 +998,59 @@ export async function refreshProviderStatus() {
     } catch (_) { status = { ok: false, reason: `${p.name} not reachable` }; }
   }
   setState({ providerStatus: status });
+}
+
+// ── Update check ──────────────────────────────────────────────────
+// Desktop-only: pings the public GitHub Releases API for a newer tag than the
+// running bundle. No server involved, no signing/auto-install — just a link.
+const UPDATE_REPO = 'aronjanosch/chronicle-keeper';
+const UPDATE_CACHE_KEY = 'ck_update_check';
+const UPDATE_DISMISS_KEY = 'ck_update_dismissed';
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function isNewerVersion(latest, current) {
+  const parse = (v) => v.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const a = parse(latest);
+  const b = parse(current);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] || 0, y = b[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return false;
+}
+
+export async function checkForUpdate() {
+  const tauri = window.__TAURI__;
+  if (!tauri?.app?.getVersion) return; // needs the real bundle version
+
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem(UPDATE_CACHE_KEY)); } catch (_) { /* corrupt cache */ }
+
+  let tag, url;
+  if (cached && Date.now() - cached.at < UPDATE_CHECK_INTERVAL_MS) {
+    ({ tag, url } = cached);
+  } else {
+    try {
+      const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`);
+      if (!res.ok) return;
+      const data = await res.json();
+      tag = data.tag_name;
+      url = data.html_url;
+      localStorage.setItem(UPDATE_CACHE_KEY, JSON.stringify({ at: Date.now(), tag, url }));
+    } catch (e) {
+      console.warn('checkForUpdate failed:', e);
+      return;
+    }
+  }
+
+  if (!tag || localStorage.getItem(UPDATE_DISMISS_KEY) === tag) return;
+  const current = await tauri.app.getVersion();
+  if (isNewerVersion(tag, current)) {
+    setState({ updateInfo: { tag, version: tag.replace(/^v/, ''), url } });
+  }
+}
+
+export function dismissUpdate(tag) {
+  try { localStorage.setItem(UPDATE_DISMISS_KEY, tag); } catch (_) { /* private mode */ }
+  setState({ updateInfo: null });
 }

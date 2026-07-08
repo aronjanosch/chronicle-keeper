@@ -33,11 +33,7 @@ export const store = {
   llmProviders: null,     // LLM provider registry
   providerStatus: null,   // { ok, reason } for the active summary provider (null = unknown)
   promptTemplates: null,  // user-managed summary prompt templates [{id, label, text, builtin}]
-
-  // migration
-  migrationStatus: null,  // { needs_migration, campaigns } — null = not checked yet
-  migrationRunning: false,
-  migrationResult: null,  // { ok, campaigns_migrated, sessions_migrated, errors } after run
+  updateInfo: null,       // { tag, version, url } when a newer GitHub release exists
 
   // tabs (Phase 15): open codex pages, per world. One tab per path; the
   // active tab is whichever path the 'page' route currently shows.

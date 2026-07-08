@@ -30,11 +30,6 @@ impl Paths {
         self.data_dir.join("chronicle_keeper_v1.db")
     }
 
-    /// 0.X database — the migration reads it, the new app never writes it.
-    pub fn legacy_db_path(&self) -> PathBuf {
-        self.data_dir.join("chronicle_keeper.db")
-    }
-
     pub fn models_dir(&self) -> PathBuf {
         match std::env::var_os("CK_MODELS_DIR") {
             Some(v) => PathBuf::from(v),

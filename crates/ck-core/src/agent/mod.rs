@@ -7,6 +7,7 @@ pub mod attachments;
 pub mod brief;
 pub mod chats;
 pub mod checkpoints;
+pub mod compact;
 pub mod context;
 pub mod memory;
 pub mod skills;

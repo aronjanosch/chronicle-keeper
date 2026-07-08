@@ -8,8 +8,13 @@ import { apiFetch, apiJson, apiStream, bump, navigate, setOp, setState, store } 
 import { Icon, Spinner, renderBlockHtml, wikilinkClick, openContextMenu } from './ui.js';
 import { loadLlmProviders, fetchLlmModels, loadVaultTree, loadSkills, copyText } from './actions.js';
 
-// store.keeper = { open, chatId, campaignId, events[], attachments[],
-//                  live: {text, tools[], ask}|null, error, mode }
+// store.keeper = { open, chatId, campaignId, events[], attachments[], error, mode }
+// store.keeperRun = { chatId, campaignId, live: {text, tools[], ask} }|null — the
+// one in-flight turn for the world (backend allows a single run per campaign).
+// Kept separate from store.keeper so switching which chat is displayed never
+// interrupts or corrupts a streaming run: keeperState() overlays run.live onto
+// whichever chat is displayed only when run.chatId matches it, so a backgrounded
+// run keeps streaming untouched and reappears mid-token when its chat reopens.
 
 export const MODES = [
   { id: 'read_only', label: 'Read-only' },
@@ -18,6 +23,13 @@ export const MODES = [
 ];
 
 const MAX_FILE_BYTES = 256 * 1024;
+
+// Built-in /commands in the composer (distinct from skills, which seed a
+// directive). A command's run() fires immediately when picked.
+const KEEPER_COMMANDS = [
+  { slug: 'compact', name: 'Compact conversation', description: 'Summarize this chat to free up context', command: true, run: () => compactChat() },
+];
+const slashLabel = { padding: '5px 8px 3px', fontSize: 10.5, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--ink-faint)' };
 
 // Tools that mutate vault pages — a successful result means the open page may
 // now be stale, so refresh it mid-stream instead of waiting for run end.
@@ -55,13 +67,26 @@ function downscaleImage(file) {
 }
 
 export function keeperState() {
-  const k = store.keeper || { open: false, chatId: null, events: [], live: null, error: null };
+  const k = store.keeper || { open: false, chatId: null, events: [], error: null };
   const base = k.attachments ? k : { ...k, attachments: [] };
-  return base.mode ? base : { ...base, mode: localStorage.getItem('ck_keeper_mode') || 'ask' };
+  const withMode = base.mode ? base : { ...base, mode: localStorage.getItem('ck_keeper_mode') || 'ask' };
+  // Always recomputed — never trust a stray `live` baked into store.keeper by a
+  // previous patchKeeper spread (see patchKeeper below).
+  const run = store.keeperRun;
+  return { ...withMode, live: run && run.chatId === withMode.chatId ? run.live : null };
 }
 
 export function patchKeeper(patch) {
   setState({ keeper: { ...keeperState(), ...patch } });
+}
+
+// Mutates the single background/foreground run in place. No-op if the run
+// already ended or was replaced (chatId mismatch) — a stale onEvent closure
+// firing after its stream's owner is gone.
+function patchRun(chatId, patch) {
+  const cur = store.keeperRun;
+  if (!cur || cur.chatId !== chatId) return;
+  setState({ keeperRun: { ...cur, ...patch } });
 }
 
 // Providers usable right now: keyless (Ollama) or with a saved key.
@@ -69,11 +94,23 @@ export function configuredProviders() {
   return (store.llmProviders || []).filter((p) => !p.needs_key || p.has_key);
 }
 
-// The global default the summarizer uses — what a fresh chat starts on.
+// What a fresh chat starts on: the default provider on its last-used model
+// (saved_model), falling back to the provider's built-in suggestion.
 export function defaultPick() {
   const provider = (store.config?.summary_provider || 'ollama').toLowerCase();
   const p = (store.llmProviders || []).find((x) => x.id === provider);
   return { provider, model: (p && (p.saved_model || p.default_model)) || '' };
+}
+
+// The model a chat resumes on: whatever it last used (persisted `model` event),
+// else the last-used-per-provider default. Keeps old chats on their own model.
+function pickForChat(events) {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === 'model' && events[i].model) {
+      return { provider: events[i].provider, model: events[i].model };
+    }
+  }
+  return defaultPick();
 }
 
 // Kind of the page currently open in the editor (drives suggestion chips).
@@ -105,8 +142,9 @@ async function fetchChatInto(chatId) {
     apiFetch(`/campaigns/${cid}/agent/chats/${chatId}`),
     apiFetch(`/campaigns/${cid}/agent/chats/${chatId}/attachments`).catch(() => ({ attachments: [] })),
   ]);
-  // Entering a chat resets the pick to the global default (per-chat choice).
-  patchKeeper({ chatId, events, undoable: undoable || 0, attachments: att.attachments || [], live: null, error: null, ...defaultPick() });
+  // Entering a chat resumes the model it last used; a fresh/empty chat falls
+  // back to the last-used-per-provider default.
+  patchKeeper({ chatId, events, undoable: undoable || 0, attachments: att.attachments || [], live: null, error: null, ...pickForChat(events) });
 }
 
 // Blank, never-used chats are ephemeral: discard the one we're leaving so the
@@ -175,14 +213,25 @@ export async function sendMessage(text, images = []) {
   const cid = store.campaign?.campaign_id;
   let k = keeperState();
   if (!cid || k.live) return;
+  // Backend allows one run per world — starting a second while another chat
+  // in this world is mid-turn would just 409. Catch it here with a clearer message.
+  if (store.keeperRun && store.keeperRun.campaignId === cid) {
+    setOp('The Keeper is already working in another chat.', 'err');
+    return;
+  }
   // No chat yet (rail opened, openPanel still in flight, or a fresh world):
   // create one so the message lands instead of vanishing.
   if (!k.chatId) {
     if (!(await newChat())) return;
     k = keeperState();
   }
+  // Captured once: this run belongs to this chat for its whole lifetime, even
+  // if the user switches the displayed chat mid-stream.
+  const chatId = k.chatId;
+  const isFocused = () => keeperState().chatId === chatId;
   const events = [...k.events, { type: 'user', text, images }];
-  patchKeeper({ events, live: { text: '', tools: [] }, error: null });
+  patchKeeper({ events, error: null });
+  setState({ keeperRun: { chatId, campaignId: cid, live: { text: '', tools: [] } } });
   let toolsRan = false;
   try {
     const body = { text, mode: k.mode };
@@ -192,54 +241,88 @@ export async function sendMessage(text, images = []) {
     // Silently hand the Keeper the editor state — the open page + other tabs.
     const focusPath = store.route?.name === 'page' ? store.route?.params?.path : null;
     if (focusPath) body.focus = { path: focusPath, tabs: store.tabs || [] };
-    await apiStream(`/campaigns/${cid}/agent/chats/${k.chatId}/messages`, body, (ev) => {
-      const cur = keeperState();
-      const live = cur.live || { text: '', tools: [] };
+    await apiStream(`/campaigns/${cid}/agent/chats/${chatId}/messages`, body, (ev) => {
+      const run = store.keeperRun;
+      if (!run || run.chatId !== chatId) return; // aborted/replaced elsewhere
+      const live = run.live || { text: '', tools: [] };
       if (ev.type === 'text_delta') {
-        patchKeeper({ live: { ...live, text: live.text + ev.text } });
+        patchRun(chatId, { live: { ...live, text: live.text + ev.text } });
       } else if (ev.type === 'permission_request') {
-        patchKeeper({ live: { ...live, ask: { requestId: ev.request_id, name: ev.name, diff: ev.diff } } });
+        patchRun(chatId, { live: { ...live, ask: { requestId: ev.request_id, name: ev.name, diff: ev.diff } } });
       } else if (ev.type === 'tool_start') {
         toolsRan = true;
-        patchKeeper({ live: { ...live, ask: null, tools: [...live.tools, { name: ev.name, args: ev.args_summary, diff: ev.diff, running: true }] } });
+        patchRun(chatId, { live: { ...live, ask: null, tools: [...live.tools, { name: ev.name, args: ev.args_summary, diff: ev.diff, running: true }] } });
       } else if (ev.type === 'tool_result') {
         const tools = live.tools.slice();
         const i = tools.findLastIndex((t) => t.running && t.name === ev.name);
         if (i >= 0) tools[i] = { ...tools[i], running: false, summary: ev.summary, isError: ev.is_error };
         // A tool round means the streamed text so far belongs to a finished
         // assistant turn — fold it into the row list and reset the buffer.
-        patchKeeper({ live: { ...live, text: '', tools, ask: null } });
-        if (live.text.trim()) {
+        // Only the currently displayed chat keeps its events array live; a
+        // backgrounded chat picks this up from disk when it's reopened.
+        patchRun(chatId, { live: { ...live, text: '', tools, ask: null } });
+        if (live.text.trim() && isFocused()) {
           patchKeeper({ events: [...keeperState().events, { type: 'assistant', text: live.text }] });
         }
         if (!ev.is_error && VAULT_WRITE_TOOLS.has(ev.name)) { loadVaultTree(cid); bump('vault'); }
       } else if (ev.type === 'notice') {
         // Mode change (e.g. grounded fallback) — show it inline right away;
-        // the post-stream reload picks up the persisted event.
-        patchKeeper({ events: [...keeperState().events, { type: 'notice', message: ev.message }] });
+        // the post-stream reload picks up the persisted event either way.
+        if (isFocused()) patchKeeper({ events: [...keeperState().events, { type: 'notice', message: ev.message }] });
       } else if (ev.type === 'error') {
-        patchKeeper({ error: ev.message });
+        if (isFocused()) patchKeeper({ error: ev.message });
       }
     });
   } catch (e) {
-    patchKeeper({ error: String(e.message || e) });
+    if (isFocused()) patchKeeper({ error: String(e.message || e) });
   }
   // Authoritative reload: persisted jsonl is the truth for the transcript.
+  // Only apply it to store.keeper if this chat is still the one displayed —
+  // otherwise leave it alone, the next openChat() will fetch it fresh.
   try {
-    const { events: fresh, undoable } = await apiFetch(`/campaigns/${cid}/agent/chats/${keeperState().chatId}`);
-    patchKeeper({ events: fresh, undoable: undoable || 0, live: null });
-  } catch (_) {
-    patchKeeper({ live: null });
-  }
+    const { events: fresh, undoable } = await apiFetch(`/campaigns/${cid}/agent/chats/${chatId}`);
+    if (isFocused()) patchKeeper({ events: fresh, undoable: undoable || 0 });
+  } catch (_) {}
+  if (store.keeperRun?.chatId === chatId) setState({ keeperRun: null });
   bump('keeper'); // chat list title/count, brief staleness, memories
   if (toolsRan) { loadVaultTree(cid); bump('vault'); } // tools may have touched pages
 }
 
-export async function abortRun() {
+// /compact: summarize the chat into a boundary so the context resets. The full
+// log stays on disk; the transcript reloads showing a compacted divider. Runs
+// through the same one-run-per-world slot as a turn, surfaced inline (not a
+// toast) via a `compacting` live state.
+export async function compactChat() {
   const cid = store.campaign?.campaign_id;
   const k = keeperState();
-  if (!cid || !k.chatId) return;
-  try { await apiJson(`/campaigns/${cid}/agent/chats/${k.chatId}/abort`, 'POST', {}); } catch (_) {}
+  if (!cid || !k.chatId || k.live) return;
+  if (store.keeperRun && store.keeperRun.campaignId === cid) return; // busy elsewhere
+  if (!k.events.some((e) => e.type === 'assistant')) { patchKeeper({ error: 'Nothing to compact yet.' }); return; }
+  const chatId = k.chatId;
+  const isFocused = () => keeperState().chatId === chatId;
+  patchKeeper({ error: null });
+  setState({ keeperRun: { chatId, campaignId: cid, live: { compacting: true, text: '', tools: [] } } });
+  try {
+    const body = {};
+    if (k.provider) body.provider = k.provider;
+    if (k.model) body.model = k.model;
+    const { events } = await apiJson(`/campaigns/${cid}/agent/chats/${chatId}/compact`, 'POST', body);
+    if (isFocused()) patchKeeper({ events: events || keeperState().events, error: null });
+  } catch (e) {
+    if (isFocused()) patchKeeper({ error: String(e.message || e) });
+  }
+  if (store.keeperRun?.chatId === chatId) setState({ keeperRun: null });
+  bump('keeper');
+}
+
+// Aborts whatever run is active for the world — the backend keys the run slot
+// by campaign, not chat, so this stops a backgrounded run too (e.g. from the
+// chat-list's running indicator, without switching to it first).
+export async function abortRun() {
+  const cid = store.campaign?.campaign_id;
+  const chatId = store.keeperRun?.chatId || keeperState().chatId;
+  if (!cid || !chatId) return;
+  try { await apiJson(`/campaigns/${cid}/agent/chats/${chatId}/abort`, 'POST', {}); } catch (_) {}
 }
 
 export function setMode(mode) {
@@ -251,7 +334,10 @@ async function decide(requestId, decision) {
   const cid = store.campaign?.campaign_id;
   const k = keeperState();
   if (!cid || !k.chatId) return;
-  if (k.live) patchKeeper({ live: { ...k.live, ask: null } });
+  // Clear the ask on the run itself (the source of truth for `live`), not the
+  // derived store.keeper — patching store.keeper.live would be overwritten by
+  // keeperState()'s overlay on the next read anyway.
+  if (k.live) patchRun(k.chatId, { live: { ...k.live, ask: null } });
   try {
     await apiJson(`/campaigns/${cid}/agent/chats/${k.chatId}/approve`, 'POST', { request_id: requestId, decision });
   } catch (e) {
@@ -464,7 +550,33 @@ function ToolRow({ name, summary, isError, running, args, diff }) {
   </div>`;
 }
 
+// In-flight compaction: an assistant-side line with a pulsing feather and
+// shimmering label — reads as the Keeper working, not a toast.
+function CompactingIndicator() {
+  return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0' }}>
+    <span class="ck-pulse" style=${{ display: 'flex', color: 'var(--burgundy)' }}><${Icon} name="feather" size=${14} /></span>
+    <span class="ck-shimmer-text" style=${{ fontSize: 13, fontWeight: 500 }}>Compacting conversation…</span>
+  </div>`;
+}
+
+// A /compact boundary: a labelled rule; click to read the carried-forward summary.
+function CompactRow({ summary }) {
+  const [open, setOpen] = useState(false);
+  return html`<div style=${{ margin: '14px 0' }}>
+    <div onClick=${() => summary && setOpen(!open)} style=${{ display: 'flex', alignItems: 'center', gap: 8, cursor: summary ? 'pointer' : 'default', color: 'var(--ink-faint)' }}>
+      <span style=${{ flex: 1, height: 1, background: 'var(--rule-soft)' }} />
+      <span style=${{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+        <${Icon} name="feather" size=${11} /> Conversation compacted${summary ? html` <${Icon} name=${open ? 'chev-d' : 'chev-r'} size=${11} />` : ''}
+      </span>
+      <span style=${{ flex: 1, height: 1, background: 'var(--rule-soft)' }} />
+    </div>
+    ${open && summary && html`<div class="ck-prose" style=${{ fontSize: 12.5, marginTop: 8, padding: '8px 12px', background: 'var(--paper-deep)', border: '1px solid var(--rule-soft)', borderRadius: 6, color: 'var(--ink-muted)' }}
+      dangerouslySetInnerHTML=${{ __html: renderBlockHtml(summary, store.vaultPages) }} />`}
+  </div>`;
+}
+
 function EventRow({ ev }) {
+  if (ev.type === 'compact') return html`<${CompactRow} summary=${ev.summary} />`;
   if (ev.type === 'user') {
     const imgs = ev.images || [];
     const menu = (e) => openContextMenu(e, [
@@ -686,14 +798,21 @@ function Waveform({ analyser }) {
   return html`<canvas ref=${cvs} style=${{ flex: 1, height: 24, minWidth: 0, color: 'var(--ink-muted)' }} />`;
 }
 
-export function Composer({ busy }) {
-  const [text, setText] = useState('');
+// Unsent text per chat, kept across chat switches (module-scoped so it survives
+// even if the Composer unmounts). Cleared once a chat's draft is sent.
+const composerDrafts = new Map();
+
+export function Composer({ busy, compacting }) {
+  const [text, setText] = useState(() => composerDrafts.get(keeperState().chatId) || '');
   const [images, setImages] = useState([]);
   const [picker, setPicker] = useState(null); // 'attach' | 'link' | null
   const [linkAt, setLinkAt] = useState(-1); // index of the @ that opened link mode
   const [mentions, setMentions] = useState([]); // titles picked via @, rewritten to [[…]] on send
   const [slash, setSlash] = useState(null); // { q, index } when /command active
   const taRef = useRef(null);
+  const chatIdRef = useRef(keeperState().chatId);
+  const textRef = useRef(text);
+  textRef.current = text;
   const k = keeperState();
   const onPage = store.route?.name === 'page';
   const dictation = useDictation((t) => {
@@ -705,12 +824,16 @@ export function Composer({ busy }) {
   // the sidebar panel and the dedicated Keeper screen alike (cached after first).
   useEffect(() => { loadSkills(store.campaign?.campaign_id); }, [store.campaign?.campaign_id]);
 
-  // /command menu: skills filtered by what's typed after the slash.
-  const slashItems = slash
+  // /command menu: built-in commands first, then skills — both filtered by what's
+  // typed after the slash. Commands run an action; skills seed a directive.
+  const matchQ = (slug, name) => !slash.q || slug.includes(slash.q) || (name || '').toLowerCase().includes(slash.q);
+  const slashCmds = slash ? KEEPER_COMMANDS.filter((c) => matchQ(c.slug, c.name)) : [];
+  const slashSkills = slash
     ? (store.keeperSkills || [])
-      .filter((s) => s.enabled !== false && (!slash.q || s.slug.includes(slash.q) || (s.name || '').toLowerCase().includes(slash.q)))
+      .filter((s) => s.enabled !== false && matchQ(s.slug, s.name))
       .slice(0, 8)
     : [];
+  const slashItems = [...slashCmds, ...slashSkills];
 
   function autoGrow(ta) {
     if (!ta) return;
@@ -718,6 +841,26 @@ export function Composer({ busy }) {
     ta.style.height = `${Math.min(ta.scrollHeight, 168)}px`;
   }
   useEffect(() => { autoGrow(taRef.current); }, [text]);
+
+  // Switching chats: stash whatever's typed under the outgoing chat id, then
+  // restore whatever was typed under the incoming one (or blank for a fresh chat).
+  useEffect(() => {
+    const prevId = chatIdRef.current;
+    if (prevId === k.chatId) return;
+    if (prevId) {
+      if (text.trim()) composerDrafts.set(prevId, text); else composerDrafts.delete(prevId);
+    }
+    chatIdRef.current = k.chatId;
+    setText(composerDrafts.get(k.chatId) || '');
+  }, [k.chatId]);
+
+  // The Composer itself unmounts on navigation (Keeper screen ↔ page rail tabs,
+  // or the rail's Chat tab closing) — stash on the way out so it survives that too.
+  useEffect(() => () => {
+    const id = chatIdRef.current;
+    if (!id) return;
+    if (textRef.current.trim()) composerDrafts.set(id, textRef.current); else composerDrafts.delete(id);
+  }, []);
 
   // One-shot prefill (e.g. "Ask Keeper about this" in the Explorer): consume
   // store.keeper.draft into the local text, never overwriting typed input.
@@ -737,6 +880,7 @@ export function Composer({ busy }) {
     [...mentions].sort((a, b) => b.length - a.length)
       .forEach((m) => { out = out.split(`@${m}`).join(`[[${m}]]`); });
     const imgs = images;
+    if (k.chatId) composerDrafts.delete(k.chatId);
     setText(''); setImages([]); setPicker(null); setMentions([]);
     sendMessage(out, imgs);
   };
@@ -774,6 +918,24 @@ export function Composer({ busy }) {
     else if (slash) setSlash(null);
   }
 
+  // Pick from /command → run a built-in command, or seed a skill directive.
+  function pickItem(item) {
+    if (item.command) { setSlash(null); setText(''); item.run(); return; }
+    pickSkill(item);
+  }
+
+  // Tab: autocomplete the token to the full /slug, keep the menu open (Enter
+  // then runs it). Never fires the command.
+  function completeItem(item) {
+    const t = `/${item.slug}`;
+    setText(t);
+    setSlash({ q: item.slug.toLowerCase(), index: 0 });
+    requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (ta) { ta.focus(); ta.setSelectionRange(t.length, t.length); autoGrow(ta); }
+    });
+  }
+
   // Pick a skill from /command → replace the composer with a directive that
   // makes the Keeper pull it. User can keep typing or send as-is.
   function pickSkill(skill) {
@@ -806,7 +968,8 @@ export function Composer({ busy }) {
       const at = Math.min(slash.index, slashItems.length - 1);
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlash({ ...slash, index: (at + 1) % slashItems.length }); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSlash({ ...slash, index: (at - 1 + slashItems.length) % slashItems.length }); return; }
-      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickSkill(slashItems[at]); return; }
+      if (e.key === 'Tab') { e.preventDefault(); completeItem(slashItems[at]); return; }
+      if (e.key === 'Enter') { e.preventDefault(); pickItem(slashItems[at]); return; }
       if (e.key === 'Escape') { e.preventDefault(); setSlash(null); return; }
     }
     if (e.key === 'Escape' && picker) { e.preventDefault(); setPicker(null); return; }
@@ -821,17 +984,19 @@ export function Composer({ busy }) {
       background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 8,
       boxShadow: 'var(--shadow-raised)', maxHeight: 280, overflow: 'auto', padding: 6,
     }}>
-      <div style=${{ padding: '3px 8px 5px', fontSize: 11, color: 'var(--ink-faint)' }}>Skills</div>
-      ${slashItems.map((s, i) => html`<div key=${s.slug} onClick=${() => pickSkill(s)} onMouseEnter=${() => setSlash({ ...slash, index: i })}
-        class=${`ck-ac-item${i === Math.min(slash.index, slashItems.length - 1) ? ' on' : ''}`} style=${{ ...pickRow, display: 'block' }}>
-        <div style=${{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <${Icon} name="feather" size=${12} />
-          <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--ink)' }}>/${s.slug}</span>
-          <span style=${{ fontSize: 11.5, color: 'var(--ink-muted)' }}>${s.name}</span>
-        </div>
-        ${s.description && html`<div style=${{ fontSize: 11, color: 'var(--ink-faint)', marginLeft: 19, marginTop: 1, whiteSpace: 'normal' }}>${s.description}</div>`}
-      </div>`)}
-      ${!slashItems.length && html`<div style=${{ padding: 8, fontSize: 12, color: 'var(--ink-faint)' }}>No skill matches.</div>`}
+      ${slashItems.map((s, i) => html`
+        ${i === 0 && slashCmds.length ? html`<div key="lc" style=${slashLabel}>Commands</div>` : ''}
+        ${i === slashCmds.length && slashSkills.length ? html`<div key="ls" style=${slashLabel}>Skills</div>` : ''}
+        <div key=${s.slug} onClick=${() => pickItem(s)} onMouseEnter=${() => setSlash({ ...slash, index: i })}
+          class=${`ck-ac-item${i === Math.min(slash.index, slashItems.length - 1) ? ' on' : ''}`} style=${{ ...pickRow, display: 'block' }}>
+          <div style=${{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <${Icon} name=${s.command ? 'sparkle' : 'feather'} size=${12} />
+            <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--ink)' }}>/${s.slug}</span>
+            <span style=${{ fontSize: 11.5, color: 'var(--ink-muted)' }}>${s.name}</span>
+          </div>
+          ${s.description && html`<div style=${{ fontSize: 11, color: 'var(--ink-faint)', marginLeft: 19, marginTop: 1, whiteSpace: 'normal' }}>${s.description}</div>`}
+        </div>`)}
+      ${!slashItems.length && html`<div style=${{ padding: 8, fontSize: 12, color: 'var(--ink-faint)' }}>No command or skill matches.</div>`}
     </div>`}
     ${images.length > 0 && html`<div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 10px 6px' }}>
       ${images.map((img, i) => html`<div key=${i} style=${{ position: 'relative', width: 52, height: 52, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--rule)' }}>
@@ -840,13 +1005,19 @@ export function Composer({ busy }) {
           style=${{ position: 'absolute', top: 2, right: 2, width: 16, height: 16, borderRadius: 999, background: 'rgba(0,0,0,.6)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}><${Icon} name="x" size=${9} /></span>
       </div>`)}
     </div>`}
-    <div style=${{ margin: 10, border: '1px solid var(--rule)', borderRadius: 10, background: 'var(--surface)', display: 'flex', flexDirection: 'column' }}>
-      <textarea ref=${taRef} value=${text} placeholder="Ask the Keeper… (@ link a page, / a skill, paste images)" rows=${1}
+    <div class=${compacting ? 'ck-breathe' : ''} style=${{ margin: 10, border: '1px solid var(--rule)', borderRadius: 10, background: 'var(--surface)', display: 'flex', flexDirection: 'column' }}>
+      <textarea ref=${taRef} value=${text} disabled=${compacting}
+        placeholder=${compacting ? 'Compacting conversation…' : 'Ask the Keeper… (@ link a page, / a skill, paste images)'} rows=${1}
         onInput=${onInput}
         onKeyDown=${onKeyDown}
         onPaste=${onPaste}
         style=${{ resize: 'none', fontSize: 13, padding: '9px 10px 4px', border: 'none', outline: 'none', background: 'transparent', color: 'var(--ink)', fontFamily: 'inherit', minHeight: 40, maxHeight: 168, overflowY: 'auto' }} />
-      ${dictation.status === 'recording' || dictation.status === 'transcribing'
+      ${compacting
+        ? html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px 8px' }}>
+            <${Spinner} size=${14} />
+            <span class="ck-shimmer-text" style=${{ fontSize: 12.5, fontWeight: 500 }}>Compacting conversation…</span>
+          </div>`
+        : dictation.status === 'recording' || dictation.status === 'transcribing'
         ? html`<div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px 6px' }}>
             <button class="btn btn-ghost on" title="Recording" style=${{ padding: '6px 7px', color: 'var(--burgundy)' }}><${Icon} name="mic" size=${14} /></button>
             ${dictation.status === 'recording'
@@ -889,7 +1060,8 @@ export function Transcript({ k, empty }) {
       The Keeper knows this world's Codex and sessions.<br />Ask about people, places, or what happened.
     </div>`)}
     ${k.events.map((ev, i) => html`<${EventRow} key=${i} ev=${ev} />`)}
-    ${k.live && html`
+    ${k.live && k.live.compacting && html`<${CompactingIndicator} />`}
+    ${k.live && !k.live.compacting && html`
       ${k.live.tools.map((t, i) => html`<${ToolRow} key=${`t${i}`} ...${t} />`)}
       ${k.live.text && html`<div class="ck-prose" style=${{ fontSize: 13, margin: '10px 0' }}
         dangerouslySetInnerHTML=${{ __html: renderBlockHtml(k.live.text, store.vaultPages) }} />`}
@@ -933,7 +1105,7 @@ export function Conversation({ k, empty }) {
       </button>
     </div>`}
     ${!k.live && html`<${SkillChips} />`}
-    <${Composer} busy=${!!k.live} />
+    <${Composer} busy=${!!k.live} compacting=${!!k.live?.compacting} />
     ${dragging && html`<div style=${{
       position: 'absolute', inset: 0, zIndex: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'rgba(122,46,31,.08)', border: '2px dashed var(--burgundy)', borderRadius: 8,

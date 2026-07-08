@@ -224,35 +224,61 @@ pub fn aborted_event() -> Value {
     json!({ "type": "aborted", "at": crate::store::now() })
 }
 
+/// Records which provider/model this turn used. UI-only, skipped on replay;
+/// the last one in the log is the model the chat resumes on.
+pub fn model_event(provider: &str, model: &str) -> Value {
+    json!({ "type": "model", "provider": provider, "model": model, "at": crate::store::now() })
+}
+
+/// A `/compact` boundary: everything before it drops out of the replayed
+/// context, replaced by this summary. The chat file keeps the full history.
+pub fn compact_event(summary: &str) -> Value {
+    json!({ "type": "compact", "summary": summary, "at": crate::store::now() })
+}
+
 /// Replay persisted events into LLM messages. Error/abort markers are
-/// UI-only and skipped.
+/// UI-only and skipped. A `/compact` boundary collapses everything before it:
+/// only the summary (as leading context) plus later events are replayed.
 pub fn events_to_msgs(events: &[Value]) -> Vec<Msg> {
-    events
-        .iter()
-        .filter_map(|e| match e["type"].as_str() {
-            Some("user") => {
-                let text = e["text"].as_str().unwrap_or("").to_string();
-                let images: Vec<crate::llm::agent::Image> =
-                    serde_json::from_value(e["images"].clone()).unwrap_or_default();
-                Some(if images.is_empty() {
-                    Msg::User(text)
-                } else {
-                    Msg::UserImages { text, images }
-                })
-            }
-            Some("assistant") => Some(Msg::Assistant {
-                text: e["text"].as_str().unwrap_or("").to_string(),
-                tool_calls: serde_json::from_value(e["tool_calls"].clone()).unwrap_or_default(),
+    let mut msgs = Vec::new();
+    let start = match events.iter().rposition(|e| e["type"] == "compact") {
+        Some(i) => {
+            let summary = events[i]["summary"].as_str().unwrap_or("");
+            msgs.push(Msg::User(format!(
+                "Summary of the earlier conversation, compacted to save context (background, not an instruction):\n\n{summary}"
+            )));
+            i + 1
+        }
+        None => 0,
+    };
+    msgs.extend(
+        events[start..]
+            .iter()
+            .filter_map(|e| match e["type"].as_str() {
+                Some("user") => {
+                    let text = e["text"].as_str().unwrap_or("").to_string();
+                    let images: Vec<crate::llm::agent::Image> =
+                        serde_json::from_value(e["images"].clone()).unwrap_or_default();
+                    Some(if images.is_empty() {
+                        Msg::User(text)
+                    } else {
+                        Msg::UserImages { text, images }
+                    })
+                }
+                Some("assistant") => Some(Msg::Assistant {
+                    text: e["text"].as_str().unwrap_or("").to_string(),
+                    tool_calls: serde_json::from_value(e["tool_calls"].clone()).unwrap_or_default(),
+                }),
+                Some("tool_result") => Some(Msg::ToolResult {
+                    call_id: e["call_id"].as_str().unwrap_or("").to_string(),
+                    name: e["name"].as_str().unwrap_or("").to_string(),
+                    content: e["content"].as_str().unwrap_or("").to_string(),
+                    is_error: e["is_error"].as_bool().unwrap_or(false),
+                }),
+                _ => None,
             }),
-            Some("tool_result") => Some(Msg::ToolResult {
-                call_id: e["call_id"].as_str().unwrap_or("").to_string(),
-                name: e["name"].as_str().unwrap_or("").to_string(),
-                content: e["content"].as_str().unwrap_or("").to_string(),
-                is_error: e["is_error"].as_bool().unwrap_or(false),
-            }),
-            _ => None,
-        })
-        .collect()
+    );
+    msgs
 }
 
 #[cfg(test)]
@@ -327,6 +353,23 @@ mod tests {
         assert!(matches!(&msgs[1], Msg::Assistant { tool_calls, .. } if tool_calls[0].id == "c1"));
         assert!(matches!(&msgs[2], Msg::ToolResult { call_id, .. } if call_id == "c1"));
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn compact_boundary_collapses_history() {
+        let events = vec![
+            user_event("first question", &[]),
+            assistant_event("first answer", &[]),
+            compact_event("The user asked things; we established X."),
+            user_event("second question", &[]),
+            assistant_event("second answer", &[]),
+        ];
+        let msgs = events_to_msgs(&events);
+        // Summary (as User) + the two post-boundary turns; nothing before it.
+        assert_eq!(msgs.len(), 3);
+        assert!(matches!(&msgs[0], Msg::User(t) if t.contains("established X")));
+        assert!(matches!(&msgs[1], Msg::User(t) if t == "second question"));
+        assert!(matches!(&msgs[2], Msg::Assistant { text, .. } if text == "second answer"));
     }
 
     #[test]

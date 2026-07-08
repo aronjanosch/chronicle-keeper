@@ -6,7 +6,7 @@ import { navigate, apiFetch, apiJson, bump, fmtDate } from '../core.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Spinner } from '../ui.js';
 import {
-  keeperState, patchKeeper, openChat, newChat, ModeSelect, Conversation, sendMessage,
+  keeperState, patchKeeper, openChat, newChat, ModeSelect, Conversation, sendMessage, abortRun,
 } from '../keeperPanel.js';
 import { MemoryView, fetchBriefStatus } from '../keeperMemory.js';
 
@@ -25,6 +25,9 @@ export function KeeperScreen({ store }) {
   const [view, setView] = useState('chat'); // 'chat' | 'memory'
   const [brief, setBrief] = useState(null);
   const k = keeperState();
+  // The world allows one run at a time; this is which chat (if any) currently
+  // owns it — may not be the one displayed if the user switched away.
+  const runningId = store.keeperRun?.campaignId === cid ? store.keeperRun.chatId : null;
 
   useEffect(() => { if (cid) fetchBriefStatus(cid).then(setBrief); }, [cid, view, store.dirty_keeper]);
 
@@ -45,6 +48,7 @@ export function KeeperScreen({ store }) {
   const pickChat = (id) => { setView('chat'); openChat(id); };
   const onDelete = async (id, e) => {
     e.stopPropagation();
+    if (id === runningId) return; // don't delete a chat the Keeper is actively writing to
     try {
       await apiJson(`/campaigns/${cid}/agent/chats/${id}`, 'DELETE', {});
       if (keeperState().chatId === id) {
@@ -71,6 +75,7 @@ export function KeeperScreen({ store }) {
       ${chats !== null && !filtered.length && html`<div style=${{ padding: 16, fontSize: 12.5, color: 'var(--ink-faint)', textAlign: 'center' }}>No chats yet.</div>`}
       ${filtered.map((ch) => {
         const active = view === 'chat' && ch.id === k.chatId;
+        const running = ch.id === runningId;
         return html`<div key=${ch.id} onClick=${() => pickChat(ch.id)} class="ck-chat-row" style=${{
           padding: '9px 10px', borderRadius: 6, cursor: 'pointer', marginBottom: 2,
           background: active ? 'var(--burgundy-50)' : 'transparent',
@@ -79,9 +84,11 @@ export function KeeperScreen({ store }) {
         }}>
           <div style=${{ flex: 1, minWidth: 0 }}>
             <div style=${{ fontSize: 13, fontWeight: active ? 600 : 500, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${ch.title}</div>
-            <div style=${{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 1 }}>${ch.message_count} msg · ${fmtDate(ch.updated_at) || 'new'}</div>
+            <div style=${{ fontSize: 11, color: running ? 'var(--burgundy)' : 'var(--ink-faint)', marginTop: 1 }}>${running ? 'The Keeper is replying…' : `${ch.message_count} msg · ${fmtDate(ch.updated_at) || 'new'}`}</div>
           </div>
-          <span onClick=${(e) => onDelete(ch.id, e)} title="Delete chat" style=${{ color: 'var(--ink-faint)', display: 'flex', padding: 2 }}><${Icon} name="trash" size=${12} /></span>
+          ${running
+            ? html`<span onClick=${(e) => { e.stopPropagation(); abortRun(); }} title="Stop the Keeper" style=${{ color: 'var(--burgundy)', display: 'flex', padding: 2 }}><${Spinner} size=${12} /></span>`
+            : html`<span onClick=${(e) => onDelete(ch.id, e)} title="Delete chat" style=${{ color: 'var(--ink-faint)', display: 'flex', padding: 2 }}><${Icon} name="trash" size=${12} /></span>`}
         </div>`;
       })}
     </div>

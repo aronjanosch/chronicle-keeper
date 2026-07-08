@@ -201,7 +201,7 @@ function ProviderModal({ id }) {
     <span style=${{ flex: 1, fontSize: 12.5, color: status?.ok === false ? 'var(--burgundy-700)' : 'var(--moss)' }}>${status?.msg || ''}</span>
     <${Btn} kind="ghost" onClick=${test}>Test</${Btn}>
     <${Btn} kind="primary" onClick=${save}>Save</${Btn}>`}>
-    <${Field} label="Default model" hint=${liveModels ? 'Installed models, live from the provider.' : (p.id === 'ollama' ? 'Must match a model pulled in Ollama.' : (p.models?.length ? 'Pick a suggestion or type any model name.' : 'Type the exact model id (e.g. from ollama.com).'))}>
+    <${Field} label="Model" hint=${liveModels ? 'Starting model — the Keeper remembers your last pick per provider.' : (p.id === 'ollama' ? 'Must match a model pulled in Ollama.' : (p.models?.length ? 'Pick a suggestion or type any model name.' : 'Type the exact model id (e.g. from ollama.com).'))}>
       <${Input} value=${model} onInput=${setModel} mono list=${suggestions.length ? 'ck-prov-models' : undefined} />
       ${suggestions.length ? html`<datalist id="ck-prov-models">${suggestions.map((m, i) => html`<option key=${i} value=${m} />`)}</datalist>` : ''}
     </${Field}>

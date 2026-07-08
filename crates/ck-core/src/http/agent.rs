@@ -313,6 +313,43 @@ pub async fn run_brief(
 }
 
 #[derive(Deserialize)]
+pub struct CompactRequest {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+}
+
+/// Summarize the chat into a compact boundary, then return the reloaded events.
+/// Runs a single blocking LLM call under the per-world run slot so it can't race
+/// a live turn.
+pub async fn compact_chat(
+    State(state): State<AppState>,
+    Path((campaign_id, chat_id)): Path<(String, String)>,
+    Json(req): Json<CompactRequest>,
+) -> AppResult<Json<Value>> {
+    let (root, _) = world_cfg(&state, &campaign_id)?;
+    chats::load_chat(&root, &chat_id)?; // 404 before we start
+    let resolved = state.with_db(|conn| {
+        let app_cfg = crate::config::get_config_map(conn)?;
+        crate::llm::resolve(
+            conn,
+            &app_cfg,
+            req.provider.as_deref(),
+            req.model.as_deref(),
+            req.base_url.as_deref(),
+        )
+    })?;
+    let _cancel = claim_run(&state, &campaign_id)?;
+    let result = agent::compact::run_compact(&root, &chat_id, &resolved).await;
+    release_run(&state, &campaign_id);
+    let summary = result?;
+    Ok(Json(json!({
+        "summary": summary,
+        "events": chats::load_chat(&root, &chat_id)?,
+    })))
+}
+
+#[derive(Deserialize)]
 pub struct MessageRequest {
     pub text: String,
     pub mode: Option<String>,
@@ -398,6 +435,17 @@ pub async fn send_message(
             req.base_url.as_deref(),
         )
     })?;
+    // Persist the model this turn uses so reopening the chat resumes on it, and
+    // remember it as the provider's last-used for seeding new chats.
+    if !resolved.model.is_empty() {
+        chats::append(
+            &root,
+            &chat_id,
+            &chats::model_event(&resolved.provider, &resolved.model),
+        )?;
+        let _ = state
+            .with_db(|conn| crate::llm::set_last_model(conn, &resolved.provider, &resolved.model));
+    }
     let cancel = claim_run(&state, &campaign_id)?;
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();

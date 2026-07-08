@@ -5,7 +5,7 @@
 // markdown highlight, [[ / #tag autocomplete, ⌘F search, and format shortcuts.
 // Auto-saves to the vault (800ms). See cm.js.
 import { html, useState, useEffect, useRef, useMemo, useCallback } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, useStore, openModal, setState } from '../core.js';
+import { navigate, useStore, openModal, setState, store as globalStore } from '../core.js';
 import { Shell, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
 import { Empty, Icon, PageBody, WikilinkHoverCard, splitDoc, joinDoc, parseProps, openContextMenu, useAsset, bannerAsset } from '../ui.js';
 import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault, uploadVaultAsset, loadSnippets, loadRelations, loadSkills, copyText } from '../actions.js';
@@ -588,7 +588,9 @@ function PageRail({ page, path, pages, links, relations, schemas, atlasMaps, cam
     <div style=${{ display: 'flex', padding: '0 8px', borderBottom: '1px solid var(--rule-soft)' }}>
       <${RailTab} icon="book" label="Info" active=${railTab === 'info'} onClick=${() => setRailTab('info')} />
       <${RailTab} icon="link" label="Links" active=${railTab === 'links'} onClick=${() => setRailTab('links')} />
-      <${RailTab} icon="feather" label="Chat" active=${railTab === 'chat'} onClick=${() => setRailTab('chat')} />
+      <${RailTab} icon="feather" label="Chat" active=${railTab === 'chat'}
+        running=${railTab !== 'chat' && globalStore.keeperRun?.campaignId === campaignId}
+        onClick=${() => setRailTab('chat')} />
     </div>
     ${railTab === 'info'
       ? html`<div style=${{ flex: 1, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -611,7 +613,7 @@ function PageRail({ page, path, pages, links, relations, schemas, atlasMaps, cam
   </aside>`;
 }
 
-function RailTab({ icon, label, active, onClick }) {
+function RailTab({ icon, label, active, running, onClick }) {
   return html`<button onClick=${onClick} style=${{
     flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 8px', fontSize: 12.5,
     fontWeight: active ? 600 : 500, background: 'none', border: 'none', marginBottom: -1,
@@ -619,6 +621,7 @@ function RailTab({ icon, label, active, onClick }) {
     color: active ? 'var(--ink)' : 'var(--ink-muted)', cursor: 'pointer',
   }}>
     <${Icon} name=${icon} size=${13} /> ${label}
+    ${running && html`<span title="The Keeper is replying" style=${{ width: 6, height: 6, borderRadius: 999, background: 'var(--burgundy)' }} />`}
   </button>`;
 }
 

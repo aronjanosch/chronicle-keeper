@@ -255,6 +255,20 @@ pub fn upsert_key(
     Ok(())
 }
 
+/// Remember the last model used for a provider (Keeper chats seed new sessions
+/// from this). Touches only `default_model`, preserving any saved key/base.
+pub fn set_last_model(conn: &Connection, id: &str, model: &str) -> AppResult<()> {
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO provider_keys (provider_id, default_model, updated_at) \
+         VALUES (?1, ?2, ?3) \
+         ON CONFLICT(provider_id) DO UPDATE SET \
+            default_model = excluded.default_model, updated_at = excluded.updated_at",
+        params![id, model, now],
+    )?;
+    Ok(())
+}
+
 pub fn list_keys(conn: &Connection) -> AppResult<HashMap<String, SavedKey>> {
     let mut stmt =
         conn.prepare("SELECT provider_id, api_key, api_base, default_model FROM provider_keys")?;

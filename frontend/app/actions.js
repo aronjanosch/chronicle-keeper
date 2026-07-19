@@ -979,6 +979,82 @@ export async function fetchLlmModels(id) {
   catch (_) { return []; }
 }
 
+// Kick off an Ollama model pull; progress is polled via pollOllamaPull().
+export function pullOllamaModel(id, model) {
+  return apiJson(`/llm-providers/${id}/pull`, 'POST', { model });
+}
+
+// Same poll-and-render shape as pollModelStatus(), targeting the Ollama pull's
+// own progress endpoint so it can't collide with a concurrent transcription download.
+export function pollOllamaPull(id, { onDone, onError } = {}) {
+  let stopped = false;
+  const tick = async () => {
+    if (stopped) return;
+    try {
+      const p = await apiFetch(`/llm-providers/${id}/pull-status`);
+      if (stopped) return;
+      if (p.phase === 'pulling') {
+        if (p.total > 0) {
+          const pct = Math.round((p.downloaded / p.total) * 100);
+          setOp(`Pulling model ${bar(p.downloaded / p.total)} ${pct}% (${(p.downloaded / MB).toFixed(0)}/${(p.total / MB).toFixed(0)} MB)`);
+        } else setOp(`Pulling model… ${(p.downloaded / MB).toFixed(0)} MB`);
+      } else if (p.phase === 'ready') {
+        setOp('Model pulled', 'done');
+        stopped = true;
+        onDone?.();
+        return;
+      } else if (p.phase === 'error') {
+        setOp(p.message || 'Model pull failed.', 'err');
+        stopped = true;
+        onError?.(p.message);
+        return;
+      }
+    } catch (_) {}
+    if (!stopped) setTimeout(tick, 500);
+  };
+  tick();
+  return () => { stopped = true; };
+}
+
+// ── Getting-started checklist (library screen) ────────────────────
+// Which onboarding steps are done, computed from live state — never stored,
+// so it can't drift. A cloud key satisfies the AI steps; local-only setups
+// need Ollama reachable and a model pulled. Once dismissed (or every step
+// done) the flag stops all future checks, mirroring ck_update_dismissed.
+export const ONBOARDING_DONE_KEY = 'ck_onboarding_done';
+export const EXAMPLE_CAMPAIGN_ID = 'example-ashfall'; // see ck-core seed.rs
+
+export async function refreshOnboarding() {
+  if (localStorage.getItem(ONBOARDING_DONE_KEY)) return;
+  const provs = (await loadLlmProviders()) || [];
+  const hasKey = provs.some((p) => p.needs_key && p.has_key);
+  const ollamaModels = await fetchLlmModels('ollama');
+  let ollamaUp = ollamaModels.length > 0;
+  if (!ollamaUp && !hasKey) {
+    try { ollamaUp = (await pingLlmProvider('ollama')).ok; } catch (_) {}
+  }
+  let keeper = false;
+  for (const c of store.campaigns || []) {
+    try {
+      const r = await apiFetch(`/campaigns/${c.campaign_id}/agent/chats`);
+      if ((r.chats || []).length) { keeper = true; break; }
+    } catch (_) {}
+  }
+  setState({
+    onboarding: {
+      provider: hasKey || ollamaUp,
+      model: hasKey || ollamaModels.length > 0,
+      keeper,
+      world: (store.campaigns || []).some((c) => c.campaign_id !== EXAMPLE_CAMPAIGN_ID),
+    },
+  });
+}
+
+export function dismissOnboarding() {
+  localStorage.setItem(ONBOARDING_DONE_KEY, '1');
+  setState({ onboarding: null });
+}
+
 // Status of the active summary provider for the sidebar badge. Only flags real
 // problems: nothing selected, a keyed provider with no key, or Ollama down.
 export async function refreshProviderStatus() {

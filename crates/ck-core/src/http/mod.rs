@@ -235,6 +235,8 @@ pub fn router(state: AppState) -> Router {
         .route("/llm-providers/:id/test", post(llm::test_provider))
         .route("/llm-providers/:id/ping", get(llm::ping_provider))
         .route("/llm-providers/:id/models", get(llm::list_provider_models))
+        .route("/llm-providers/:id/pull", post(llm::pull_provider_model))
+        .route("/llm-providers/:id/pull-status", get(llm::pull_status))
         // artifacts
         .route(
             "/sessions/:id/transcripts",

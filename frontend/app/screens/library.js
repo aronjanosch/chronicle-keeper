@@ -1,8 +1,8 @@
 // Screen 01 — Campaign Library. Real data: each campaign is a "tome" card.
 import { html } from '../../vendor/htm-preact-standalone.mjs';
-import { useState } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate } from '../core.js';
-import { openCampaign } from '../actions.js';
+import { useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
+import { navigate, openModal } from '../core.js';
+import { openCampaign, refreshOnboarding, dismissOnboarding, EXAMPLE_CAMPAIGN_ID } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Sigil, Btn, Spinner, Empty } from '../ui.js';
 
@@ -19,9 +19,53 @@ function PartyAvatars({ players = [] }) {
   </div>`;
 }
 
-// Id of the sample campaign seeded on first launch (see ck-core seed.rs). Flagged
-// in the UI so users know it's a demo they can safely delete.
-const EXAMPLE_CAMPAIGN_ID = 'example-ashfall';
+// Getting-started checklist: state-derived (each step checks real app state,
+// nothing is stored except the dismissal), auto-hides once every step is done.
+function GettingStarted({ store }) {
+  useEffect(() => { refreshOnboarding(); }, []);
+  const s = store.onboarding;
+  const allDone = s && Object.values(s).every(Boolean);
+  useEffect(() => { if (allDone) dismissOnboarding(); }, [allDone]);
+  if (!s || allDone) return null;
+
+  const goKeeper = () => {
+    const target = store.campaigns.find((c) => c.campaign_id === EXAMPLE_CAMPAIGN_ID) || store.campaigns[0];
+    if (target) openCampaign(target.campaign_id).then(() => navigate('keeper', { id: target.campaign_id }));
+  };
+  const steps = [
+    { done: s.provider, label: 'Connect an AI', sub: 'Local Ollama, or any cloud key — it never leaves this machine', go: () => navigate('settings') },
+    { done: s.model, label: 'Get the local model', sub: 'gemma4:e2b · ~7.2 GB, runs fully on-device', go: () => openModal('provider', { id: 'ollama' }) },
+    { done: s.keeper, label: 'Ask the Keeper', sub: 'Try it on the example world — it reads your pages to answer', go: goKeeper },
+    { done: s.world, label: 'Create your own world', sub: 'The example is a sandbox; your chronicle starts here', go: () => navigate('newWorld') },
+  ];
+  return html`<div style=${{
+    background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8,
+    padding: '14px 18px', marginBottom: 22, position: 'relative',
+  }}>
+    <div style=${{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
+      <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>Getting started</div>
+      <span style=${{ flex: 1 }} />
+      <${Btn} kind="ghost" size="sm" icon="x" title="Dismiss" onClick=${dismissOnboarding} />
+    </div>
+    <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px 20px' }}>
+      ${steps.map((st) => html`<div key=${st.label} onClick=${st.done ? undefined : st.go} style=${{
+        display: 'flex', alignItems: 'flex-start', gap: 10, cursor: st.done ? 'default' : 'pointer',
+        opacity: st.done ? 0.55 : 1,
+      }}>
+        <div style=${{
+          width: 18, height: 18, borderRadius: '50%', flex: '0 0 auto', marginTop: 1,
+          border: st.done ? 'none' : '1.5px solid var(--rule-strong)',
+          background: st.done ? 'var(--moss)' : 'transparent', color: 'var(--paper)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>${st.done && html`<${Icon} name="check" size=${11} />`}</div>
+        <div style=${{ minWidth: 0 }}>
+          <div style=${{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', textDecoration: st.done ? 'line-through' : 'none' }}>${st.label}</div>
+          <div style=${{ fontSize: 11.5, color: 'var(--ink-muted)' }}>${st.sub}</div>
+        </div>
+      </div>`)}
+    </div>
+  </div>`;
+}
 
 function CampaignCard({ c }) {
   const players = c.players || [];
@@ -92,6 +136,8 @@ export function LibraryScreen({ store }) {
           : 'No worlds yet — begin your first chronicle.'}
       </div>
     </div>
+
+    <${GettingStarted} store=${store} />
 
     ${store.loading && !store.campaigns.length
       ? html`<div style=${{ display: 'flex', justifyContent: 'center', padding: 60 }}><${Spinner} size=${22} /></div>`

@@ -139,7 +139,34 @@ fn seed_inner(conn: &Connection) -> AppResult<()> {
 // Demo Codex pages (files-as-truth): each shows the page model — `summary:`
 // is what the summarizer remembers, aliases/tags feed the index, [[wikilinks]]
 // light up the backlinks panel.
-const DEMO_PAGES: [(&str, &str); 5] = [
+const DEMO_PAGES: [(&str, &str); 6] = [
+    (
+        "Start Here.md",
+        r#"---
+summary: A five-minute tour of Chronicle Keeper — edit or delete freely.
+---
+Welcome! This is a page in your world's **codex** — a wiki where every NPC, place and plot thread gets its own page. This one is a quick tour. Edit it, break it, delete it; nothing here is precious.
+
+## 1 · Follow a link
+Click [[Mayor Teller Oren]]. Every `[[name]]` is a link, and pages know what links back to them (check the right rail). Links to pages that don't exist yet are fine too — they become stubs you can fill in later.
+
+## 2 · Edit a page
+Top right: **Read / Edit**. In Edit mode, type `[[` to link another page and `/` for quick inserts and Keeper commands. ⌘S saves.
+
+## 3 · Meet the Keeper
+**The Keeper** in the sidebar is this world's AI librarian. Try asking: *“Who is Mayor Oren, and what is he hiding?”* It reads your pages to answer — and it can edit them for you, but it always asks before changing anything.
+
+## 4 · See a finished session
+**Sessions** holds *Session 1: The Cold Stones*, a sample with the whole pipeline already done: recording → transcript → AI summary. When you're ready, upload your own Craig recording from there.
+
+## 5 · Make it yours
+- **⌘K** — jump to any page, run any command
+- **⌘N** — new page · **⌘⇧J** — quick capture
+- **Settings** — pick your LLM: local via Ollama (default model `gemma4:e2b`, no account needed) or bring any cloud API key.
+
+When you're done exploring, create your own world from the library. You can delete this example world at any time — it won't come back on its own.
+"#,
+    ),
     (
         "Mayor Teller Oren.md",
         r#"---
@@ -271,14 +298,16 @@ mod tests {
         let conn = fresh_db("once");
         seed_example_if_first(&conn).unwrap();
 
-        // Campaign + 5 codex pages + a session with both artifacts.
+        // Campaign + 6 codex pages + a session with both artifacts.
         let campaign = campaigns::get_campaign(&conn, CAMPAIGN_ID)
             .unwrap()
             .unwrap();
         assert_eq!(campaign.name, "The Ashfall Compact");
         let vault = PathBuf::from(campaign.vault_path.unwrap());
         let pages = vault::list_pages(&vault).unwrap();
-        assert_eq!(pages.len(), 5);
+        assert_eq!(pages.len(), 6);
+        let tour = vault::read_page(&vault, "Start Here.md").unwrap();
+        assert!(tour.content.contains("[[Mayor Teller Oren]]"));
         let oren = vault::read_page(&vault, "Mayor Teller Oren.md").unwrap();
         assert_eq!(
             oren.summary,

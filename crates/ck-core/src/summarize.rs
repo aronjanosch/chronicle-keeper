@@ -174,7 +174,12 @@ async fn run_summarize(
         |tok| emit(SummaryProgress::Token(tok.to_string())),
     )
     .await
-    .map_err(|e| AppError::Internal(anyhow::anyhow!("Cloud LLM request failed: {}", e.0)))?;
+    .map_err(|e| {
+        AppError::Internal(anyhow::anyhow!(
+            "Summarization failed: {}",
+            llm::friendly_llm_error(&e.0)
+        ))
+    })?;
     if summary_text.is_empty() {
         return Err(AppError::Internal(anyhow::anyhow!(
             "LLM returned an empty summary."
@@ -337,7 +342,12 @@ pub async fn generate_recap(
         false,
     )
     .await
-    .map_err(|e| AppError::Internal(anyhow::anyhow!("Recap LLM request failed: {}", e.0)))?;
+    .map_err(|e| {
+        AppError::Internal(anyhow::anyhow!(
+            "Recap failed: {}",
+            llm::friendly_llm_error(&e.0)
+        ))
+    })?;
     let recap_text = recap_text.trim().to_string();
     if recap_text.is_empty() {
         return Err(AppError::Internal(anyhow::anyhow!(

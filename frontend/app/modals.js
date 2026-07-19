@@ -8,6 +8,7 @@ import {
   createCampaign, updateCampaign, saveSessionMetadata, loadSession,
   runExport,
   loadLlmProviders, saveLlmProvider, testLlmProvider, fetchLlmModels,
+  pullOllamaModel, pollOllamaPull,
   importCodex, commitCodexImport,
   createPromptTemplate, updatePromptTemplate,
   enhanceVaultPages, loadVaultDiagnostics, exportWorld, revealPath,
@@ -174,6 +175,10 @@ function ExportModal() {
   </${ModalShell}>`;
 }
 
+// Approximate sizes for the bundled suggestions we can name ahead of a pull —
+// arbitrary typed tags don't get a size until the pull stream reports one.
+const KNOWN_MODEL_SIZES = { 'gemma4:e2b': '~7.2 GB', 'gemma4:e4b': '~9.6 GB' };
+
 // ── LLM provider config ───────────────────────────────────────────
 function ProviderModal({ id }) {
   const p = (store.llmProviders || []).find((x) => x.id === id);
@@ -182,9 +187,14 @@ function ProviderModal({ id }) {
   const [apiKey, setApiKey] = useState('');
   const [status, setStatus] = useState(null);
   const [liveModels, setLiveModels] = useState(null);
-  useEffect(() => { if (p) fetchLlmModels(id).then((m) => { if (m.length) setLiveModels(m); }); }, [id]);
+  const [pulling, setPulling] = useState(false);
+  const refreshModels = () => fetchLlmModels(id).then((m) => setLiveModels(m));
+  useEffect(() => { if (p) refreshModels(); }, [id]);
   if (!p) { closeModal(); return null; }
-  const suggestions = liveModels || p.models || [];
+  const suggestions = liveModels?.length ? liveModels : (p.models || []);
+
+  const trimmed = model.trim();
+  const notPulled = p.id === 'ollama' && liveModels != null && trimmed && !liveModels.includes(trimmed);
 
   async function save() {
     setStatus({ msg: 'Saving…' });
@@ -196,6 +206,16 @@ function ProviderModal({ id }) {
     try { const r = await testLlmProvider(id, model.trim()); setStatus({ msg: r.ok ? `OK (${r.latency_ms}ms)` : (r.error || 'Failed'), ok: r.ok }); }
     catch (e) { setStatus({ msg: e.message, ok: false }); }
   }
+  async function pull() {
+    setPulling(true);
+    try {
+      await pullOllamaModel(id, trimmed);
+      pollOllamaPull(id, {
+        onDone: () => { setPulling(false); refreshModels(); },
+        onError: () => setPulling(false),
+      });
+    } catch (e) { setStatus({ msg: e.message, ok: false }); setPulling(false); }
+  }
 
   return html`<${ModalShell} title=${`Configure ${p.name}`} footer=${html`
     <span style=${{ flex: 1, fontSize: 12.5, color: status?.ok === false ? 'var(--burgundy-700)' : 'var(--moss)' }}>${status?.msg || ''}</span>
@@ -204,6 +224,10 @@ function ProviderModal({ id }) {
     <${Field} label="Model" hint=${liveModels ? 'Starting model — the Keeper remembers your last pick per provider.' : (p.id === 'ollama' ? 'Must match a model pulled in Ollama.' : (p.models?.length ? 'Pick a suggestion or type any model name.' : 'Type the exact model id (e.g. from ollama.com).'))}>
       <${Input} value=${model} onInput=${setModel} mono list=${suggestions.length ? 'ck-prov-models' : undefined} />
       ${suggestions.length ? html`<datalist id="ck-prov-models">${suggestions.map((m, i) => html`<option key=${i} value=${m} />`)}</datalist>` : ''}
+      ${notPulled && html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, fontSize: 12.5, color: 'var(--ink-soft)' }}>
+        <span>Not pulled yet${KNOWN_MODEL_SIZES[trimmed] ? ` (${KNOWN_MODEL_SIZES[trimmed]})` : ''}.</span>
+        <${Btn} kind="ghost" disabled=${pulling} onClick=${pull}>${pulling ? 'Pulling…' : 'Pull now'}</${Btn}>
+      </div>`}
     </${Field}>
     <${Field} label=${`API base${p.has_custom_base ? ' (saved — enter to replace)' : (p.default_api_base ? '' : ' (optional)')}`}><${Input} value=${apiBase} onInput=${setApiBase} placeholder=${p.has_custom_base ? 'Custom base saved' : (p.default_api_base ? `Default: ${p.default_api_base}` : 'Provider default')} mono /></${Field}>
     ${p.needs_key && html`<${Field} label=${`API key${p.has_key ? ' (saved — enter to replace)' : ''}`}><${Input} type="password" value=${apiKey} onInput=${setApiKey} placeholder=${p.has_key ? '••••••••' : 'Paste API key'} autocomplete="off" /></${Field}>`}

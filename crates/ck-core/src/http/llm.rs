@@ -178,6 +178,52 @@ pub async fn list_provider_models(
     Ok(Json(json!({ "models": models })))
 }
 
+#[derive(serde::Deserialize)]
+pub struct PullModelRequest {
+    pub model: String,
+}
+
+/// Kick off an Ollama model pull in the background; progress is polled via
+/// `pull_status`. Only Ollama exposes a pull endpoint.
+pub async fn pull_provider_model(
+    State(state): State<AppState>,
+    Path(provider_id): Path<String>,
+    Json(req): Json<PullModelRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    if provider_id != "ollama" {
+        return Err(AppError::BadRequest(
+            "Only Ollama supports pulling models".into(),
+        ));
+    }
+    let resolved = resolve_target(&state, &provider_id, None)?;
+    let model = req.model.trim().to_string();
+    if model.is_empty() {
+        return Err(AppError::BadRequest("Model name required".into()));
+    }
+    crate::state::ModelProgress::set(&state.llm_pull_progress, "pulling", 0, 0);
+    let progress = state.llm_pull_progress.clone();
+    tokio::spawn(async move {
+        if let Err(e) = llm::pull_model(&resolved.api_base, &model, &progress).await {
+            tracing::warn!("ollama pull of {model} failed: {}", e.0);
+        }
+    });
+    Ok(Json(json!({ "started": true })))
+}
+
+/// Progress of an in-flight (or last) Ollama model pull. Same shape as
+/// `GET /model-status`, polled the same way by the frontend.
+pub async fn pull_status(
+    State(state): State<AppState>,
+    Path(_provider_id): Path<String>,
+) -> Json<crate::state::ModelProgress> {
+    let p = state
+        .llm_pull_progress
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    Json(p)
+}
+
 pub async fn summarize(
     State(state): State<AppState>,
     Json(req): Json<SummarizeRequest>,

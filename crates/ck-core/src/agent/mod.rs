@@ -410,7 +410,7 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
                 return grounded_fallback(turn_ctx, user_text, msgs, llm, &mut emit).await;
             }
             Err(e) => {
-                let msg = friendly_llm_error(&e.0);
+                let msg = crate::llm::friendly_llm_error(&e.0);
                 let _ = chats::append(world_root, chat_id, &chats::error_event(&msg));
                 return Err(AppError::Internal(anyhow::anyhow!(
                     "Keeper turn failed: {msg}"
@@ -568,22 +568,6 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
     let msg = "Stopped: iteration limit reached.";
     chats::append(world_root, chat_id, &chats::error_event(msg))?;
     Err(AppError::Internal(anyhow::anyhow!(msg)))
-}
-
-/// Turn a raw transport error into something the user can act on. Provider 400s
-/// are JSON blobs; the common ones (no image support, missing model) become a
-/// plain instruction instead of leaking HTTP noise into the chat.
-fn friendly_llm_error(raw: &str) -> String {
-    let m = raw.to_lowercase();
-    if m.contains("image") && (m.contains("support") || m.contains("not allowed")) {
-        "This model can't accept images. Remove the image, or pick a vision-capable \
-         model in Settings, then try again."
-            .into()
-    } else if m.contains("not found") && m.contains("model") {
-        "That model wasn't found at the provider. Check the model name in Settings.".into()
-    } else {
-        raw.to_string()
-    }
 }
 
 /// Does this transport error mean "the model/endpoint can't do tool calls"

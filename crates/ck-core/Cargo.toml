@@ -16,9 +16,13 @@ path = "src/lib.rs"
 name = "ck-serve"
 path = "src/bin/ck_serve.rs"
 
-# Manual VAD smoke test — needs the heavy transcription stack to build.
+# Manual smoke tests — need the heavy transcription stack to build.
 [[example]]
 name = "vad_smoke"
+required-features = ["transcription"]
+
+[[example]]
+name = "decode_smoke"
 required-features = ["transcription"]
 
 [features]

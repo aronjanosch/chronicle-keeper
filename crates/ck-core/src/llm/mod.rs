@@ -43,6 +43,9 @@ pub static REGISTRY: &[Provider] = &[
         needs_key: false,
         default_api_base: Some("http://localhost:11434"),
         models: &[
+            "gemma4:e2b",
+            "gemma4:e4b",
+            "gemma4",
             "llama3.3",
             "llama3.2",
             "llama3.1",
@@ -56,7 +59,7 @@ pub static REGISTRY: &[Provider] = &[
             "deepseek-r1",
             "command-r",
         ],
-        default_model: "llama3.2",
+        default_model: "gemma4:e2b",
         transport: Transport::Ollama,
     },
     Provider {
@@ -846,6 +849,105 @@ pub async fn list_models(
         .unwrap_or_default();
     models.sort();
     Ok(models)
+}
+
+/// Turn a raw transport error into something the user can act on. Provider 400s
+/// are JSON blobs; the common ones (no image support, missing model) become a
+/// plain instruction instead of leaking HTTP noise into the chat.
+pub fn friendly_llm_error(raw: &str) -> String {
+    let m = raw.to_lowercase();
+    if m.contains("image") && (m.contains("support") || m.contains("not allowed")) {
+        "This model can't accept images. Remove the image, or pick a vision-capable \
+         model in Settings, then try again."
+            .into()
+    } else if m.contains("not found") && m.contains("model") {
+        // Ollama's 404 body looks like: {"error":"model 'llama3.2' not found"} —
+        // pull the quoted name out so the message can name the exact pull command.
+        let name = raw.split('\'').nth(1);
+        match name {
+            Some(name) => format!(
+                "Model \"{name}\" isn't pulled in Ollama yet. Pull it from Settings → \
+                 LLM providers, or run \"ollama pull {name}\" in a terminal."
+            ),
+            None => {
+                "That model wasn't found at the provider. Check the model name in Settings.".into()
+            }
+        }
+    } else {
+        raw.to_string()
+    }
+}
+
+/// Pull an Ollama model, reporting progress into `progress` (mirrors the
+/// transcription-model download so the frontend can reuse the same poll +
+/// progress-bar UI). Ollama streams NDJSON lines like
+/// `{"status":"pulling ...","total":123,"completed":45}`, ending with
+/// `{"status":"success"}`.
+pub async fn pull_model(
+    api_base: &str,
+    model: &str,
+    progress: &std::sync::Arc<std::sync::Mutex<crate::state::ModelProgress>>,
+) -> Result<(), LlmError> {
+    use crate::state::ModelProgress;
+
+    // No overall .timeout(): a large model pull can run for many minutes; only
+    // bound the initial connect so an unreachable daemon fails fast.
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| LlmError(e.to_string()))?;
+    let url = format!("{}/api/pull", api_base.trim_end_matches('/'));
+    let body = json!({ "model": model, "stream": true });
+    let resp = client
+        .post(url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| LlmError(e.to_string()))?;
+    let resp = error_for_status(resp).await?;
+
+    ModelProgress::set(progress, "pulling", 0, 0);
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut succeeded = false;
+    'outer: while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| LlmError(e.to_string()))?;
+        buf.extend_from_slice(&chunk);
+        while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = buf.drain(..=pos).collect();
+            let line = String::from_utf8_lossy(&line);
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            if let Some(err) = v.get("error").and_then(Value::as_str) {
+                let msg = err.to_string();
+                ModelProgress::set_error(progress, msg.clone());
+                return Err(LlmError(msg));
+            }
+            let status = v.get("status").and_then(Value::as_str).unwrap_or("");
+            let total = v.get("total").and_then(Value::as_u64).unwrap_or(0);
+            let completed = v.get("completed").and_then(Value::as_u64).unwrap_or(0);
+            if total > 0 {
+                ModelProgress::set(progress, "pulling", completed, total);
+            }
+            if status == "success" {
+                succeeded = true;
+                break 'outer;
+            }
+        }
+    }
+    if succeeded {
+        ModelProgress::set(progress, "ready", 0, 0);
+        Ok(())
+    } else {
+        let msg = "Ollama closed the connection before confirming the pull finished.".to_string();
+        ModelProgress::set_error(progress, msg.clone());
+        Err(LlmError(msg))
+    }
 }
 
 async fn error_for_status(resp: reqwest::Response) -> Result<reqwest::Response, LlmError> {

@@ -89,6 +89,10 @@ pub struct AppState {
     pub auth_token: Option<String>,
     /// Shared progress of the one-time model download (see [`ModelProgress`]).
     pub model_progress: Arc<Mutex<ModelProgress>>,
+    /// Progress of an in-flight Ollama model pull (separate instance from
+    /// `model_progress` so it can't collide with a concurrent transcription
+    /// download's phase). Polled via `GET /llm-providers/:id/pull-status`.
+    pub llm_pull_progress: Arc<Mutex<ModelProgress>>,
     /// Per-world `.ck/index.db` connections, keyed by vault path. First access
     /// opens + rebuilds; the cache lives for the process.
     pub indexes: Arc<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>>>>,
@@ -118,6 +122,7 @@ impl AppState {
             paths,
             auth_token: None,
             model_progress: Arc::new(Mutex::new(ModelProgress::default())),
+            llm_pull_progress: Arc::new(Mutex::new(ModelProgress::default())),
             indexes: Arc::new(Mutex::new(HashMap::new())),
             watchers: Arc::new(Mutex::new(HashMap::new())),
             vault_seqs: Arc::new(Mutex::new(HashMap::new())),

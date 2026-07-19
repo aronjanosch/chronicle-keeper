@@ -34,6 +34,7 @@ export const store = {
   providerStatus: null,   // { ok, reason } for the active summary provider (null = unknown)
   promptTemplates: null,  // user-managed summary prompt templates [{id, label, text, builtin}]
   updateInfo: null,       // { tag, version, url } when a newer GitHub release exists
+  onboarding: null,       // { provider, model, keeper, world } step states (null = unknown/dismissed)
 
   // tabs (Phase 15): open codex pages, per world. One tab per path; the
   // active tab is whichever path the 'page' route currently shows.

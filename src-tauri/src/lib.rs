@@ -52,8 +52,13 @@ pub fn run() {
         });
     });
 
-    let init_script =
-        format!("window.__CK_API_BASE__ = {base:?}; window.__CK_TOKEN__ = {token:?};");
+    // `cargo tauri dev` / `cargo run` are debug builds; the update check would
+    // otherwise always flag "update available" since a dev build's version is
+    // whatever's committed in tauri.conf.json, not the tag it's ahead of.
+    let init_script = format!(
+        "window.__CK_API_BASE__ = {base:?}; window.__CK_TOKEN__ = {token:?}; window.__CK_DEV__ = {};",
+        cfg!(debug_assertions)
+    );
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

@@ -1096,6 +1096,7 @@ function isNewerVersion(latest, current) {
 }
 
 export async function checkForUpdate() {
+  if (window.__CK_DEV__) return; // dev build's version is a placeholder, not the tag it's ahead of
   const tauri = window.__TAURI__;
   if (!tauri?.app?.getVersion) return; // needs the real bundle version
 

@@ -45,6 +45,10 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Changelog generation below needs full tag history; the default
+          # shallow (depth-1) clone only has the tagged commit itself.
+          fetch-depth: 0
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -85,6 +89,27 @@ jobs:
           rm -f src-tauri/Cargo.toml.bak
           echo "Set bundle version to $VER (tag $GITHUB_REF_NAME)"
 
+      # Plain commit-message changelog since the previous tag — enough for a
+      # solo-maintainer repo with direct commits to main, no PR log to mine.
+      - name: Generate changelog
+        if: startsWith(github.ref, 'refs/tags/')
+        id: changelog
+        shell: bash
+        run: |
+          PREV_TAG="$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)"
+          {
+            echo "body<<CHANGELOG_EOF"
+            if [ -n "$PREV_TAG" ]; then
+              echo "## Changes since $PREV_TAG"
+              git log "$PREV_TAG..$GITHUB_REF_NAME" --pretty=format:"- %s"
+            else
+              echo "## Changes"
+              git log "$GITHUB_REF_NAME" --pretty=format:"- %s"
+            fi
+            echo ""
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build app (tauri-action)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -94,6 +119,7 @@ jobs:
           # tagName is empty so tauri-action only builds (artifacts uploaded below).
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Chronicle Keeper {0}', github.ref_name) || '' }}
+          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && steps.changelog.outputs.body || '' }}
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}

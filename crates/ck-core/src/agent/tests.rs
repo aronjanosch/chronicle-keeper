@@ -513,6 +513,187 @@ async fn read_only_blocks_writes_accept_edits_skips_ask() {
 }
 
 #[tokio::test]
+async fn yolo_mode_never_asks_even_shell() {
+    if cfg!(windows) {
+        return;
+    }
+    let (state, root, cfg) = fixture_world("yolo");
+    let chat = chats::create_chat(&root).unwrap();
+    let llm = MockLlm::new(vec![
+        tool_turn(
+            "edit_page",
+            json!({ "path": "Thornhold.md", "old_str": "Baron Aldric", "new_str": "Baroness Mira" }),
+        ),
+        tool_turn("run_command", json!({ "command": "echo hi" })),
+        final_turn("done"),
+    ]);
+    let cancel = Arc::new(AtomicBool::new(false));
+    run_turn(
+        &TurnCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+            chat_id: &chat.id,
+            mode: Mode::Yolo,
+
+            focus: None,
+        },
+        "do everything",
+        &[],
+        &llm,
+        &ScriptGate::none(), // would panic if asked
+        &cancel,
+        |_| {},
+    )
+    .await
+    .unwrap();
+    let page = std::fs::read_to_string(root.join("Codex/Thornhold.md")).unwrap();
+    assert!(page.contains("Baroness Mira"));
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// Answers the first ask, and as a side effect of answering flips the chat's
+/// live mode to Yolo — standing in for the user switching the mode picker
+/// mid-run instead of just approving. Panics if asked a second time.
+struct SwitchToYoloOnFirstAsk<'a> {
+    state: &'a AppState,
+    chat_id: String,
+    asked: Mutex<Vec<String>>,
+}
+
+impl PermissionGate for SwitchToYoloOnFirstAsk<'_> {
+    async fn ask(&self, req: AskRequest) -> Decision {
+        let mut asked = self.asked.lock().unwrap();
+        assert!(asked.is_empty(), "asked more than once: {asked:?}");
+        asked.push(req.name.clone());
+        let modes = self.state.agent_modes.lock().unwrap();
+        modes
+            .get(&self.chat_id)
+            .expect("run_turn should have registered a live-mode cell by now")
+            .store(Mode::Yolo.to_u8(), Ordering::Relaxed);
+        Decision::AllowOnce
+    }
+}
+
+#[tokio::test]
+async fn mode_switch_mid_run_applies_to_next_gate_check() {
+    if cfg!(windows) {
+        return;
+    }
+    // Starts in Ask mode — the first write asks. Answering it flips the live
+    // mode to Yolo, so the shell call right after (a tier Ask never remembers
+    // via allow_chat) must NOT ask, even though the turn started on Ask.
+    let (state, root, cfg) = fixture_world("modeswitch");
+    let chat = chats::create_chat(&root).unwrap();
+    let llm = MockLlm::new(vec![
+        tool_turn(
+            "edit_page",
+            json!({ "path": "Thornhold.md", "old_str": "Baron Aldric", "new_str": "Baroness Mira" }),
+        ),
+        tool_turn("run_command", json!({ "command": "echo hi" })),
+        final_turn("done"),
+    ]);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let gate = SwitchToYoloOnFirstAsk {
+        state: &state,
+        chat_id: chat.id.clone(),
+        asked: Mutex::new(Vec::new()),
+    };
+    run_turn(
+        &TurnCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+            chat_id: &chat.id,
+            mode: Mode::Ask,
+
+            focus: None,
+        },
+        "do everything",
+        &[],
+        &llm,
+        &gate,
+        &cancel,
+        |_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(gate.asked.lock().unwrap().as_slice(), ["edit_page"]);
+    // The live-mode cell is deregistered once the turn ends.
+    assert!(!state.agent_modes.lock().unwrap().contains_key(&chat.id));
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn plan_mode_first_approval_clears_rest_of_turn_not_next() {
+    let (state, root, cfg) = fixture_world("plan");
+    let chat = chats::create_chat(&root).unwrap();
+    let edit = |old: &str, new: &str| {
+        tool_turn(
+            "edit_page",
+            json!({ "path": "Thornhold.md", "old_str": old, "new_str": new }),
+        )
+    };
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    // One turn, two edits: only the first is asked — approving it clears the
+    // rest of THIS turn's plan without a second prompt.
+    let llm = MockLlm::new(vec![
+        edit("fortified", "walled"),
+        edit("Ruled by", "Governed by"),
+        final_turn("done"),
+    ]);
+    let gate = ScriptGate::new(vec![Decision::AllowOnce]);
+    run_turn(
+        &TurnCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+            chat_id: &chat.id,
+            mode: Mode::Plan,
+
+            focus: None,
+        },
+        "carry out the plan",
+        &[],
+        &llm,
+        &gate,
+        &cancel,
+        |_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(gate.asked.lock().unwrap().as_slice(), ["edit_page"]);
+    let page = std::fs::read_to_string(root.join("Codex/Thornhold.md")).unwrap();
+    assert!(page.contains("walled") && page.contains("Governed by"));
+
+    // A plain allow_once (not allow_chat) doesn't leak into the next turn.
+    let llm = MockLlm::new(vec![edit("walled", "open"), final_turn("done")]);
+    let gate2 = ScriptGate::new(vec![Decision::Deny]);
+    run_turn(
+        &TurnCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+            chat_id: &chat.id,
+            mode: Mode::Plan,
+
+            focus: None,
+        },
+        "next turn",
+        &[],
+        &llm,
+        &gate2,
+        &cancel,
+        |_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(gate2.asked.lock().unwrap().len(), 1);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
 async fn invalid_write_call_errors_without_asking() {
     let (state, root, cfg) = fixture_world("badedit");
     let chat = chats::create_chat(&root).unwrap();

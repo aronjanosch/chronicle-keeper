@@ -103,12 +103,19 @@ pub struct AppState {
     pub vault_seqs: Arc<Mutex<HashMap<PathBuf, Arc<AtomicU64>>>>,
     /// Echo guard: CK's own vault writes, so the watcher skips them.
     pub suppress: crate::index_watch::SuppressMap,
-    /// One active Keeper run per world: campaign id → cancel flag. Insert =
-    /// run start (second insert → 409), flag set = abort requested.
+    /// One active Keeper run per slot: chat id → cancel flag for chat turns/
+    /// compact (so separate chats in the same world run concurrently), or
+    /// campaign id → cancel flag for the world-level Brief. Insert = run
+    /// start (second insert on the same key → 409), flag set = abort requested.
     pub agent_runs: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
-    /// Parked permission asks: request id → (campaign id, decision sender).
+    /// Parked permission asks: request id → (chat id, decision sender).
     /// Resolved by `/approve`; drained (= denied) on abort.
     pub agent_asks: AgentAsks,
+    /// Live mode of an in-flight chat turn: chat id → current mode (as
+    /// `Mode::to_u8`), registered by `run_turn` for its duration. `POST
+    /// .../mode` flips it mid-run so the very next gate check picks up e.g. a
+    /// switch into Yolo instead of waiting for the turn to finish.
+    pub agent_modes: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicU8>>>>,
 }
 
 pub type AgentAsks =
@@ -129,6 +136,7 @@ impl AppState {
             suppress: Arc::new(Mutex::new(HashMap::new())),
             agent_runs: Arc::new(Mutex::new(HashMap::new())),
             agent_asks: Arc::new(Mutex::new(HashMap::new())),
+            agent_modes: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 

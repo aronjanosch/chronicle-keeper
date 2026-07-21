@@ -160,6 +160,10 @@ pub fn router(state: AppState) -> Router {
             "/campaigns/:id/agent/chats/:cid/compact",
             post(agent::compact_chat),
         )
+        .route(
+            "/campaigns/:id/agent/chats/:cid/mode",
+            post(agent::set_mode),
+        )
         .route("/campaigns/:id/agent/chats/:cid/abort", post(agent::abort))
         .route(
             "/campaigns/:id/agent/chats/:cid/approve",

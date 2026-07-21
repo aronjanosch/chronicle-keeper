@@ -9,17 +9,20 @@ import { Icon, Spinner, renderBlockHtml, wikilinkClick, openContextMenu } from '
 import { loadLlmProviders, fetchLlmModels, loadVaultTree, loadSkills, copyText } from './actions.js';
 
 // store.keeper = { open, chatId, campaignId, events[], attachments[], error, mode }
-// store.keeperRun = { chatId, campaignId, live: {text, tools[], ask} }|null — the
-// one in-flight turn for the world (backend allows a single run per campaign).
-// Kept separate from store.keeper so switching which chat is displayed never
-// interrupts or corrupts a streaming run: keeperState() overlays run.live onto
-// whichever chat is displayed only when run.chatId matches it, so a backgrounded
-// run keeps streaming untouched and reappears mid-token when its chat reopens.
+// store.keeperRuns = { [chatId]: { chatId, campaignId, live: {text, tools[], ask} } } —
+// every in-flight turn, one per chat (the backend allows one concurrent run
+// per chat, not per world). Kept separate from store.keeper so switching which
+// chat is displayed never interrupts or corrupts a streaming run: keeperState()
+// overlays runs[chatId].live onto whichever chat is displayed, so a
+// backgrounded run in another chat keeps streaming untouched and reappears
+// mid-token when its chat reopens.
 
 export const MODES = [
   { id: 'read_only', label: 'Read-only' },
   { id: 'ask', label: 'Ask' },
+  { id: 'plan', label: 'Plan' },
   { id: 'accept_edits', label: 'Accept edits' },
+  { id: 'yolo', label: 'Yolo' },
 ];
 
 const MAX_FILE_BYTES = 256 * 1024;
@@ -72,21 +75,29 @@ export function keeperState() {
   const withMode = base.mode ? base : { ...base, mode: localStorage.getItem('ck_keeper_mode') || 'ask' };
   // Always recomputed — never trust a stray `live` baked into store.keeper by a
   // previous patchKeeper spread (see patchKeeper below).
-  const run = store.keeperRun;
-  return { ...withMode, live: run && run.chatId === withMode.chatId ? run.live : null };
+  const run = store.keeperRuns?.[withMode.chatId];
+  return { ...withMode, live: run ? run.live : null };
 }
 
 export function patchKeeper(patch) {
   setState({ keeper: { ...keeperState(), ...patch } });
 }
 
-// Mutates the single background/foreground run in place. No-op if the run
-// already ended or was replaced (chatId mismatch) — a stale onEvent closure
-// firing after its stream's owner is gone.
+// Mutates one chat's run in place. No-op if that run already ended or was
+// replaced — a stale onEvent closure firing after its stream's owner is gone.
 function patchRun(chatId, patch) {
-  const cur = store.keeperRun;
-  if (!cur || cur.chatId !== chatId) return;
-  setState({ keeperRun: { ...cur, ...patch } });
+  const runs = store.keeperRuns || {};
+  const cur = runs[chatId];
+  if (!cur) return;
+  setState({ keeperRuns: { ...runs, [chatId]: { ...cur, ...patch } } });
+}
+
+function clearRun(chatId) {
+  const runs = store.keeperRuns || {};
+  if (!(chatId in runs)) return;
+  const next = { ...runs };
+  delete next[chatId];
+  setState({ keeperRuns: next });
 }
 
 // Providers usable right now: keyless (Ollama) or with a saved key.
@@ -213,12 +224,6 @@ export async function sendMessage(text, images = []) {
   const cid = store.campaign?.campaign_id;
   let k = keeperState();
   if (!cid || k.live) return;
-  // Backend allows one run per world — starting a second while another chat
-  // in this world is mid-turn would just 409. Catch it here with a clearer message.
-  if (store.keeperRun && store.keeperRun.campaignId === cid) {
-    setOp('The Keeper is already working in another chat.', 'err');
-    return;
-  }
   // No chat yet (rail opened, openPanel still in flight, or a fresh world):
   // create one so the message lands instead of vanishing.
   if (!k.chatId) {
@@ -231,7 +236,7 @@ export async function sendMessage(text, images = []) {
   const isFocused = () => keeperState().chatId === chatId;
   const events = [...k.events, { type: 'user', text, images }];
   patchKeeper({ events, error: null });
-  setState({ keeperRun: { chatId, campaignId: cid, live: { text: '', tools: [] } } });
+  setState({ keeperRuns: { ...store.keeperRuns, [chatId]: { chatId, campaignId: cid, live: { text: '', tools: [] } } } });
   let toolsRan = false;
   try {
     const body = { text, mode: k.mode };
@@ -242,8 +247,8 @@ export async function sendMessage(text, images = []) {
     const focusPath = store.route?.name === 'page' ? store.route?.params?.path : null;
     if (focusPath) body.focus = { path: focusPath, tabs: store.tabs || [] };
     await apiStream(`/campaigns/${cid}/agent/chats/${chatId}/messages`, body, (ev) => {
-      const run = store.keeperRun;
-      if (!run || run.chatId !== chatId) return; // aborted/replaced elsewhere
+      const run = store.keeperRuns?.[chatId];
+      if (!run) return; // aborted/replaced elsewhere
       const live = run.live || { text: '', tools: [] };
       if (ev.type === 'text_delta') {
         patchRun(chatId, { live: { ...live, text: live.text + ev.text } });
@@ -283,25 +288,24 @@ export async function sendMessage(text, images = []) {
     const { events: fresh, undoable } = await apiFetch(`/campaigns/${cid}/agent/chats/${chatId}`);
     if (isFocused()) patchKeeper({ events: fresh, undoable: undoable || 0 });
   } catch (_) {}
-  if (store.keeperRun?.chatId === chatId) setState({ keeperRun: null });
+  clearRun(chatId);
   bump('keeper'); // chat list title/count, brief staleness, memories
   if (toolsRan) { loadVaultTree(cid); bump('vault'); } // tools may have touched pages
 }
 
 // /compact: summarize the chat into a boundary so the context resets. The full
 // log stays on disk; the transcript reloads showing a compacted divider. Runs
-// through the same one-run-per-world slot as a turn, surfaced inline (not a
-// toast) via a `compacting` live state.
+// through the same per-chat run slot as a turn, surfaced inline (not a toast)
+// via a `compacting` live state.
 export async function compactChat() {
   const cid = store.campaign?.campaign_id;
   const k = keeperState();
   if (!cid || !k.chatId || k.live) return;
-  if (store.keeperRun && store.keeperRun.campaignId === cid) return; // busy elsewhere
   if (!k.events.some((e) => e.type === 'assistant')) { patchKeeper({ error: 'Nothing to compact yet.' }); return; }
   const chatId = k.chatId;
   const isFocused = () => keeperState().chatId === chatId;
   patchKeeper({ error: null });
-  setState({ keeperRun: { chatId, campaignId: cid, live: { compacting: true, text: '', tools: [] } } });
+  setState({ keeperRuns: { ...store.keeperRuns, [chatId]: { chatId, campaignId: cid, live: { compacting: true, text: '', tools: [] } } } });
   try {
     const body = {};
     if (k.provider) body.provider = k.provider;
@@ -311,23 +315,30 @@ export async function compactChat() {
   } catch (e) {
     if (isFocused()) patchKeeper({ error: String(e.message || e) });
   }
-  if (store.keeperRun?.chatId === chatId) setState({ keeperRun: null });
+  clearRun(chatId);
   bump('keeper');
 }
 
-// Aborts whatever run is active for the world — the backend keys the run slot
-// by campaign, not chat, so this stops a backgrounded run too (e.g. from the
-// chat-list's running indicator, without switching to it first).
-export async function abortRun() {
+// Aborts the run for a specific chat (defaults to the one displayed) — each
+// chat now has its own run slot, so this only stops that chat, not the world.
+export async function abortRun(chatId) {
   const cid = store.campaign?.campaign_id;
-  const chatId = store.keeperRun?.chatId || keeperState().chatId;
-  if (!cid || !chatId) return;
-  try { await apiJson(`/campaigns/${cid}/agent/chats/${chatId}/abort`, 'POST', {}); } catch (_) {}
+  const id = chatId || keeperState().chatId;
+  if (!cid || !id) return;
+  try { await apiJson(`/campaigns/${cid}/agent/chats/${id}/abort`, 'POST', {}); } catch (_) {}
 }
 
+// If this chat is mid-turn, also flip its live run so the very next gate
+// check picks up the switch (e.g. into Yolo) instead of waiting for the
+// turn to finish — otherwise this only takes effect on the next message.
 export function setMode(mode) {
   localStorage.setItem('ck_keeper_mode', mode);
   patchKeeper({ mode });
+  const cid = store.campaign?.campaign_id;
+  const k = keeperState();
+  if (cid && k.chatId && k.live) {
+    apiJson(`/campaigns/${cid}/agent/chats/${k.chatId}/mode`, 'POST', { mode }).catch(() => {});
+  }
 }
 
 async function decide(requestId, decision) {
@@ -1036,7 +1047,7 @@ export function Composer({ busy, compacting }) {
             <button class="btn btn-ghost" title="Dictate" disabled=${busy} onClick=${dictation.start}
               style=${{ padding: '6px 7px' }}><${Icon} name="mic" size=${14} /></button>
             ${busy
-              ? html`<button class="btn" onClick=${abortRun} title="Stop the Keeper" style=${{ padding: '6px 7px', marginLeft: 'auto' }}><${Icon} name="x" size=${14} /></button>`
+              ? html`<button class="btn" onClick=${() => abortRun()} title="Stop the Keeper" style=${{ padding: '6px 7px', marginLeft: 'auto' }}><${Icon} name="x" size=${14} /></button>`
               : html`<button class="btn btn-primary" onClick=${send} title="Send (Enter)" disabled=${!text.trim() && !images.length}
                   style=${{ padding: '6px 8px', marginLeft: 'auto' }}><${Icon} name="arrow-r" size=${14} /></button>`}
           </div>`}

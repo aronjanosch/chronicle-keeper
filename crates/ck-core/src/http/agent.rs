@@ -66,11 +66,11 @@ pub async fn delete_chat(
 
 pub async fn abort(
     State(state): State<AppState>,
-    Path((campaign_id, _chat_id)): Path<(String, String)>,
+    Path((_campaign_id, chat_id)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
     let aborted = {
         let runs = state.agent_runs.lock().unwrap_or_else(|e| e.into_inner());
-        match runs.get(&campaign_id) {
+        match runs.get(&chat_id) {
             Some(flag) => {
                 flag.store(true, Ordering::Relaxed);
                 true
@@ -81,7 +81,7 @@ pub async fn abort(
     // A run parked on a permission ask only sees the flag once the ask
     // resolves — dropping the sender resolves it as a deny.
     let mut asks = state.agent_asks.lock().unwrap_or_else(|e| e.into_inner());
-    asks.retain(|_, (cid, _)| cid != &campaign_id);
+    asks.retain(|_, (cid, _)| cid != &chat_id);
     Ok(Json(json!({ "aborted": aborted })))
 }
 
@@ -125,7 +125,7 @@ pub async fn undo(
 ) -> AppResult<Json<Value>> {
     {
         let runs = state.agent_runs.lock().unwrap_or_else(|e| e.into_inner());
-        if runs.contains_key(&campaign_id) {
+        if runs.contains_key(&chat_id) {
             return Err(AppError::Conflict(
                 "The Keeper is working — stop it before undoing.".into(),
             ));
@@ -320,8 +320,8 @@ pub struct CompactRequest {
 }
 
 /// Summarize the chat into a compact boundary, then return the reloaded events.
-/// Runs a single blocking LLM call under the per-world run slot so it can't race
-/// a live turn.
+/// Runs a single blocking LLM call under this chat's run slot so it can't race
+/// a live turn on the same chat.
 pub async fn compact_chat(
     State(state): State<AppState>,
     Path((campaign_id, chat_id)): Path<(String, String)>,
@@ -339,9 +339,9 @@ pub async fn compact_chat(
             req.base_url.as_deref(),
         )
     })?;
-    let _cancel = claim_run(&state, &campaign_id)?;
+    let _cancel = claim_run(&state, &chat_id)?;
     let result = agent::compact::run_compact(&root, &chat_id, &resolved).await;
-    release_run(&state, &campaign_id);
+    release_run(&state, &chat_id);
     let summary = result?;
     Ok(Json(json!({
         "summary": summary,
@@ -363,11 +363,39 @@ pub struct MessageRequest {
     pub focus: Option<agent::attachments::Focus>,
 }
 
+#[derive(Deserialize)]
+pub struct ModeRequest {
+    pub mode: String,
+}
+
+/// Flip the mode of this chat's in-flight turn (e.g. switching into Yolo
+/// mid-run) so its very next gate check picks it up. `ok:false` when the chat
+/// isn't currently running — nothing to flip; the frontend's own mode picker
+/// still applies to its next message either way.
+pub async fn set_mode(
+    State(state): State<AppState>,
+    Path((_campaign_id, chat_id)): Path<(String, String)>,
+    Json(req): Json<ModeRequest>,
+) -> AppResult<Json<Value>> {
+    let modes = state.agent_modes.lock().unwrap_or_else(|e| e.into_inner());
+    let applied = match modes.get(&chat_id) {
+        Some(cell) => {
+            cell.store(
+                agent::Mode::parse(Some(&req.mode)).to_u8(),
+                Ordering::Relaxed,
+            );
+            true
+        }
+        None => false,
+    };
+    Ok(Json(json!({ "ok": applied })))
+}
+
 /// Production gate: emit a `permission_request` SSE frame, park on a oneshot
 /// until `/approve` resolves it (or abort drains it → deny).
 struct SseGate {
     state: AppState,
-    campaign_id: String,
+    chat_id: String,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
 }
 
@@ -380,7 +408,7 @@ impl PermissionGate for SseGate {
                 .agent_asks
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            asks.insert(req.id.clone(), (self.campaign_id.clone(), tx));
+            asks.insert(req.id.clone(), (self.chat_id.clone(), tx));
         }
         let frame = json!({
             "type": "permission_request",
@@ -397,22 +425,25 @@ impl PermissionGate for SseGate {
     }
 }
 
-/// Claim the per-world run slot. Err(Conflict) while another run is active.
-fn claim_run(state: &AppState, campaign_id: &str) -> AppResult<Arc<AtomicBool>> {
+/// Claim a run slot. Keyed by chat id for chat turns/compact (so separate
+/// chats in the same world run concurrently) and by campaign id for the
+/// world-level Brief (which has no chat of its own). Err(Conflict) while
+/// another run already holds that key.
+fn claim_run(state: &AppState, key: &str) -> AppResult<Arc<AtomicBool>> {
     let mut runs = state.agent_runs.lock().unwrap_or_else(|e| e.into_inner());
-    if runs.contains_key(campaign_id) {
+    if runs.contains_key(key) {
         return Err(AppError::Conflict(
-            "The Keeper is already working on this world — wait or abort first.".into(),
+            "The Keeper is already working here — wait or abort first.".into(),
         ));
     }
     let flag = Arc::new(AtomicBool::new(false));
-    runs.insert(campaign_id.to_string(), flag.clone());
+    runs.insert(key.to_string(), flag.clone());
     Ok(flag)
 }
 
-fn release_run(state: &AppState, campaign_id: &str) {
+fn release_run(state: &AppState, key: &str) {
     let mut runs = state.agent_runs.lock().unwrap_or_else(|e| e.into_inner());
-    runs.remove(campaign_id);
+    runs.remove(key);
 }
 
 pub async fn send_message(
@@ -446,7 +477,7 @@ pub async fn send_message(
         let _ = state
             .with_db(|conn| crate::llm::set_last_model(conn, &resolved.provider, &resolved.model));
     }
-    let cancel = claim_run(&state, &campaign_id)?;
+    let cancel = claim_run(&state, &chat_id)?;
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let st = state.clone();
@@ -460,7 +491,7 @@ pub async fn send_message(
         let llm = RealLlm { resolved };
         let gate = SseGate {
             state: st.clone(),
-            campaign_id: campaign_id.clone(),
+            chat_id: chat_id.clone(),
             tx: tx.clone(),
         };
         let turn_ctx = agent::TurnCtx {
@@ -490,7 +521,7 @@ pub async fn send_message(
             },
         )
         .await;
-        release_run(&st, &campaign_id);
+        release_run(&st, &chat_id);
         match result {
             Ok(()) => send(json!({ "type": "turn_done" })),
             Err(e) => send(json!({ "type": "error", "message": e.to_string() })),

@@ -589,7 +589,7 @@ function PageRail({ page, path, pages, links, relations, schemas, atlasMaps, cam
       <${RailTab} icon="book" label="Info" active=${railTab === 'info'} onClick=${() => setRailTab('info')} />
       <${RailTab} icon="link" label="Links" active=${railTab === 'links'} onClick=${() => setRailTab('links')} />
       <${RailTab} icon="feather" label="Chat" active=${railTab === 'chat'}
-        running=${railTab !== 'chat' && globalStore.keeperRun?.campaignId === campaignId}
+        running=${railTab !== 'chat' && Object.values(globalStore.keeperRuns || {}).some((r) => r.campaignId === campaignId)}
         onClick=${() => setRailTab('chat')} />
     </div>
     ${railTab === 'info'

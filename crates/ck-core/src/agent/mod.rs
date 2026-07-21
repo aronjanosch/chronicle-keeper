@@ -14,7 +14,7 @@ pub mod skills;
 pub mod tools;
 pub mod web;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -53,14 +53,44 @@ pub enum TurnEvent {
 pub enum Mode {
     ReadOnly,
     Ask,
+    /// Ask mode, but the first approval of a turn clears the rest of that
+    /// turn's write/structural calls too — draft the plan, one go-ahead runs it.
+    Plan,
     AcceptEdits,
+    /// Nothing asks, ever — including shell/foundry/web, which every other
+    /// mode always gates (remote/no-undo).
+    Yolo,
 }
 
 impl Mode {
     pub fn parse(s: Option<&str>) -> Mode {
         match s.unwrap_or("ask") {
             "read_only" => Mode::ReadOnly,
+            "plan" => Mode::Plan,
             "accept_edits" => Mode::AcceptEdits,
+            "yolo" => Mode::Yolo,
+            _ => Mode::Ask,
+        }
+    }
+
+    /// For the live mode cell (an `AtomicU8` mid-run can't hold an enum
+    /// directly). See [`AppState::agent_modes`].
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Mode::ReadOnly => 0,
+            Mode::Ask => 1,
+            Mode::Plan => 2,
+            Mode::AcceptEdits => 3,
+            Mode::Yolo => 4,
+        }
+    }
+
+    pub fn from_u8(v: u8) -> Mode {
+        match v {
+            0 => Mode::ReadOnly,
+            2 => Mode::Plan,
+            3 => Mode::AcceptEdits,
+            4 => Mode::Yolo,
             _ => Mode::Ask,
         }
     }
@@ -193,6 +223,14 @@ pub fn system_prompt(
              - You can reorganise the Codex (rename_page, move_page, delete_page, create_folder) \
              and run shell commands in the world folder (run_command) for grep/sed-style work. \
              These always ask first — propose them, don't assume approval.\n",
+        );
+    }
+    if mode == Mode::Plan {
+        s.push_str(
+            "- Plan mode: before touching any page, lay out your plan in words first — what \
+             you'll create/edit/reorganise and why. Then make your first gated tool call; \
+             approving it clears the rest of this turn's write/structural calls so you can \
+             carry out the plan without asking again.\n",
         );
     }
     s
@@ -391,6 +429,35 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
     };
     let mut error_rounds = 0usize;
 
+    // Registered so `POST .../mode` mid-run can flip it and have the very next
+    // gate check see it (e.g. switching into Yolo to stop being asked), rather
+    // than waiting for this turn to finish. The tool registry above is still
+    // fixed to the mode this turn started on — a model already mid-generation
+    // can't be handed newly-available tools anyway.
+    let live_mode = Arc::new(AtomicU8::new(mode.to_u8()));
+    {
+        let mut modes = state.agent_modes.lock().unwrap_or_else(|e| e.into_inner());
+        modes.insert(chat_id.to_string(), live_mode.clone());
+    }
+    struct ModeGuard<'a> {
+        state: &'a AppState,
+        chat_id: String,
+    }
+    impl Drop for ModeGuard<'_> {
+        fn drop(&mut self) {
+            let mut modes = self
+                .state
+                .agent_modes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            modes.remove(&self.chat_id);
+        }
+    }
+    let _mode_guard = ModeGuard {
+        state,
+        chat_id: chat_id.to_string(),
+    };
+
     for iteration in 0..MAX_ITERATIONS {
         if cancel.load(Ordering::Relaxed) {
             chats::append(world_root, chat_id, &chats::aborted_event())?;
@@ -438,6 +505,10 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
                 chats::append(world_root, chat_id, &chats::aborted_event())?;
                 return Ok(());
             }
+            // Re-read fresh for every call, not the mode this turn started on —
+            // a mid-run switch (e.g. into Yolo) must apply to the very next
+            // gate check, not wait for the next message.
+            let mode = Mode::from_u8(live_mode.load(Ordering::Relaxed));
 
             // Gate write/structural/shell calls: preview the action, ask if
             // the mode + tier say so, checkpoint before dispatch.
@@ -453,18 +524,24 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
                     match tools::gate_preview(&ctx, &call.name, &call.arguments) {
                         Err(msg) => refusal = Some(msg),
                         Ok(d) => {
-                            // Write auto-applies in accept-edits; structural
-                            // always asks; shell always asks and never honours
-                            // a remembered allow.
-                            let should_ask = match tier {
-                                tools::Tier::Write => mode == Mode::Ask && !chat_allows_write,
-                                tools::Tier::Structural => !chat_allows_write,
-                                // Always ask; remote, no undo — never remembered.
-                                tools::Tier::Shell | tools::Tier::Foundry | tools::Tier::Web => {
-                                    true
-                                }
-                                tools::Tier::Read | tools::Tier::Memory => false,
-                            };
+                            // Yolo never asks, full stop — even shell/foundry/web,
+                            // which every other mode always gates. Otherwise: write
+                            // auto-applies in accept-edits; plan asks like ask (see
+                            // below for the one-approval-clears-the-turn twist);
+                            // structural always asks; shell always asks and never
+                            // honours a remembered allow.
+                            let should_ask = mode != Mode::Yolo
+                                && match tier {
+                                    tools::Tier::Write => {
+                                        matches!(mode, Mode::Ask | Mode::Plan) && !chat_allows_write
+                                    }
+                                    tools::Tier::Structural => !chat_allows_write,
+                                    // Always ask; remote, no undo — never remembered.
+                                    tools::Tier::Shell
+                                    | tools::Tier::Foundry
+                                    | tools::Tier::Web => true,
+                                    tools::Tier::Read | tools::Tier::Memory => false,
+                                };
                             if should_ask {
                                 let req_id = uuid::Uuid::new_v4().to_string();
                                 let decision = gate
@@ -483,6 +560,19 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
                                 match decision {
                                     Decision::Deny => {
                                         refusal = Some("The user denied this action.".into())
+                                    }
+                                    // Plan mode: any approval (not just "allow for
+                                    // this chat") clears the rest of the plan for
+                                    // this turn — the local var resets next turn
+                                    // unless the user actually chose allow_chat.
+                                    Decision::AllowChat | Decision::AllowOnce
+                                        if mode == Mode::Plan
+                                            && matches!(
+                                                tier,
+                                                tools::Tier::Write | tools::Tier::Structural
+                                            ) =>
+                                    {
+                                        chat_allows_write = true
                                     }
                                     Decision::AllowChat
                                         if matches!(

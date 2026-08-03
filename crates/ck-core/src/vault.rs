@@ -884,13 +884,87 @@ pub fn count_pages(vault: &Path) -> usize {
 }
 
 pub fn page_exists(vault: &Path, title: &str) -> bool {
-    let want = crate::store::index::normalize_name(title.trim());
+    find_page(vault, title).is_some()
+}
+
+/// Vault-relative path of the page called `name`, wherever it lives. An exact
+/// path wins; otherwise the filename matches in any folder. `name` may arrive
+/// folder-prefixed or with `.md` — LLMs routinely hand back a page's path where
+/// a title belongs, and a title must never mint a second copy of a page.
+pub fn find_page(vault: &Path, name: &str) -> Option<String> {
+    let (_, stem) = split_page_title(name);
+    let want = crate::store::index::normalize_name(&stem);
+    if want.is_empty() {
+        return None;
+    }
     let mut files = Vec::new();
     collect_md(vault, &mut files);
-    files
+    let matches: Vec<&PathBuf> = files
         .iter()
-        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()))
-        .any(|s| crate::store::index::normalize_name(s) == want)
+        .filter(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| crate::store::index::normalize_name(s) == want)
+        })
+        .collect();
+    if matches.len() > 1 {
+        // Same filename in several folders: the caller's folder prefix decides.
+        let asked =
+            crate::store::index::normalize_name(&split_page_title(name).0.unwrap_or_default());
+        if let Some(hit) = matches.iter().find(|p| {
+            let rel = rel_of(vault, p);
+            let folder = rel.rsplit_once('/').map(|(f, _)| f).unwrap_or_default();
+            !asked.is_empty() && crate::store::index::normalize_name(folder) == asked
+        }) {
+            return Some(rel_of(vault, hit));
+        }
+    }
+    matches.first().map(|p| rel_of(vault, p))
+}
+
+/// Split a page reference into (folder, name): `"NPCs/Ulric.md"` → `("NPCs", "Ulric")`.
+pub(crate) fn split_page_title(raw: &str) -> (Option<String>, String) {
+    let cleaned = raw.trim().trim_matches('/');
+    let cleaned = cleaned.strip_suffix(".md").unwrap_or(cleaned).trim();
+    match cleaned.rsplit_once('/') {
+        Some((folder, name)) => {
+            let folder = folder.trim();
+            let folder = (!folder.is_empty()).then(|| folder.to_string());
+            (folder, name.trim().to_string())
+        }
+        None => (None, cleaned.to_string()),
+    }
+}
+
+/// Where a new page of `kind` belongs. Folder naming is per-vault ("NPCs",
+/// "01-Orte", "Cast"), so prefer the folder that kind's pages already use, then
+/// a folder whose *name* reads as that kind, then the vault root (`None`).
+pub fn folder_for_kind(vault: &Path, kind: &str) -> Option<String> {
+    folder_for_kind_in(&list_pages(vault).unwrap_or_default(), vault, kind)
+}
+
+/// `folder_for_kind` against an already-listed vault (listing reads every page).
+pub fn folder_for_kind_in(pages: &[PageInfo], vault: &Path, kind: &str) -> Option<String> {
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for p in pages {
+        if p.kind.as_deref() != Some(kind) {
+            continue;
+        }
+        if let Some((folder, _)) = p.path.rsplit_once('/') {
+            *counts.entry(folder.to_string()).or_default() += 1;
+        }
+    }
+    let mut ranked: Vec<(String, usize)> = counts.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    if let Some((folder, _)) = ranked.first() {
+        return Some(folder.clone());
+    }
+    let mut folders = list_folders(vault).unwrap_or_default();
+    folders.sort_by_key(|f| (f.matches('/').count(), f.clone()));
+    folders.into_iter().find(|f| {
+        let leaf = f.rsplit('/').next().unwrap_or(f);
+        crate::folder_kinds::kind_for_folder(leaf) == Some(kind)
+    })
 }
 
 // Filesystem-safe filename; spaces kept (Obsidian-style), separators stripped.
@@ -1205,8 +1279,14 @@ pub fn write_migrated_entry(
     summary: &str,
     body: &str,
 ) -> std::io::Result<()> {
-    let path = unique_md_path(vault, &safe_page_filename(name));
-    std::fs::write(path, page_file_content(name, kind, summary, body))
+    let (_, name) = split_page_title(name);
+    let dir = match folder_for_kind(vault, kind) {
+        Some(f) => vault.join(f.trim_matches('/')),
+        None => vault.to_path_buf(),
+    };
+    std::fs::create_dir_all(&dir)?;
+    let path = unique_md_path(&dir, &safe_page_filename(&name));
+    std::fs::write(path, page_file_content(&name, kind, summary, body))
 }
 
 // ── Assets (pasted/dropped editor media) ──────────────────────────
@@ -1357,6 +1437,50 @@ mod tests {
         .unwrap();
         let p = page_from(&dir, &abs, std::fs::read_to_string(&abs).unwrap());
         assert_eq!(p.summary, "");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn find_page_ignores_folder_prefix_and_disambiguates() {
+        let dir = std::env::temp_dir().join(format!("ck-vault-find-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("NPCs")).unwrap();
+        std::fs::create_dir_all(dir.join("Places")).unwrap();
+        std::fs::write(dir.join("NPCs/Ulric.md"), "---\nkind: npc\n---\n").unwrap();
+        std::fs::write(dir.join("Places/Harbor.md"), "---\nkind: place\n---\n").unwrap();
+        std::fs::write(dir.join("NPCs/Harbor.md"), "---\nkind: npc\n---\n").unwrap();
+
+        assert_eq!(find_page(&dir, "Ulric").as_deref(), Some("NPCs/Ulric.md"));
+        assert_eq!(
+            find_page(&dir, "NPCs/Ulric").as_deref(),
+            Some("NPCs/Ulric.md")
+        );
+        assert_eq!(
+            find_page(&dir, "  npcs/ulric.md ").as_deref(),
+            Some("NPCs/Ulric.md")
+        );
+        assert_eq!(
+            find_page(&dir, "Places/Harbor").as_deref(),
+            Some("Places/Harbor.md")
+        );
+        assert!(find_page(&dir, "Nobody").is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn folder_for_kind_prefers_where_the_kind_lives() {
+        let dir = std::env::temp_dir().join(format!("ck-vault-fk-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("Cast")).unwrap();
+        std::fs::create_dir_all(dir.join("01-Orte")).unwrap();
+        std::fs::write(dir.join("Cast/Ulric.md"), "---\nkind: npc\n---\n").unwrap();
+        std::fs::write(dir.join("Cast/Mira.md"), "---\nkind: npc\n---\n").unwrap();
+        std::fs::write(dir.join("Stray.md"), "---\nkind: npc\n---\n").unwrap();
+
+        assert_eq!(folder_for_kind(&dir, "npc").as_deref(), Some("Cast"));
+        // No page of that kind yet: fall back to a folder that reads as it.
+        assert_eq!(folder_for_kind(&dir, "place").as_deref(), Some("01-Orte"));
+        assert_eq!(folder_for_kind(&dir, "item"), None);
         std::fs::remove_dir_all(&dir).ok();
     }
 

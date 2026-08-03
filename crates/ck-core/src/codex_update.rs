@@ -247,6 +247,12 @@ pub async fn generate_streamed<F: FnMut(UpdateProgress) + Send>(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Codex update request failed: {}", e.0)))?;
     let (mut proposals, entity_hints) = parse_candidates(&raw, &pages);
+    // Settle each new page's folder now so the review UI shows where it lands.
+    for p in proposals.iter_mut().filter(|p| p.page.is_none()) {
+        if p.folder.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            p.folder = vault::folder_for_kind_in(&pages, &vault_root, &p.kind);
+        }
+    }
 
     if proposals.is_empty() {
         let run = ProposalRun {
@@ -392,8 +398,10 @@ Return ONLY a JSON object:\n\
 }}]}}\n\n\
 Rules:\n\
 - Only propose changes the summary clearly supports. Do not invent.\n\
+- `title` is a page NAME only — never a path, never a folder prefix (\"Ulric\", not \"NPCs/Ulric\").\n\
 - Existing pages: use the EXACT title from the page list; set is_new=false.\n\
 - New pages only for entities that matter beyond this session; set is_new=true and pick a folder.\n\
+- Never propose a new page for a name already in the page list, whatever folder it sits in.\n\
 - `summary_new` is the one-liner the summarizer memorizes (max ~25 words). Only when the old one is outdated.\n\
 - `body_append` records session events; prefix with \"{session_label} — \". Don't repeat what the page tails below already say.\n\
 - `rels` only for clear new relationships, using these list fields per kind (omit otherwise):\n{rel_lines}\
@@ -435,6 +443,15 @@ fn parse_candidates(
         .iter()
         .map(|p| (crate::store::index::normalize_name(&p.title), p))
         .collect();
+    // Models echo the page list's `path:` into `title` — match those too, and
+    // exactly, so two same-named pages in different folders stay distinct.
+    let by_path: HashMap<String, &vault::PageInfo> = pages
+        .iter()
+        .map(|p| {
+            let rel = p.path.strip_suffix(".md").unwrap_or(&p.path);
+            (crate::store::index::normalize_name(rel), p)
+        })
+        .collect();
 
     let mut out = Vec::new();
     let mut hints: HashMap<String, Vec<String>> = HashMap::new();
@@ -447,12 +464,22 @@ fn parse_candidates(
                 .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("null"))
                 .map(str::to_string)
         };
-        let Some(title) = s("title") else { continue };
+        let Some(raw_title) = s("title") else {
+            continue;
+        };
+        let (title_folder, title) = vault::split_page_title(&raw_title);
+        if title.is_empty() {
+            continue;
+        }
         let kind = s("kind").unwrap_or_else(|| "lore".into()).to_lowercase();
         if !crate::vault::KINDS.contains(&kind.as_str()) {
             continue;
         }
-        let existing = by_title.get(&crate::store::index::normalize_name(&title));
+        let existing = by_path
+            .get(&crate::store::index::normalize_name(
+                raw_title.strip_suffix(".md").unwrap_or(&raw_title),
+            ))
+            .or_else(|| by_title.get(&crate::store::index::normalize_name(&title)));
         let is_new = existing.is_none()
             || obj.get("is_new").and_then(Value::as_bool).unwrap_or(false) && existing.is_none();
 
@@ -516,7 +543,11 @@ fn parse_candidates(
             page: existing.map(|p| p.path.clone()),
             title,
             kind: existing.and_then(|p| p.kind.clone()).unwrap_or(kind),
-            folder: if is_new { s("folder") } else { None },
+            folder: if is_new {
+                s("folder").or(title_folder)
+            } else {
+                None
+            },
             changes,
             rationale: s("rationale").unwrap_or_default(),
             grounding: None,
@@ -790,40 +821,24 @@ pub fn commit(session_dir: &Path, vault_root: &Path, ids: &[String]) -> AppResul
 }
 
 /// Apply one proposal file-first; returns the vault-relative path touched.
+///
+/// The target is resolved again here, not trusted from the proposal: the vault
+/// moves between propose and commit, and a page the model called "new" often
+/// already exists (a hand-made stub, or the same page under a title that
+/// carries its folder). Resolving means updating it — never a second copy.
 fn apply_proposal(world_root: Option<&Path>, vault_root: &Path, p: &Proposal) -> AppResult<String> {
-    match &p.page {
-        None => {
-            let stem = vault::safe_page_filename(&p.title);
-            let rel = match p.folder.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                Some(f) => format!("{f}/{stem}.md"),
-                None => format!("{stem}.md"),
-            };
-            if vault_root.join(&rel).exists() {
-                return Err(AppError::BadRequest(format!("Page already exists: {rel}")));
-            }
-            let (summary, body) = p
-                .changes
-                .iter()
-                .find_map(|c| match c {
-                    Change::New { summary, body } => Some((summary.clone(), body.clone())),
-                    _ => None,
-                })
-                .unwrap_or_default();
-            let mut content = vault::page_file_content(&p.title, &p.kind, &summary, &body);
-            for c in &p.changes {
-                if let Change::Rel { field, add, .. } = c {
-                    content = vault::fm_append_list_value(&content, field, add);
-                }
-            }
-            if let Some(wr) = world_root {
-                let _ = crate::history::record_now(wr, vault_root, &rel, "keeper");
-            }
-            vault::write_page(vault_root, &rel, &content)?;
-            Ok(rel)
-        }
+    let target = match &p.page {
+        Some(rel) if vault_root.join(rel).is_file() => Some(rel.clone()),
+        Some(rel) => vault::find_page(vault_root, rel)
+            .ok_or_else(|| AppError::NotFound(format!("Page vanished: {rel}")))
+            .map(Some)?,
+        None => vault::find_page(vault_root, &p.title),
+    };
+    let (title_folder, name) = vault::split_page_title(&p.title);
+
+    let (rel, content) = match target {
         Some(rel) => {
-            let page = vault::read_page(vault_root, rel)?;
-            let mut content = page.content;
+            let mut content = vault::read_page(vault_root, &rel)?.content;
             for c in &p.changes {
                 match c {
                     Change::Summary { new, .. } => {
@@ -835,16 +850,55 @@ fn apply_proposal(world_root: Option<&Path>, vault_root: &Path, p: &Proposal) ->
                     Change::Rel { field, add, .. } => {
                         content = vault::fm_append_list_value(&content, field, add);
                     }
-                    Change::New { .. } => {}
+                    // "New page" that turned out to exist: fill the blanks its
+                    // frontmatter is missing, append the rest under ## Notes.
+                    Change::New { summary, body } => {
+                        content = vault::set_frontmatter_fields(&content, &p.kind, summary);
+                        if !body.trim().is_empty() {
+                            content = vault::append_under_heading(&content, "## Notes", body);
+                        }
+                    }
                 }
             }
-            if let Some(wr) = world_root {
-                let _ = crate::history::record_now(wr, vault_root, rel, "keeper");
-            }
-            vault::write_page(vault_root, rel, &content)?;
-            Ok(rel.clone())
+            (rel, content)
         }
+        None => {
+            let folder = p
+                .folder
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .or(title_folder)
+                .or_else(|| vault::folder_for_kind(vault_root, &p.kind));
+            let stem = vault::safe_page_filename(&name);
+            let rel = match folder {
+                Some(f) => format!("{}/{stem}.md", f.trim_matches('/')),
+                None => format!("{stem}.md"),
+            };
+            let (summary, body) = p
+                .changes
+                .iter()
+                .find_map(|c| match c {
+                    Change::New { summary, body } => Some((summary.clone(), body.clone())),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let mut content = vault::page_file_content(&name, &p.kind, &summary, &body);
+            for c in &p.changes {
+                if let Change::Rel { field, add, .. } = c {
+                    content = vault::fm_append_list_value(&content, field, add);
+                }
+            }
+            (rel, content)
+        }
+    };
+
+    if let Some(wr) = world_root {
+        let _ = crate::history::record_now(wr, vault_root, &rel, "keeper");
     }
+    vault::write_page(vault_root, &rel, &content)?;
+    Ok(rel)
 }
 
 #[cfg(test)]
@@ -900,6 +954,28 @@ mod tests {
         assert!(out[1].page.is_none());
         assert!(matches!(out[1].changes[0], Change::New { .. }));
         assert_eq!(out[1].folder.as_deref(), Some("Lore"));
+    }
+
+    // Issue #9: the model echoes the page list's `path:` into `title`, so the
+    // title arrives folder-prefixed and must still resolve to the same page.
+    #[test]
+    fn parse_candidates_matches_path_shaped_title() {
+        let pages = vec![vault::PageInfo {
+            path: "NPCs/Ulric.md".into(),
+            title: "Ulric".into(),
+            kind: Some("npc".into()),
+            summary: "Old one-liner.".into(),
+            modified: None,
+            open_questions: 0,
+            is_stub: true,
+        }];
+        let raw = r#"{"proposals":[
+            {"title":"NPCs/Ulric","kind":"npc","summary_new":"New liner.","body_append":"S14 — thing."}
+        ]}"#;
+        let (out, _) = parse_candidates(raw, &pages);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].page.as_deref(), Some("NPCs/Ulric.md"));
+        assert_eq!(out[0].title, "Ulric");
     }
 
     #[test]
@@ -1003,10 +1079,60 @@ mod tests {
         }
     }
 
+    // Issue #9: a "new page" proposal whose title already exists elsewhere in
+    // the vault must update that page, never write a flattened root duplicate.
     #[test]
-    fn commit_marks_collision_stale() {
-        let vault_root = tmp_dir("stale-vault");
-        let sess = tmp_dir("stale-sess");
+    fn commit_new_page_updates_existing_page_in_folder() {
+        let vault_root = tmp_dir("dup-vault");
+        let sess = tmp_dir("dup-sess");
+        std::fs::create_dir_all(vault_root.join("NPCs")).unwrap();
+        std::fs::write(
+            vault_root.join("NPCs/Ulric.md"),
+            "---\nkind: npc\nsummary:\n---\n\n# Ulric\n",
+        )
+        .unwrap();
+        let run = ProposalRun {
+            session_id: "s1".into(),
+            generated_at: "t".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            status: "open".into(),
+            token_estimate: 0,
+            proposals: vec![Proposal {
+                id: "p1".into(),
+                page: None,
+                title: "NPCs/Ulric".into(),
+                kind: "npc".into(),
+                folder: None,
+                changes: vec![Change::New {
+                    summary: "A grizzled scout.".into(),
+                    body: "S14 — joined the party.".into(),
+                }],
+                rationale: String::new(),
+                grounding: None,
+                ungrounded: false,
+                decision: "accepted".into(),
+            }],
+        };
+        write_run(&sess, &run).unwrap();
+        let report = commit(&sess, &vault_root, &["p1".into()]).unwrap();
+        assert_eq!(report.applied, 1);
+        assert_eq!(report.files, vec!["NPCs/Ulric.md".to_string()]);
+        assert!(!vault_root.join("NPCs-Ulric.md").exists());
+        let page = std::fs::read_to_string(vault_root.join("NPCs/Ulric.md")).unwrap();
+        assert!(page.contains("summary: \"A grizzled scout.\""));
+        assert!(page.contains("S14 — joined the party."));
+        for d in [&vault_root, &sess] {
+            std::fs::remove_dir_all(d).ok();
+        }
+    }
+
+    // A page that appeared between propose and commit is merged into, not
+    // duplicated — filling only what its frontmatter left blank.
+    #[test]
+    fn commit_merges_into_page_that_appeared() {
+        let vault_root = tmp_dir("collide-vault");
+        let sess = tmp_dir("collide-sess");
         std::fs::write(vault_root.join("Thing.md"), "# Thing\n").unwrap();
         let run = ProposalRun {
             session_id: "s1".into(),
@@ -1022,8 +1148,47 @@ mod tests {
                 kind: "lore".into(),
                 folder: None,
                 changes: vec![Change::New {
-                    summary: String::new(),
-                    body: String::new(),
+                    summary: "A thing.".into(),
+                    body: "S14 — seen again.".into(),
+                }],
+                rationale: String::new(),
+                grounding: None,
+                ungrounded: false,
+                decision: "accepted".into(),
+            }],
+        };
+        write_run(&sess, &run).unwrap();
+        let report = commit(&sess, &vault_root, &["p1".into()]).unwrap();
+        assert_eq!(report.applied, 1);
+        assert_eq!(report.files, vec!["Thing.md".to_string()]);
+        let page = std::fs::read_to_string(vault_root.join("Thing.md")).unwrap();
+        assert!(page.contains("summary: \"A thing.\""));
+        assert!(page.contains("S14 — seen again."));
+        for d in [&vault_root, &sess] {
+            std::fs::remove_dir_all(d).ok();
+        }
+    }
+
+    #[test]
+    fn commit_marks_vanished_target_stale() {
+        let vault_root = tmp_dir("stale-vault");
+        let sess = tmp_dir("stale-sess");
+        let run = ProposalRun {
+            session_id: "s1".into(),
+            generated_at: "t".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            status: "open".into(),
+            token_estimate: 0,
+            proposals: vec![Proposal {
+                id: "p1".into(),
+                page: Some("NPCs/Gone.md".into()),
+                title: "Gone".into(),
+                kind: "npc".into(),
+                folder: None,
+                changes: vec![Change::Body {
+                    anchor: "## Notes".into(),
+                    text: "S14 — note.".into(),
                 }],
                 rationale: String::new(),
                 grounding: None,
@@ -1039,6 +1204,70 @@ mod tests {
             read_run(&sess).unwrap().unwrap().proposals[0].decision,
             "stale"
         );
+        for d in [&vault_root, &sess] {
+            std::fs::remove_dir_all(d).ok();
+        }
+    }
+
+    // A page moved between propose and commit follows the move, and a genuinely
+    // new page lands where its kind already lives — not in the vault root.
+    #[test]
+    fn commit_follows_moved_page_and_infers_folder() {
+        let vault_root = tmp_dir("infer-vault");
+        let sess = tmp_dir("infer-sess");
+        std::fs::create_dir_all(vault_root.join("01-Personen")).unwrap();
+        std::fs::write(
+            vault_root.join("01-Personen/Ulric.md"),
+            "---\nkind: npc\nsummary: Known.\n---\n\n# Ulric\n",
+        )
+        .unwrap();
+        let run = ProposalRun {
+            session_id: "s1".into(),
+            generated_at: "t".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            status: "open".into(),
+            token_estimate: 0,
+            proposals: vec![
+                Proposal {
+                    id: "p1".into(),
+                    page: Some("Ulric.md".into()),
+                    title: "Ulric".into(),
+                    kind: "npc".into(),
+                    folder: None,
+                    changes: vec![Change::Body {
+                        anchor: "## Notes".into(),
+                        text: "S14 — moved page note.".into(),
+                    }],
+                    rationale: String::new(),
+                    grounding: None,
+                    ungrounded: false,
+                    decision: "accepted".into(),
+                },
+                Proposal {
+                    id: "p2".into(),
+                    page: None,
+                    title: "Vassa".into(),
+                    kind: "npc".into(),
+                    folder: None,
+                    changes: vec![Change::New {
+                        summary: "A new face.".into(),
+                        body: String::new(),
+                    }],
+                    rationale: String::new(),
+                    grounding: None,
+                    ungrounded: false,
+                    decision: "accepted".into(),
+                },
+            ],
+        };
+        write_run(&sess, &run).unwrap();
+        let report = commit(&sess, &vault_root, &["p1".into(), "p2".into()]).unwrap();
+        assert_eq!(report.applied, 2);
+        assert!(vault_root.join("01-Personen/Vassa.md").is_file());
+        assert!(!vault_root.join("Vassa.md").exists());
+        let ulric = std::fs::read_to_string(vault_root.join("01-Personen/Ulric.md")).unwrap();
+        assert!(ulric.contains("S14 — moved page note."));
         for d in [&vault_root, &sess] {
             std::fs::remove_dir_all(d).ok();
         }

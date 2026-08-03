@@ -1752,6 +1752,12 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             if vault::read_page(&vault_root, &path).is_ok() {
                 return Err(format!("Page already exists: {path}"));
             }
+            // Same name in another folder is the same entity — edit it, don't fork it.
+            if let Some(existing) = vault::find_page(&vault_root, &path) {
+                return Err(format!(
+                    "A page for that name already exists at {existing} — edit it instead."
+                ));
+            }
             vault::write_page(&vault_root, &path, &str_arg("content")).map_err(app_err)?;
             reindex(ctx, &vault_root, &path);
             Ok(format!("Created {path}."))

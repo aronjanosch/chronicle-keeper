@@ -1,6 +1,8 @@
-//! Native transcription engine (Parakeet TDT v3 via sherpa-onnx). Compiled
-//! only with the `transcription` feature; the server build omits it.
+//! Native transcription engine (sherpa-onnx). Compiled only with the
+//! `transcription` feature; the server build omits it. The selectable models
+//! live in [`crate::asr_models`].
 
+pub mod cloud;
 pub mod decode;
 pub mod model;
 
@@ -11,10 +13,12 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use sherpa_onnx::{
-    LinearResampler, OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig,
-    SileroVadModelConfig, VadModelConfig, VoiceActivityDetector,
+    LinearResampler, OfflineCanaryModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
+    OfflineTransducerModelConfig, OfflineWhisperModelConfig, SileroVadModelConfig, VadModelConfig,
+    VoiceActivityDetector,
 };
 
+use crate::asr_models::{AsrModel, Family};
 use crate::models::Segment;
 use crate::state::ModelProgress;
 
@@ -22,16 +26,12 @@ use crate::state::ModelProgress;
 /// recognizer no longer resamples internally because we feed it 16k directly.
 const TARGET_SR: i32 = 16_000;
 
-/// Fallback window length in seconds when no VAD model is available. The int8
-/// ONNX encoder has a fixed max sequence (~50s); 30s stays safely under it.
-const CHUNK_SECS: u32 = 30;
-
-/// Cap on a single VAD speech segment (seconds). Keeps even long monologues
-/// under the encoder's max sequence; VAD splits anything longer at this bound.
-const VAD_MAX_SPEECH_SECS: f32 = 28.0;
-
 /// Silero VAD processing window (samples) at 16kHz — the model's native frame.
 const VAD_WINDOW: usize = 512;
+
+/// Total resident budget (MB) for the recognizer pool; divided by the model's
+/// own footprint to decide how many workers may run at once.
+const ASR_RAM_BUDGET_MB: u32 = 2000;
 
 /// Shared between the HTTP handler and the blocking worker. The worker bumps
 /// `ticks` as it makes progress (per decoded packet / VAD window) so the
@@ -68,35 +68,68 @@ pub struct Transcribed {
 
 fn build_recognizer(
     model_dir: &Path,
+    model: &AsrModel,
+    language: &str,
     accelerator: &str,
     threads: i32,
 ) -> Result<OfflineRecognizer> {
-    match create_recognizer(model_dir, accelerator, threads) {
+    match create_recognizer(model_dir, model, language, accelerator, threads) {
         Some(r) => Ok(r),
         None if accelerator != "cpu" => {
             tracing::warn!(
                 "failed to create recognizer with provider '{accelerator}'; falling back to cpu \
                  (the bundled onnxruntime may lack that execution provider)"
             );
-            create_recognizer(model_dir, "cpu", threads)
+            create_recognizer(model_dir, model, language, "cpu", threads)
                 .ok_or_else(|| anyhow::anyhow!("failed to create recognizer (cpu)"))
         }
         None => Err(anyhow::anyhow!("failed to create recognizer")),
     }
 }
 
-fn create_recognizer(model_dir: &Path, provider: &str, threads: i32) -> Option<OfflineRecognizer> {
+fn create_recognizer(
+    model_dir: &Path,
+    model: &AsrModel,
+    language: &str,
+    provider: &str,
+    threads: i32,
+) -> Option<OfflineRecognizer> {
     let p = |name: &str| -> Option<String> {
+        if name.is_empty() {
+            return None;
+        }
         let path = model_dir.join(name);
         path.exists().then(|| path.to_string_lossy().into_owned())
     };
     let mut config = OfflineRecognizerConfig::default();
-    config.model_config.transducer = OfflineTransducerModelConfig {
-        encoder: p("encoder.int8.onnx"),
-        decoder: p("decoder.int8.onnx"),
-        joiner: p("joiner.int8.onnx"),
-    };
-    config.model_config.tokens = p("tokens.txt");
+    match model.family {
+        Family::Transducer => {
+            config.model_config.transducer = OfflineTransducerModelConfig {
+                encoder: p(model.encoder),
+                decoder: p(model.decoder),
+                joiner: p(model.joiner),
+            };
+        }
+        Family::Whisper => {
+            config.model_config.whisper = OfflineWhisperModelConfig {
+                encoder: p(model.encoder),
+                decoder: p(model.decoder),
+                language: Some(language.to_string()),
+                task: Some("transcribe".to_string()),
+                ..Default::default()
+            };
+        }
+        Family::Canary => {
+            config.model_config.canary = OfflineCanaryModelConfig {
+                encoder: p(model.encoder),
+                decoder: p(model.decoder),
+                src_lang: Some(language.to_string()),
+                tgt_lang: Some(language.to_string()),
+                use_pnc: true,
+            };
+        }
+    }
+    config.model_config.tokens = p(model.tokens);
     config.model_config.provider = Some(provider.to_string());
     config.model_config.num_threads = threads;
     // Sherpa's own stderr logging follows RUST_LOG: off at info, on at debug.
@@ -104,7 +137,7 @@ fn create_recognizer(model_dir: &Path, provider: &str, threads: i32) -> Option<O
     OfflineRecognizer::create(&config)
 }
 
-fn build_vad(vad_model: &Path) -> Option<VoiceActivityDetector> {
+fn build_vad(vad_model: &Path, max_speech_secs: f32) -> Option<VoiceActivityDetector> {
     let mut config = VadModelConfig {
         sample_rate: TARGET_SR,
         num_threads: 1,
@@ -117,7 +150,7 @@ fn build_vad(vad_model: &Path) -> Option<VoiceActivityDetector> {
         min_silence_duration: 0.5,
         min_speech_duration: 0.25,
         window_size: VAD_WINDOW as i32,
-        max_speech_duration: VAD_MAX_SPEECH_SECS,
+        max_speech_duration: max_speech_secs,
     };
     VoiceActivityDetector::create(&config, 30.0)
 }
@@ -126,14 +159,17 @@ fn build_vad(vad_model: &Path) -> Option<VoiceActivityDetector> {
 /// Measured on the int8 Parakeet encoder: a single stream tops out at 4
 /// threads (4thr beat 8thr on a 10-core M-series), so the core budget —
 /// everything minus two cores for the decode thread and the system — is split
-/// into up-to-4-thread workers, each with its own recognizer (~650 MB RAM
-/// apiece, hence the cap of 3).
-fn plan_workers(track_count: usize) -> (usize, i32) {
+/// into up-to-4-thread workers, each with its own recognizer. The hard cap is
+/// memory, not cores: how many copies of *this* model fit in
+/// [`ASR_RAM_BUDGET_MB`] (3 for int8 Parakeet, 1 for the fp16/fp32 and Whisper
+/// entries).
+fn plan_workers(track_count: usize, ram_mb: u32) -> (usize, i32) {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2);
     let budget = cores.saturating_sub(2).max(1);
-    let workers = (budget / 3).clamp(1, 3).min(track_count.max(1));
+    let ram_cap = (ASR_RAM_BUDGET_MB / ram_mb.max(1)).clamp(1, 3) as usize;
+    let workers = (budget / 3).clamp(1, ram_cap).min(track_count.max(1));
     let threads = (budget / workers).clamp(2, 4) as i32;
     (workers, threads)
 }
@@ -172,12 +208,13 @@ fn decode_text(recognizer: &OfflineRecognizer, samples: &[f32]) -> String {
 fn transcribe_vad(
     recognizer: &OfflineRecognizer,
     vad_model: &Path,
+    max_speech_secs: f32,
     samples: &[f32],
     track_id: &str,
     label: &str,
     watch: &Watch,
 ) -> Option<Vec<Segment>> {
-    let vad = build_vad(vad_model)?;
+    let vad = build_vad(vad_model, max_speech_secs)?;
     let mut segments = Vec::new();
     let drain = |vad: &VoiceActivityDetector, segments: &mut Vec<Segment>| {
         while let Some(seg) = vad.front() {
@@ -203,17 +240,18 @@ fn transcribe_vad(
     Some(segments)
 }
 
-/// Fixed ~30s windows on 16kHz samples — the fallback when no VAD model exists.
+/// Fixed windows on 16kHz samples — the fallback when no VAD model exists.
 fn transcribe_fixed(
     recognizer: &OfflineRecognizer,
+    chunk_secs: f32,
     samples: &[f32],
     track_id: &str,
     label: &str,
     watch: &Watch,
 ) -> Vec<Segment> {
-    let chunk_len = (CHUNK_SECS as i32 * TARGET_SR) as usize;
+    let chunk_len = (chunk_secs * TARGET_SR as f32) as usize;
     let mut segments = Vec::new();
-    for (idx, chunk) in samples.chunks(chunk_len).enumerate() {
+    for (idx, chunk) in samples.chunks(chunk_len.max(1)).enumerate() {
         if watch.cancelled() {
             break;
         }
@@ -222,7 +260,7 @@ fn transcribe_fixed(
         if text.is_empty() {
             continue;
         }
-        let start = (idx as u32 * CHUNK_SECS) as f64;
+        let start = idx as f64 * chunk_secs as f64;
         let end = start + chunk.len() as f64 / TARGET_SR as f64;
         segments.push(make_segment(text, start, end, track_id, label));
     }
@@ -253,8 +291,11 @@ fn make_segment(text: String, start: f64, end: f64, track_id: &str, label: &str)
 /// memory. A failed decode skips that track instead of aborting the run. On
 /// cancel (via `watch`) the finished segments are still returned, with
 /// `complete: false`.
+#[allow(clippy::too_many_arguments)]
 pub fn transcribe_tracks(
     model_dir: &Path,
+    model: &AsrModel,
+    language: &str,
     accelerator: &str,
     vad_model: Option<&Path>,
     tracks: &[(String, PathBuf, String)],
@@ -263,13 +304,14 @@ pub fn transcribe_tracks(
 ) -> Result<Transcribed> {
     let started = Instant::now();
     let total = tracks.len() as u64;
-    let (workers, threads) = plan_workers(tracks.len());
+    let (workers, threads) = plan_workers(tracks.len(), model.ram_mb);
     let recognizers = (0..workers)
-        .map(|_| build_recognizer(model_dir, accelerator, threads))
+        .map(|_| build_recognizer(model_dir, model, language, accelerator, threads))
         .collect::<Result<Vec<_>>>()?;
     tracing::info!(
-        "transcribing {} track(s) [provider={accelerator}, vad={}, {workers} worker(s) × {threads} thread(s)]",
+        "transcribing {} track(s) [model={}, provider={accelerator}, vad={}, {workers} worker(s) × {threads} thread(s)]",
         tracks.len(),
+        model.id,
         vad_model.is_some()
     );
     ModelProgress::set_transcribe(progress, 0, total, "");
@@ -344,9 +386,26 @@ pub fn transcribe_tracks(
                 );
                 let t0 = Instant::now();
                 let segs = vad_model
-                    .and_then(|m| transcribe_vad(&recognizer, m, &samples, track_id, label, watch))
+                    .and_then(|m| {
+                        transcribe_vad(
+                            &recognizer,
+                            m,
+                            model.max_chunk_secs,
+                            &samples,
+                            track_id,
+                            label,
+                            watch,
+                        )
+                    })
                     .unwrap_or_else(|| {
-                        transcribe_fixed(&recognizer, &samples, track_id, label, watch)
+                        transcribe_fixed(
+                            &recognizer,
+                            model.max_chunk_secs,
+                            &samples,
+                            track_id,
+                            label,
+                            watch,
+                        )
                     });
                 tracing::info!(
                     "track {}/{} '{shown}': {} segment(s) in {:.1}s",

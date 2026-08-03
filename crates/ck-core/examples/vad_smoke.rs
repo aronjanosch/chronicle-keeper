@@ -6,10 +6,14 @@
 //!     example-recordings/craig-*.flac/1-aronjanosch.flac
 //!
 //! With no args it tries both tracks in the bundled example recording.
+//!
+//! `CK_ASR_MODEL` picks the model (see `ck_core::asr_models`), `CK_ASR_LANG` the
+//! language — which is how you A/B two models on the same audio.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use ck_core::asr_models;
 use ck_core::paths::Paths;
 use ck_core::state::ModelProgress;
 use ck_core::transcription::{model, transcribe_tracks, Watch};
@@ -28,10 +32,14 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let paths = Paths::resolve()?;
-    let model_dir = model::model_dir(&paths);
+    let asr = asr_models::resolve(&std::env::var("CK_ASR_MODEL").unwrap_or_default());
+    let language = std::env::var("CK_ASR_LANG").unwrap_or_else(|_| "en".into());
+    println!("model: {} ({}, {})", asr.id, asr.precision, language);
+    let model_dir = model::model_dir(&paths, asr);
     anyhow::ensure!(
-        model::is_present(&model_dir),
-        "Parakeet model not found at {} — run the app once to download it",
+        model::is_present(&model_dir, asr),
+        "{} not found at {} — select it in Settings once so the app downloads it",
+        asr.name,
         model_dir.display()
     );
 
@@ -54,6 +62,8 @@ async fn main() -> anyhow::Result<()> {
     let t0 = std::time::Instant::now();
     let result = transcribe_tracks(
         &model_dir,
+        asr,
+        &language,
         "cpu",
         vad.as_deref(),
         &tracks,

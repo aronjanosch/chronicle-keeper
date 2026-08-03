@@ -1,9 +1,23 @@
 // Screen 04 — Session Detail. Pipeline strip, summary prose, speakers, metadata.
 import { html, useState } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal, fmtDate, fmtDateTime, toneFor } from '../core.js';
-import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, saveSummaryEdit, loadSession } from '../actions.js';
+import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, saveSummaryEdit, loadSession, importTranscript } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Sigil, Btn, Pipeline, Markdown, Empty, Menu } from '../ui.js';
+
+// Read a transcript file the user made elsewhere. Plain file input rather than a
+// drop zone: this is a rare, deliberate action, not part of the normal flow.
+function pickTranscriptFile() {
+  const el = document.createElement('input');
+  el.type = 'file';
+  el.accept = '.txt,.md,.srt,.vtt,.json,text/plain';
+  el.onchange = async () => {
+    const file = el.files && el.files[0];
+    if (!file) return;
+    await importTranscript(await file.text(), file.name);
+  };
+  el.click();
+}
 
 function SpeakerChip({ s }) {
   const ch = s.character_name || s.player_name || `track ${s.track_id}`;
@@ -265,6 +279,7 @@ export function SessionScreen({ store }) {
             confirmLabel: 'Re-transcribe',
             onConfirm: () => runTranscribe(),
           }) },
+          { label: 'Import transcript…', icon: 'upload', onClick: pickTranscriptFile },
           { label: 'Delete session', icon: 'trash', danger: true, onClick: () => openModal('confirm', {
             title: 'Delete session',
             message: 'Delete this session? This removes its transcripts and summaries permanently.',

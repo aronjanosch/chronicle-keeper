@@ -4,44 +4,45 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
 
+use crate::asr_models::AsrModel;
 use crate::paths::Paths;
 use crate::state::ModelProgress;
 
-pub const MODEL_DIR_NAME: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
-const MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2";
 const VAD_MODEL_NAME: &str = "silero_vad.onnx";
 const VAD_MODEL_URL: &str =
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
-const REQUIRED: [&str; 4] = [
-    "encoder.int8.onnx",
-    "decoder.int8.onnx",
-    "joiner.int8.onnx",
-    "tokens.txt",
-];
 
-pub fn model_dir(paths: &Paths) -> PathBuf {
-    paths.models_dir().join(MODEL_DIR_NAME)
+pub fn model_dir(paths: &Paths, model: &AsrModel) -> PathBuf {
+    paths.models_dir().join(model.dir)
 }
 
-pub fn is_present(dir: &Path) -> bool {
-    REQUIRED.iter().all(|f| dir.join(f).exists())
+pub fn is_present(dir: &Path, model: &AsrModel) -> bool {
+    model.required_files().iter().all(|f| dir.join(f).exists())
 }
 
-/// Ensure the Parakeet model is available, downloading + extracting it once if
-/// missing. Returns the model directory. Reports download/extract progress into
+/// Ensure `model` is available, downloading + extracting it once if missing.
+/// Returns the model directory. Reports download/extract progress into
 /// `progress` so the frontend can render a bar via `GET /model-status`.
-pub async fn ensure(paths: &Paths, progress: &Arc<Mutex<ModelProgress>>) -> Result<PathBuf> {
-    let dir = model_dir(paths);
-    if is_present(&dir) {
+pub async fn ensure(
+    paths: &Paths,
+    model: &AsrModel,
+    progress: &Arc<Mutex<ModelProgress>>,
+) -> Result<PathBuf> {
+    let dir = model_dir(paths, model);
+    if is_present(&dir, model) {
         ModelProgress::set(progress, "ready", 0, 0);
         return Ok(dir);
     }
     let models_root = paths.models_dir();
     std::fs::create_dir_all(&models_root).context("create models dir")?;
 
-    tracing::info!("downloading Parakeet model (~465MB, one time)…");
-    let archive = models_root.join("parakeet-v3.tar.bz2");
-    download(MODEL_URL, &archive, progress)
+    tracing::info!(
+        "downloading {} model (~{}MB, one time)…",
+        model.name,
+        model.download_mb
+    );
+    let archive = models_root.join(format!("{}.tar.bz2.part", model.id));
+    download(&model.url(), &archive, progress)
         .await
         .context("download model")?;
 
@@ -50,7 +51,7 @@ pub async fn ensure(paths: &Paths, progress: &Arc<Mutex<ModelProgress>>) -> Resu
     extract_tar_bz2(&archive, &models_root).context("extract model")?;
     let _ = std::fs::remove_file(&archive);
 
-    if !is_present(&dir) {
+    if !is_present(&dir, model) {
         anyhow::bail!(
             "model archive extracted but expected files missing in {}",
             dir.display()

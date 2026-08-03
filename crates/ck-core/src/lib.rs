@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod asr_models;
 pub mod atlas;
 pub mod backup;
 pub mod codex_import;
@@ -25,6 +26,7 @@ pub mod store;
 pub mod summarize;
 pub mod timeline;
 pub mod transcript_format;
+pub mod transcript_import;
 #[cfg(feature = "transcription")]
 pub mod transcription;
 pub mod trash;

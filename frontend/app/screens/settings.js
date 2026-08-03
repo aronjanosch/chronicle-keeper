@@ -1,7 +1,7 @@
 // Screen 08 — Settings. Calm single page, grouped into cards. Real config.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { store, setOp, openModal } from '../core.js';
-import { loadConfig, saveConfig, loadLlmProviders, loadPromptTemplates, deletePromptTemplate, restorePromptDefaults, pingLlmProvider, revealPath, loadFoundrySettings, saveFoundrySettings, testFoundry, syncFoundry, loadSkills, deleteSkill, setSkillEnabled } from '../actions.js';
+import { loadConfig, saveConfig, loadLlmProviders, loadPromptTemplates, deletePromptTemplate, restorePromptDefaults, pingLlmProvider, revealPath, loadFoundrySettings, saveFoundrySettings, testFoundry, syncFoundry, loadSkills, deleteSkill, setSkillEnabled, loadAsrProviders } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Btn } from '../ui.js';
 
@@ -258,6 +258,47 @@ function FoundryCard() {
   </${SettingsCard}>`;
 }
 
+// Transcription engine + model. The on-device entries differ mostly in weight
+// precision and language coverage, so both are shown next to the download size.
+function TranscriptionCard({ f, set }) {
+  const engines = store.providers || [];
+  const native = engines.find((e) => !e.cloud);
+  const engine = f.transcription_provider || 'auto';
+  const isCloud = !!engines.find((e) => e.cloud && e.name === engine);
+  const cloud = engines.find((e) => e.name === engine && e.cloud);
+
+  return html`<${SettingsCard} icon="mic" title="Transcription" desc="Which engine turns the recording into text. On-device is the default and needs no key; cloud engines appear once their API key is saved under LLM providers.">
+    <${Row} label="Engine" hint="On-device keeps the audio on this machine. Cloud uploads it to the provider.">
+      <select value=${engine} onChange=${(e) => set('transcription_provider', e.target.value)} style=${inp({ width: 300, cursor: 'pointer' })}>
+        <option value="auto">On-device (recommended)</option>
+        ${engines.filter((e) => e.cloud).map((e) => html`<option key=${e.name} value=${e.name}>${e.display_name}</option>`)}
+      </select>
+    </${Row}>
+    ${!isCloud && html`
+    <${Row} label="Model" hint="Parakeet v3 is quantised (int8) but covers 25 languages. The fp16/fp32 entries carry full-precision weights at the cost of size, speed and language coverage.">
+      <select value=${f.transcription_model || native?.default_model} onChange=${(e) => set('transcription_model', e.target.value)} style=${inp({ width: 460, cursor: 'pointer' })}>
+        ${(native?.models || []).map((m) => html`<option key=${m.id} value=${m.id}>${m.name} · ${m.precision} · ${m.languages} · ${m.download_mb} MB${m.downloaded ? ' ✓' : ''}</option>`)}
+      </select>
+      ${(() => {
+        const m = (native?.models || []).find((x) => x.id === (f.transcription_model || native?.default_model));
+        if (!m) return null;
+        return html`<div style=${{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 6, lineHeight: 1.45, maxWidth: 460 }}>
+          ${m.description}${!m.downloaded ? html` <span style=${{ color: 'var(--ink-faint)' }}>Downloads on first use.</span>` : ''}
+        </div>`;
+      })()}
+    </${Row}>`}
+    ${isCloud && html`
+    <${Row} label="Cloud model" hint="Audio is split into ~10 minute chunks to stay under the provider's upload limit.">
+      <select value=${f.transcription_cloud_model || cloud?.default_model} onChange=${(e) => set('transcription_cloud_model', e.target.value)} style=${inp({ width: 300, cursor: 'pointer' })}>
+        ${(cloud?.models || []).map((m) => html`<option key=${m.id} value=${m.id}>${m.name}</option>`)}
+      </select>
+    </${Row}>`}
+    <${Row} label="Stall timeout" hint="Cancel a run after this many seconds without progress. Long sessions keep going as long as they advance.">
+      <input type="number" min="60" step="60" value=${f.transcription_timeout_seconds} onInput=${(e) => set('transcription_timeout_seconds', e.target.value)} style=${inp({ width: 140, fontFamily: 'var(--font-mono)' })} />
+    </${Row}>
+  </${SettingsCard}>`;
+}
+
 export function SettingsScreen({ store }) {
   const [f, setF] = useState(null);
   const [apiBase, setApiBase] = useState(store.apiBase);
@@ -268,12 +309,15 @@ export function SettingsScreen({ store }) {
   useEffect(() => {
     (async () => {
       let cfg;
-      try { cfg = await loadConfig(); await loadLlmProviders(); await loadPromptTemplates(true); }
+      try { cfg = await loadConfig(); await loadLlmProviders(); await loadPromptTemplates(true); await loadAsrProviders(true); }
       catch (e) { setOp(`Can't load settings: ${e.message}`, 'err'); return; }
       setF({
         output_root: cfg.output_root || '',
         summary_provider: (cfg.summary_provider || 'ollama').toLowerCase(),
         transcription_timeout_seconds: cfg.transcription_timeout_seconds || 600,
+        transcription_provider: cfg.transcription_provider || 'auto',
+        transcription_model: cfg.transcription_model || '',
+        transcription_cloud_model: cfg.transcription_cloud_model || '',
       });
       setApiBase(store.apiBase);
       // Live reachability, Ollama-family only (other transports have no keyless probe).
@@ -297,6 +341,9 @@ export function SettingsScreen({ store }) {
         output_root: f.output_root.trim(),
         summary_provider: f.summary_provider || 'ollama',
         transcription_timeout_seconds: Math.max(60, parseInt(f.transcription_timeout_seconds, 10) || 600),
+        transcription_provider: f.transcription_provider || 'auto',
+        transcription_model: f.transcription_model || '',
+        transcription_cloud_model: f.transcription_cloud_model || '',
       };
       await saveConfig(payload, apiBase.trim());
       setOp('Settings saved', 'done');
@@ -324,9 +371,6 @@ export function SettingsScreen({ store }) {
               <div style=${{ padding: '7px 10px', background: 'var(--paper-deep)', border: '1px solid var(--rule-soft)', borderRadius: 4, fontSize: 12.5, color: 'var(--ink-faint)' }}>Dark (soon)</div>
             </div>
           </${Row}>
-          <${Row} label="Transcription stall timeout" hint="Cancel a run after this many seconds without progress. Long sessions keep going as long as they advance.">
-            <input type="number" min="60" step="60" value=${f.transcription_timeout_seconds} onInput=${(e) => set('transcription_timeout_seconds', e.target.value)} style=${inp({ width: 140, fontFamily: 'var(--font-mono)' })} />
-          </${Row}>
           ${!store.shellMode && html`
           <${Row} label="Backend URL" hint="Where the Chronicle Keeper core is running. Stored in this browser only.">
             <input value=${apiBase} onInput=${(e) => setApiBase(e.target.value)} placeholder="http://127.0.0.1:8000" style=${inp({ width: 340, fontFamily: 'var(--font-mono)' })} />
@@ -343,6 +387,8 @@ export function SettingsScreen({ store }) {
             ${providers.map((p) => html`<${ProviderCard} key=${p.id} p=${p} live=${pings[p.id]} />`)}
           </div>
         </${SettingsCard}>
+
+        <${TranscriptionCard} f=${f} set=${set} />
 
         <${TemplatesCard} />
 

@@ -31,6 +31,15 @@ fn default_config() -> Vec<(&'static str, String)> {
         ("default_language", "en".into()),
         ("whisperx_model", "nemo-parakeet-tdt-0.6b-v3".into()),
         ("transcription_accelerator", "auto".into()),
+        // Which on-device model runs (see asr_models). Distinct from the legacy
+        // `whisperx_model` key above, which the frontend never reads.
+        (
+            "transcription_model",
+            crate::asr_models::DEFAULT_MODEL_ID.into(),
+        ),
+        // Model used when `transcription_provider` names a cloud endpoint; kept
+        // separate so switching engines back and forth doesn't clobber either.
+        ("transcription_cloud_model", "".into()),
         // Stall watchdog, not a wall-clock cap: cancel a transcription only
         // after this many seconds without progress.
         ("transcription_timeout_seconds", "600".into()),
@@ -104,6 +113,8 @@ pub struct ConfigResponse {
     pub transcription_provider: String,
     pub transcription_provider_effective: String,
     pub transcription_accelerator: String,
+    pub transcription_model: String,
+    pub transcription_cloud_model: String,
     /// Hard cap (seconds) on a single transcription run before it's aborted.
     pub transcription_timeout_seconds: i64,
     pub has_litellm_key: bool,
@@ -128,6 +139,8 @@ pub struct UpdateConfigRequest {
     pub whisperx_model: Option<String>,
     pub transcription_provider: Option<String>,
     pub transcription_accelerator: Option<String>,
+    pub transcription_model: Option<String>,
+    pub transcription_cloud_model: Option<String>,
     pub transcription_timeout_seconds: Option<i64>,
     pub keeper_tools_web: Option<bool>,
     pub keeper_tools_foundry: Option<bool>,
@@ -230,6 +243,11 @@ pub fn to_response(map: &HashMap<String, String>) -> ConfigResponse {
                 a
             }
         },
+        transcription_model: {
+            let m = get_str(map, "transcription_model");
+            crate::asr_models::resolve(&m).id.to_string()
+        },
+        transcription_cloud_model: get_str(map, "transcription_cloud_model"),
         transcription_timeout_seconds: {
             let t = get_int(map, "transcription_timeout_seconds");
             if t > 0 {
@@ -248,9 +266,25 @@ pub fn to_response(map: &HashMap<String, String>) -> ConfigResponse {
 pub fn apply_update(conn: &Connection, req: &UpdateConfigRequest) -> AppResult<()> {
     if let Some(v) = &req.transcription_provider {
         let v = v.trim().to_lowercase();
-        if !matches!(v.as_str(), "auto" | NATIVE_TRANSCRIPTION_PROVIDER) {
+        let cloud = crate::asr_models::cloud_provider(&v).is_some();
+        if !cloud && !matches!(v.as_str(), "auto" | NATIVE_TRANSCRIPTION_PROVIDER) {
             return Err(AppError::BadRequest(format!(
-                "transcription_provider must be one of: auto, {NATIVE_TRANSCRIPTION_PROVIDER}"
+                "transcription_provider must be auto, {NATIVE_TRANSCRIPTION_PROVIDER}, or a cloud \
+                 provider ({})",
+                crate::asr_models::CLOUD_PROVIDERS
+                    .iter()
+                    .map(|p| p.id)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    }
+    if let Some(v) = &req.transcription_model {
+        let v = v.trim();
+        if !v.is_empty() && crate::asr_models::find(v).is_none() {
+            return Err(AppError::BadRequest(format!(
+                "transcription_model must be one of: {}",
+                crate::asr_models::ids().join(", ")
             )));
         }
     }
@@ -306,6 +340,18 @@ pub fn apply_update(conn: &Connection, req: &UpdateConfigRequest) -> AppResult<(
         req.transcription_accelerator
             .as_ref()
             .map(|s| s.trim().to_lowercase()),
+    )?;
+    set(
+        "transcription_model",
+        req.transcription_model
+            .as_ref()
+            .map(|s| s.trim().to_string()),
+    )?;
+    set(
+        "transcription_cloud_model",
+        req.transcription_cloud_model
+            .as_ref()
+            .map(|s| s.trim().to_string()),
     )?;
     set(
         "transcription_timeout_seconds",

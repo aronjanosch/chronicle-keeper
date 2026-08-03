@@ -745,7 +745,7 @@ function pollModelStatus() {
   return () => { stopped = true; };
 }
 
-// On-device, single engine, language from the campaign — no options, just run.
+// Engine + model come from Settings; language from the campaign. No options here.
 export async function runTranscribe() {
   const sid = store.session?.session_id;
   if (!sid) return;
@@ -758,6 +758,28 @@ export async function runTranscribe() {
     setOp('Transcription complete', 'done');
   } catch (e) { setOp(e.message, 'err'); }
   finally { stop(); }
+}
+
+// Transcription engines: the on-device models plus any cloud provider with a key.
+export async function loadAsrProviders(force) {
+  if (store.providers && !force) return store.providers;
+  let list = [];
+  try { list = await apiFetch('/providers'); } catch (e) { console.warn('loadAsrProviders failed:', e); }
+  setState({ providers: list });
+  return list;
+}
+
+// Bring a transcript made elsewhere (WhisperX, a studio, a typist) into a session.
+export async function importTranscript(content, filename) {
+  const sid = store.session?.session_id;
+  if (!sid) return;
+  setOp('Importing transcript…');
+  try {
+    const r = await apiJson('/transcript-import', 'POST', { session_id: sid, content, filename: filename || null });
+    await loadSession(sid);
+    await refreshCampaignSessions();
+    setOp(`Imported ${r.segments} lines${r.speakers ? ` from ${r.speakers} speakers` : ''}`, 'done');
+  } catch (e) { setOp(e.message, 'err'); }
 }
 
 // ── Summary prompt templates ──────────────────────────────────────

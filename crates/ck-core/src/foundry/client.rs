@@ -18,15 +18,30 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{connect_async_with_config, MaybeTlsStream, WebSocketStream};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(20);
 /// Cap each auth HTTP call and the websocket upgrade so an unresponsive Foundry
 /// fails fast with a clear message instead of hanging the tool call.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
+/// The `world` snapshot arrives as **one** frame and scales with the world's
+/// compendium packs — a D&D Beyond Importer install pushes it past
+/// tungstenite's 16 MiB frame default, which killed every read (issue #12).
+/// Raised, not removed: still a bound on how much a server can make us buffer.
+const MAX_FRAME_BYTES: usize = 256 * 1024 * 1024;
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+/// Frame limits for the Foundry socket, raised off tungstenite's defaults.
+fn ws_config() -> WebSocketConfig {
+    WebSocketConfig {
+        max_frame_size: Some(MAX_FRAME_BYTES),
+        max_message_size: Some(MAX_FRAME_BYTES),
+        ..Default::default()
+    }
+}
 
 /// An authenticated, connected Foundry session ready to mutate documents.
 pub struct FoundryClient {
@@ -57,14 +72,17 @@ impl FoundryClient {
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("cookie header: {e}")))?,
         );
 
-        let (ws, _resp) = tokio::time::timeout(CONNECT_TIMEOUT, connect_async(req))
-            .await
-            .map_err(|_| {
-                AppError::BadRequest(format!(
-                    "Foundry websocket to {base} timed out — is the server reachable?"
-                ))
-            })?
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("foundry websocket: {e}")))?;
+        let (ws, _resp) = tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            connect_async_with_config(req, Some(ws_config()), false),
+        )
+        .await
+        .map_err(|_| {
+            AppError::BadRequest(format!(
+                "Foundry websocket to {base} timed out — is the server reachable?"
+            ))
+        })?
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("foundry websocket: {e}")))?;
 
         let mut client = Self {
             ws,
@@ -265,7 +283,7 @@ impl FoundryClient {
                 .await
                 .map_err(|_| AppError::Internal(anyhow::anyhow!("foundry read timeout")))?
                 .ok_or_else(|| AppError::Internal(anyhow::anyhow!("foundry socket closed")))?
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("foundry read: {e}")))?;
+                .map_err(read_error)?;
             match msg {
                 Message::Text(t) => {
                     if t == "2" {
@@ -282,6 +300,20 @@ impl FoundryClient {
             }
         }
     }
+}
+
+/// A world whose snapshot still overruns `MAX_FRAME_BYTES` reports as an opaque
+/// tungstenite capacity error, so name the cause: it is the packs, not the world.
+fn read_error(e: tokio_tungstenite::tungstenite::Error) -> AppError {
+    let msg = e.to_string();
+    if msg.contains("Space limit exceeded") || msg.contains("Message too long") {
+        return AppError::BadRequest(format!(
+            "Foundry's world snapshot is larger than the bridge accepts ({} MiB): {msg}. \
+             Compendium packs dominate that payload — disabling unused ones shrinks it.",
+            MAX_FRAME_BYTES / (1024 * 1024)
+        ));
+    }
+    AppError::Internal(anyhow::anyhow!("foundry read: {msg}"))
 }
 
 /// GET `/join` for a session cookie, then POST `/join` with the user `_id` to
@@ -364,4 +396,73 @@ pub async fn fetch_status(base_url: &str) -> Option<Value> {
         .await
         .ok()?;
     resp.json().await.ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_tungstenite::tungstenite::error::CapacityError;
+
+    #[test]
+    fn an_oversized_snapshot_names_the_packs() {
+        let err = read_error(tokio_tungstenite::tungstenite::Error::Capacity(
+            CapacityError::MessageTooLong {
+                size: 19_588_076,
+                max_size: 16_777_216,
+            },
+        ));
+        let msg = err.to_string();
+        assert!(matches!(err, AppError::BadRequest(_)), "{msg}");
+        assert!(msg.contains("Compendium packs"), "{msg}");
+    }
+
+    /// A world snapshot the size of the one in #12, from a socket that just
+    /// sends one — no Foundry needed.
+    const BIG: usize = 20 * 1024 * 1024;
+
+    async fn big_frame_server() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let _ = ws.send(Message::Text("x".repeat(BIG))).await;
+        });
+        format!("ws://127.0.0.1:{port}/")
+    }
+
+    /// The bug in #12: Foundry sends the whole world snapshot as one frame, and
+    /// tungstenite's 16 MiB frame default rejects it.
+    #[tokio::test]
+    async fn the_tungstenite_default_rejects_a_real_world_snapshot() {
+        let (mut ws, _) = connect_async_with_config(big_frame_server().await, None, false)
+            .await
+            .expect("connect");
+        let err = ws
+            .next()
+            .await
+            .expect("a frame")
+            .expect_err("should reject");
+        assert!(
+            matches!(err, tokio_tungstenite::tungstenite::Error::Capacity(_)),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn our_raised_cap_accepts_it() {
+        let (mut ws, _) =
+            connect_async_with_config(big_frame_server().await, Some(ws_config()), false)
+                .await
+                .expect("connect");
+        match ws
+            .next()
+            .await
+            .expect("a frame")
+            .expect("no capacity error")
+        {
+            Message::Text(t) => assert_eq!(t.len(), BIG),
+            other => panic!("unexpected frame: {other:?}"),
+        }
+    }
 }

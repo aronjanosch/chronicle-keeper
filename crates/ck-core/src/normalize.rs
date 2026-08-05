@@ -13,7 +13,7 @@ pub fn normalize_players(value: &Value) -> Value {
     };
     let mut out = Vec::new();
     for item in raw {
-        let (player, character, pronouns) = match &item {
+        let (player, character, pronouns, is_gm) = match &item {
             Value::Object(o) => {
                 let get = |k| {
                     o.get(k)
@@ -22,9 +22,14 @@ pub fn normalize_players(value: &Value) -> Value {
                         .trim()
                         .to_string()
                 };
-                (get("player_name"), get("character_name"), get("pronouns"))
+                (
+                    get("player_name"),
+                    get("character_name"),
+                    get("pronouns"),
+                    o.get("is_gm").and_then(Value::as_bool).unwrap_or(false),
+                )
             }
-            Value::String(s) => (s.trim().to_string(), String::new(), String::new()),
+            Value::String(s) => (s.trim().to_string(), String::new(), String::new(), false),
             _ => continue,
         };
         if player.is_empty() && character.is_empty() {
@@ -34,6 +39,7 @@ pub fn normalize_players(value: &Value) -> Value {
             "player_name": player,
             "character_name": character,
             "pronouns": pronouns,
+            "is_gm": is_gm,
         }));
     }
     Value::Array(out)

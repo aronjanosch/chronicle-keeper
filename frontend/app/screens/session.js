@@ -19,9 +19,11 @@ function pickTranscriptFile() {
   el.click();
 }
 
-function SpeakerChip({ s }) {
+function SpeakerChip({ s, gms = [] }) {
   const ch = s.character_name || s.player_name || `track ${s.track_id}`;
-  const isGM = /game ?master|gm/i.test(ch);
+  // A configured GM (primary or co-GM) counts even when the label is their own name.
+  const isGM = gms.some((g) => g.toLowerCase() === (s.player_name || '').trim().toLowerCase())
+    || /game ?master|gm/i.test(ch);
   return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--rule-soft)', borderRadius: 6 }}>
     <${Sigil} ch=${isGM ? 'GM' : (ch[0] || '?').toUpperCase()} tone=${isGM ? 'ink' : toneFor(s.player_name || ch)} />
     <div style=${{ flex: 1, minWidth: 0 }}>
@@ -323,7 +325,7 @@ export function SessionScreen({ store }) {
           </div>
           <div style=${{ padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
             ${speakers.length
-              ? speakers.map((s) => html`<${SpeakerChip} key=${s.track_id} s=${s} />`)
+              ? speakers.map((s) => html`<${SpeakerChip} key=${s.track_id} s=${s} gms=${c?.gms || []} />`)
               : tracks.length
                 ? html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start', padding: '8px 4px' }}>
                     <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic' }}>${tracks.length} track${tracks.length === 1 ? '' : 's'} uploaded, not labelled yet.</div>

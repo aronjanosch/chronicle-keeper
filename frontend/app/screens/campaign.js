@@ -128,6 +128,14 @@ function CodexTeaser({ campaign, vaultPages }) {
   </div>`;
 }
 
+// "GM Aron (he/him), Bea" — pronouns only for the primary, the one we store them for.
+function gmLine(c) {
+  const gms = c.gms?.length ? c.gms : (c.gm ? [c.gm] : []);
+  if (!gms.length) return null;
+  const [first, ...rest] = gms;
+  return `GM ${first}${c.gm_pronouns ? ` (${c.gm_pronouns})` : ''}${rest.length ? `, ${rest.join(', ')}` : ''}`;
+}
+
 export function CampaignScreen({ store }) {
   const c = store.campaign;
   // Stale-while-revalidate: the list in the store predates sessions created
@@ -135,7 +143,8 @@ export function CampaignScreen({ store }) {
   useEffect(() => { refreshCampaignSessions(); }, [c?.campaign_id]);
   if (!c) return html`<div />`;
   const sessions = store.campaignSessions;
-  const players = c.players || [];
+  // Co-GMs sit in the roster but are not the party.
+  const players = (c.players || []).filter((p) => !p.is_gm);
   const latest = sessions[0];
   const vaultPages = store.vaultPages || [];
 
@@ -171,7 +180,7 @@ export function CampaignScreen({ store }) {
         </div>
         <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, letterSpacing: '-0.015em', color: 'var(--ink)', lineHeight: 1.1 }}>${c.name}</h1>
         <div style=${{ fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: 14, color: 'var(--ink-muted)', marginTop: 6 }}>
-          ${[c.setting, c.gm && `GM ${c.gm}${c.gm_pronouns ? ` (${c.gm_pronouns})` : ''}`].filter(Boolean).join(' · ') || 'No setting recorded yet'}
+          ${[c.setting, gmLine(c)].filter(Boolean).join(' · ') || 'No setting recorded yet'}
         </div>
         <div style=${{ display: 'flex', gap: 22, marginTop: 16 }}>
           <${Stat} value=${sessions.length} label="Sessions" />

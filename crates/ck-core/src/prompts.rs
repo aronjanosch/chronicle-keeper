@@ -72,12 +72,22 @@ pub fn build_session_context(ctx: Option<&Value>, language: &str) -> String {
     }
 
     if let Some(speakers) = ctx.get("speakers").and_then(Value::as_array) {
-        let gm_name = ctx
+        // A table can have several GMs (co-GMs, rotating, guest) — any of their
+        // voices is narration, not player dialogue.
+        let gm_names: Vec<String> = ctx
             .get("gm")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_lowercase();
+            .map(|v| match v {
+                Value::Array(items) => items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|s| s.trim().to_lowercase())
+                    .collect(),
+                other => vec![value_to_plain(other).to_lowercase()],
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect();
         let plays = if de { "spielt" } else { "plays" };
         let gm_label = if de {
             "ist der Spielleiter"
@@ -105,7 +115,7 @@ pub fn build_session_context(ctx: Option<&Value>, language: &str) -> String {
             if player.is_empty() && character.is_empty() {
                 continue;
             }
-            let mut part = if !gm_name.is_empty() && player.to_lowercase() == gm_name {
+            let mut part = if gm_names.contains(&player.to_lowercase()) {
                 format!("- {player} {gm_label}")
             } else if !player.is_empty() && !character.is_empty() {
                 format!("- {player} {plays} {character}")
@@ -216,6 +226,13 @@ fn value_to_plain(v: &Value) -> String {
         Value::String(s) => s.trim().to_string(),
         Value::Number(n) => n.to_string(),
         Value::Null => String::new(),
+        // Multi-valued fields (co-GMs) read as one line.
+        Value::Array(items) => items
+            .iter()
+            .map(value_to_plain)
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(", "),
         other => other.to_string(),
     }
 }
@@ -294,6 +311,34 @@ mod tests {
         assert!(block.contains("- Gandalf"));
         assert!(block.contains("Places:"));
         assert!(block.contains("- Bree"));
+    }
+
+    #[test]
+    fn every_gm_is_labelled_gm_not_a_player() {
+        let ctx = json!({
+            "gm": ["Aron", "Bea"],
+            "speakers": [
+                { "player_name": "aron", "character_name": "", "pronouns": "he/him" },
+                { "player_name": "Bea", "character_name": "", "pronouns": "they/them" },
+                { "player_name": "Cle", "character_name": "Lyra", "pronouns": "she/her" },
+            ],
+        });
+        let block = build_session_context(Some(&ctx), "en");
+        assert!(block.contains("- GM: Aron, Bea"));
+        assert!(block.contains("- aron is the GM (he/him)"));
+        assert!(block.contains("- Bea is the GM (they/them)"));
+        assert!(block.contains("- Cle plays Lyra (she/her)"));
+    }
+
+    #[test]
+    fn a_single_gm_string_still_works() {
+        let ctx = json!({
+            "gm": "Aron",
+            "speakers": [{ "player_name": "Aron", "character_name": "", "pronouns": "" }],
+        });
+        let block = build_session_context(Some(&ctx), "en");
+        assert!(block.contains("- GM: Aron"));
+        assert!(block.contains("- Aron is the GM"));
     }
 
     #[test]

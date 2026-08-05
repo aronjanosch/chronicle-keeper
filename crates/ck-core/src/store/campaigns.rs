@@ -120,6 +120,7 @@ fn players_value(players: &[PlayerEntry]) -> Value {
             "player_name": p.player_name,
             "character_name": p.character_name,
             "pronouns": p.pronouns,
+            "is_gm": p.is_gm,
         }))
         .collect::<Vec<_>>())
 }
@@ -145,6 +146,7 @@ fn players_entries(v: &Value) -> Vec<PlayerEntry> {
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .into(),
+                    is_gm: p.get("is_gm").and_then(Value::as_bool).unwrap_or(false),
                 })
                 .collect()
         })
@@ -160,6 +162,7 @@ fn detail_from(root: &Path, cfg: &WorldConfig, fallback_lang: &str) -> CampaignD
         system: cfg.system.clone(),
         gm: cfg.gm.clone(),
         gm_pronouns: cfg.gm_pronouns.clone(),
+        gms: cfg.gm_names(),
         setting: cfg.setting.clone(),
         default_language: if cfg.default_language.is_empty() {
             fallback_lang.to_string()

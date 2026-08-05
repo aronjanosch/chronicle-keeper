@@ -16,6 +16,8 @@ pub struct CampaignDetail {
     pub system: String,
     pub gm: String,
     pub gm_pronouns: String,
+    /// Primary GM plus any roster co-GMs — everyone whose voice is GM narration.
+    pub gms: Vec<String>,
     pub setting: String,
     pub default_language: String,
     pub players: Value,

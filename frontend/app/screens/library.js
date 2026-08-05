@@ -68,7 +68,9 @@ function GettingStarted({ store }) {
 }
 
 function CampaignCard({ c }) {
-  const players = c.players || [];
+  // Co-GMs sit in the roster but are not the party.
+  const players = (c.players || []).filter((p) => !p.is_gm);
+  const gms = c.gms?.length ? c.gms : (c.gm ? [c.gm] : []);
   const next = c.next_session_number || 1;
   const isExample = c.campaign_id === EXAMPLE_CAMPAIGN_ID;
   return html`<div onClick=${() => openCampaign(c.campaign_id)} style=${{
@@ -96,7 +98,7 @@ function CampaignCard({ c }) {
     <div style=${{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 22 }}>
       <${PartyAvatars} players=${players} />
       <div style=${{ fontSize: 12, color: 'var(--ink-muted)' }}>
-        ${players.length} player${players.length === 1 ? '' : 's'}${c.gm ? ` · GM ${c.gm}` : ''}
+        ${players.length} player${players.length === 1 ? '' : 's'}${gms.length ? ` · GM ${gms.join(', ')}` : ''}
       </div>
     </div>
     <div style=${{ height: 1, background: 'var(--rule-soft)' }} />

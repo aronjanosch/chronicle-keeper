@@ -17,6 +17,14 @@ pub struct PlayerEntry {
     pub character_name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub pronouns: String,
+    /// Co-GM: this person also runs the table (rotating/guest GMs), so their
+    /// tracks are GM narration, not player dialogue. `gm` above is the primary.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_gm: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
@@ -153,6 +161,28 @@ fn is_default_codex_root(s: &str) -> bool {
 }
 
 impl WorldConfig {
+    /// Everyone who runs this table: the primary `gm` plus any roster entry
+    /// flagged `is_gm` (co-GMs, guest GMs). Primary first, deduped case-insensitively.
+    pub fn gm_names(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+        for name in std::iter::once(self.gm.as_str()).chain(
+            self.players
+                .iter()
+                .filter(|p| p.is_gm)
+                .map(|p| p.player_name.as_str()),
+        ) {
+            let name = name.trim();
+            let key = name.to_lowercase();
+            if name.is_empty() || seen.contains(&key) {
+                continue;
+            }
+            seen.push(key);
+            out.push(name.to_string());
+        }
+        out
+    }
+
     /// Absolute Codex folder for this world.
     pub fn codex_dir(&self, world_root: &Path) -> PathBuf {
         match self.codex_root.trim() {
@@ -254,6 +284,7 @@ mod tests {
                 player_name: "Aron".into(),
                 character_name: "Lyra".into(),
                 pronouns: "she/her".into(),
+                is_gm: false,
             }],
             codex_root: String::new(),
             kinds: BTreeMap::new(),
@@ -263,6 +294,43 @@ mod tests {
         write(&root, &cfg).unwrap();
         let back = read(&root).unwrap().unwrap();
         assert_eq!(back, cfg);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn co_gms_join_the_primary_and_survive_a_write() {
+        let root = tmp_root("cogm");
+        let cfg = WorldConfig {
+            id: "w-2".into(),
+            name: "Ashfall".into(),
+            gm: " Aron ".into(),
+            players: vec![
+                PlayerEntry {
+                    player_name: "Bea".into(),
+                    pronouns: "they/them".into(),
+                    is_gm: true,
+                    ..Default::default()
+                },
+                PlayerEntry {
+                    player_name: "aron".into(),
+                    character_name: "Lyra".into(),
+                    is_gm: true,
+                    ..Default::default()
+                },
+                PlayerEntry {
+                    player_name: "Cle".into(),
+                    character_name: "Thorn".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        // Primary first, duplicate of the primary dropped, players stay out.
+        assert_eq!(cfg.gm_names(), vec!["Aron".to_string(), "Bea".to_string()]);
+        write(&root, &cfg).unwrap();
+        let back = read(&root).unwrap().unwrap();
+        assert!(back.players[0].is_gm);
+        assert!(!back.players[2].is_gm);
         std::fs::remove_dir_all(&root).ok();
     }
 

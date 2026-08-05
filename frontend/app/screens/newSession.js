@@ -126,9 +126,12 @@ export function NewSessionScreen({ store }) {
   }
 
   const gmName = (c?.gm || '').trim();
+  const players = c?.players || [];
+  // GMs first: the roster chips are capped at five, and a co-GM must not fall off.
   const roster = [
     ...(gmName ? [{ player_name: gmName, character_name: '', pronouns: c?.gm_pronouns || '', is_gm: true }] : []),
-    ...(c?.players || []),
+    ...players.filter((p) => p.is_gm && (p.player_name || '').trim().toLowerCase() !== gmName.toLowerCase()),
+    ...players.filter((p) => !p.is_gm),
   ];
   const assignedCount = Object.values(speakers).filter((s) => s.player_name || s.character_name).length;
 

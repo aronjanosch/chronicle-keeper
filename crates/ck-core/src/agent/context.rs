@@ -87,7 +87,7 @@ fn identity(cfg: &WorldConfig) -> String {
     let mut s = format!("## The world\n\nName: {}\n", cfg.name);
     field(&mut s, "System", &cfg.system);
     field(&mut s, "Setting", &cfg.setting);
-    field(&mut s, "GM", &cfg.gm);
+    field(&mut s, "GM", &cfg.gm_names().join(", "));
     field(&mut s, "Language", &cfg.default_language);
     let pcs: Vec<String> = cfg
         .players
@@ -307,6 +307,7 @@ mod tests {
             player_name: "Aron".into(),
             character_name: "Lyra".into(),
             pronouns: "she/her".into(),
+            is_gm: false,
         }];
         let ctx = world_context(&root, &c);
         assert!(ctx.contains("Name: Ashfall"));

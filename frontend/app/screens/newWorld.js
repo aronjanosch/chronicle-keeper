@@ -56,9 +56,10 @@ function PlayerRows({ players, onChange }) {
       <${Input} value=${p.player_name} placeholder="Player" onInput=${(v) => upd(i, 'player_name', v)} />
       <${Input} value=${p.character_name} placeholder="Character" onInput=${(v) => upd(i, 'character_name', v)} />
       <${PronounSelect} value=${p.pronouns} onChange=${(v) => upd(i, 'pronouns', v)} />
+      <${Btn} kind=${p.is_gm ? 'primary' : 'ghost'} size="sm" title="Also runs the table — their voice is GM narration" onClick=${() => upd(i, 'is_gm', !p.is_gm)}>GM</${Btn}>
       <${Btn} kind="ghost" size="sm" icon="x" onClick=${() => onChange(players.filter((_, j) => j !== i))} />
     </div>`)}
-    <${Btn} kind="ghost" size="sm" icon="plus" onClick=${() => onChange([...players, { player_name: '', character_name: '', pronouns: '' }])}>Add player</${Btn}>
+    <${Btn} kind="ghost" size="sm" icon="plus" onClick=${() => onChange([...players, { player_name: '', character_name: '', pronouns: '', is_gm: false }])}>Add player</${Btn}>
   </div>`;
 }
 
@@ -285,7 +286,7 @@ export function NewWorldScreen() {
               <${Field} label="Start session #" hint="First session number for this world.">
                 <${Input} type="number" value=${f.start} onInput=${(v) => set('start', v)} style=${{ width: 120 }} />
               </${Field}>
-              <${Field} label="Players"><${PlayerRows} players=${f.players} onChange=${(p) => set('players', p)} /></${Field}>
+              <${Field} label="Players" hint="Tick GM for a co-GM or guest GM — their voice counts as narration, not player dialogue."><${PlayerRows} players=${f.players} onChange=${(p) => set('players', p)} /></${Field}>
               <${Field} label="Additional information" hint="World frame, house rules, or special notes.">
                 <${Textarea} value=${f.extra_info} onInput=${(v) => set('extra_info', v)} rows=${2} />
               </${Field}>

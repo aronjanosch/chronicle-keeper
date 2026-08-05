@@ -414,7 +414,7 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
         // Only offered when the bridge is configured — otherwise the tool would
         // just fail on every call.
         if keeper_tools.foundry
-            && crate::foundry::load_settings(state)
+            && crate::foundry::load_settings_for(state, Some(cfg.id.as_str()))
                 .map(|s| s.is_complete())
                 .unwrap_or(false)
         {

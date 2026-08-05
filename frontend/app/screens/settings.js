@@ -156,11 +156,13 @@ function CapabilityRow({ label, hint, enabled, disabled, disabledHint, onToggle 
 
 function CapabilitiesCard() {
   const [foundryConfigured, setFoundryConfigured] = useState(false);
+  // The bridge the open world actually uses — its own, else the app default.
+  const campaignId = store.campaign?.campaign_id;
   useEffect(() => {
-    loadFoundrySettings()
+    loadFoundrySettings(campaignId)
       .then((s) => setFoundryConfigured(!!(s.server_url && s.user_id && s.password_set)))
       .catch(() => {});
-  }, []);
+  }, [campaignId]);
   const cfg = store.config || {};
   function flip(key) {
     saveConfig({ [key]: !cfg[key] })
@@ -196,30 +198,63 @@ function CapabilitiesCard() {
 function FoundryCard() {
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState('');
+  // Which bridge is on screen: the app-wide default, or the open world's own.
+  const [scope, setScope] = useState('default');
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const world = store.campaign;
+  const scopeId = scope === 'world' ? world?.campaign_id : undefined;
 
-  useEffect(() => {
-    loadFoundrySettings()
-      .then((s) => setF({ server_url: s.server_url || '', user_id: s.user_id || '', password: '', password_set: !!s.password_set }))
+  function load(forScope) {
+    return loadFoundrySettings(forScope === 'world' ? world?.campaign_id : undefined)
+      .then((s) => setF({ server_url: s.server_url || '', user_id: s.user_id || '', password: '', password_set: !!s.password_set, own: s.own !== false }))
       .catch((e) => setOp(`Can't load Foundry settings: ${e.message}`, 'err'));
-  }, []);
+  }
+
+  // Open on whichever bridge this world actually uses.
+  useEffect(() => {
+    if (!world) { setScope('default'); load('default'); return; }
+    loadFoundrySettings(world.campaign_id)
+      .then((s) => {
+        const own = s.own !== false;
+        setScope(own ? 'world' : 'default');
+        return own ? setF({ server_url: s.server_url || '', user_id: s.user_id || '', password: '', password_set: !!s.password_set, own: true }) : load('default');
+      })
+      .catch((e) => setOp(`Can't load Foundry settings: ${e.message}`, 'err'));
+  }, [world?.campaign_id]);
 
   if (!f) return html`<${SettingsCard} icon="link" title="Foundry VTT bridge" desc="Project codex pages into a live FoundryVTT world as Journal entries."><div style=${{ padding: '12px 0', fontSize: 12.5, color: 'var(--ink-muted)' }}>Loading…</div></${SettingsCard}>`;
 
+  // Switching to a world that has no bridge of its own starts from the default's
+  // values — same server, different user is the common case — but saving them is
+  // what actually gives the world its own.
+  async function switchScope(next) {
+    setScope(next);
+    if (next === 'default') { await load('default'); return; }
+    await load('world');
+  }
   async function save() {
     setBusy('save');
     try {
       const payload = { server_url: f.server_url.trim(), user_id: f.user_id.trim() };
       if (f.password) payload.password = f.password; // omit to keep the stored one
-      await saveFoundrySettings(payload);
-      setF((s) => ({ ...s, password: '', password_set: s.password_set || !!s.password }));
-      setOp('Foundry settings saved', 'done');
+      await saveFoundrySettings(payload, scopeId);
+      setF((s) => ({ ...s, password: '', password_set: s.password_set || !!s.password, own: true }));
+      setOp(scopeId ? `Bridge saved for “${world.name}”` : 'Foundry settings saved', 'done');
+    } catch (e) { setOp(e.message, 'err'); } finally { setBusy(''); }
+  }
+  async function useDefault() {
+    setBusy('save');
+    try {
+      await saveFoundrySettings({ use_default: true }, world.campaign_id);
+      setScope('default');
+      await load('default');
+      setOp(`“${world.name}” now uses the app default`, 'done');
     } catch (e) { setOp(e.message, 'err'); } finally { setBusy(''); }
   }
   async function test() {
     setBusy('test');
     try {
-      const r = await testFoundry();
+      const r = await testFoundry(scopeId);
       const ver = r.version ? ` (Foundry v${r.version}${r.world ? `, world “${r.world}”` : ''})` : '';
       if (r.version && r.compatible === false) {
         setOp(`Connected${ver} — untested major; the bridge is validated on v${r.supported_major}. Syncs may misbehave.`, 'err');
@@ -238,23 +273,35 @@ function FoundryCard() {
     } catch (e) { setOp(`Sync failed: ${e.message}`, 'err'); } finally { setBusy(''); }
   }
 
+  const inherited = scope === 'world' && !f.own;
   return html`<${SettingsCard} icon="link" title="Foundry VTT bridge" desc="Project codex pages into a live FoundryVTT world as Journal entries. One-way: Chronicle Keeper is the source of truth.">
+    ${world && html`
+    <${Row} label="These settings apply to" hint="Worlds on different Foundry servers — or different worlds on one server, which need their own user — each keep their own bridge. Everything else uses the app default.">
+      <select value=${scope} onChange=${(e) => switchScope(e.target.value)} style=${inp({ width: 300, cursor: 'pointer' })}>
+        <option value="default">Every world (app default)</option>
+        <option value="world">Only “${world.name}”</option>
+      </select>
+      ${inherited && html`<div style=${{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 6, lineHeight: 1.45, maxWidth: 460 }}>
+        “${world.name}” uses the app default today. These are the default's values — edit and save to give this world a bridge of its own.
+      </div>`}
+    </${Row}>`}
     <${Row} label="Server URL" hint="Your Foundry world's base URL, e.g. https://foundry.example.com (no /game).">
       <input value=${f.server_url} onInput=${(e) => set('server_url', e.target.value)} placeholder="https://foundry.example.com" style=${inp({ fontFamily: 'var(--font-mono)' })} />
     </${Row}>
-    <${Row} label="API user id" hint="The 16-char document _id of a dedicated Assistant-GM user (game.users.getName('name').id in Foundry's console).">
+    <${Row} label="API user id" hint="The 16-char document _id of a dedicated Assistant-GM user (game.users.getName('name').id in Foundry's console). A user exists per Foundry world, so each world needs its own id.">
       <input value=${f.user_id} onInput=${(e) => set('user_id', e.target.value)} placeholder="K7zWvqylw1bpbI9b" style=${inp({ width: 280, fontFamily: 'var(--font-mono)' })} />
     </${Row}>
-    <${Row} label="Password" hint="That user's password. Stored on this machine only; never displayed.">
+    <${Row} label="Password" hint="That user's password. Stored on this machine only; never displayed, never written into the world folder.">
       <input type="password" value=${f.password} onInput=${(e) => set('password', e.target.value)} placeholder=${f.password_set ? '•••••••• (saved)' : ''} style=${inp({ width: 280, fontFamily: 'var(--font-mono)' })} />
     </${Row}>
     <div style=${{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-      <${Btn} kind="secondary" size="sm" disabled=${!!busy} onClick=${save}>${busy === 'save' ? 'Saving…' : 'Save'}</${Btn}>
+      <${Btn} kind="secondary" size="sm" disabled=${!!busy} onClick=${save}>${busy === 'save' ? 'Saving…' : (inherited ? `Save for “${world.name}”` : 'Save')}</${Btn}>
       <${Btn} kind="ghost" size="sm" disabled=${!!busy} onClick=${test}>${busy === 'test' ? 'Testing…' : 'Test connection'}</${Btn}>
+      ${scope === 'world' && f.own && html`<${Btn} kind="ghost" size="sm" disabled=${!!busy} onClick=${useDefault}>Use app default</${Btn}>`}
       <div style=${{ flex: 1 }} />
-      ${store.campaign && html`<${Btn} kind="primary" size="sm" icon="upload" disabled=${!!busy} onClick=${sync}>${busy === 'sync' ? 'Syncing…' : `Sync “${store.campaign.name}” now`}</${Btn}>`}
+      ${world && html`<${Btn} kind="primary" size="sm" icon="upload" disabled=${!!busy} onClick=${sync}>${busy === 'sync' ? 'Syncing…' : `Sync “${world.name}” now`}</${Btn}>`}
     </div>
-    ${!store.campaign && html`<div style=${{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 8 }}>Open a world to sync its codex.</div>`}
+    ${!world && html`<div style=${{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 8 }}>Open a world to sync its codex, or to give it a bridge of its own.</div>`}
   </${SettingsCard}>`;
 }
 
@@ -314,6 +361,7 @@ export function SettingsScreen({ store }) {
       setF({
         output_root: cfg.output_root || '',
         summary_provider: (cfg.summary_provider || 'ollama').toLowerCase(),
+        llm_retry_attempts: cfg.llm_retry_attempts ?? 3,
         transcription_timeout_seconds: cfg.transcription_timeout_seconds || 600,
         transcription_provider: cfg.transcription_provider || 'auto',
         transcription_model: cfg.transcription_model || '',
@@ -340,6 +388,7 @@ export function SettingsScreen({ store }) {
       const payload = {
         output_root: f.output_root.trim(),
         summary_provider: f.summary_provider || 'ollama',
+        llm_retry_attempts: Math.min(10, Math.max(0, parseInt(f.llm_retry_attempts, 10) || 0)),
         transcription_timeout_seconds: Math.max(60, parseInt(f.transcription_timeout_seconds, 10) || 600),
         transcription_provider: f.transcription_provider || 'auto',
         transcription_model: f.transcription_model || '',
@@ -382,6 +431,9 @@ export function SettingsScreen({ store }) {
             <select value=${f.summary_provider} onChange=${(e) => set('summary_provider', e.target.value)} style=${inp({ width: 240, cursor: 'pointer' })}>
               ${providers.map((p) => html`<option key=${p.id} value=${p.id}>${p.name}</option>`)}
             </select>
+          </${Row}>
+          <${Row} label="Rate-limit retries" hint="Cloud providers reject requests that blow their per-minute token budget. Chronicle Keeper waits the interval the provider asks for and tries again, up to this many times. 0 = report the error straight away.">
+            <input type="number" min="0" max="10" step="1" value=${f.llm_retry_attempts} onInput=${(e) => set('llm_retry_attempts', e.target.value)} style=${inp({ width: 100, fontFamily: 'var(--font-mono)' })} />
           </${Row}>
           <div style=${{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 12 }}>
             ${providers.map((p) => html`<${ProviderCard} key=${p.id} p=${p} live=${pings[p.id]} />`)}

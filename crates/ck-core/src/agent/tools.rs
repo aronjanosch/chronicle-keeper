@@ -781,7 +781,7 @@ fn web_preview(name: &str, args: &Value) -> Result<Value, String> {
 /// so the UI shows the summary, not a diff. The create-* tools describe what
 /// one document they will make; `sync_foundry` describes the whole push.
 fn foundry_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, String> {
-    if !crate::foundry::load_settings(ctx.state)
+    if !crate::foundry::load_settings_for(ctx.state, Some(ctx.cfg.id.as_str()))
         .map(|s| s.is_complete())
         .unwrap_or(false)
     {
@@ -884,7 +884,8 @@ fn foundry_sync_preview(ctx: &ToolCtx<'_>) -> Result<Value, String> {
 /// Run the one-way Codex → Foundry push and report the counts. Async (network);
 /// the agent loop calls this directly rather than through `dispatch`.
 pub async fn run_foundry_sync(ctx: &ToolCtx<'_>) -> Result<String, String> {
-    let settings = crate::foundry::load_settings(ctx.state).map_err(app_err)?;
+    let settings =
+        crate::foundry::load_settings_for(ctx.state, Some(ctx.cfg.id.as_str())).map_err(app_err)?;
     if !settings.is_complete() {
         return Err(
             "The Foundry bridge is not configured — set it up in Settings → Foundry VTT bridge."
@@ -944,7 +945,8 @@ pub async fn run_foundry_tool(
     if name == "sync_foundry" {
         return run_foundry_sync(ctx).await;
     }
-    let settings = crate::foundry::load_settings(ctx.state).map_err(app_err)?;
+    let settings =
+        crate::foundry::load_settings_for(ctx.state, Some(ctx.cfg.id.as_str())).map_err(app_err)?;
     if !settings.is_complete() {
         return Err(
             "The Foundry bridge is not configured — set it up in Settings → Foundry VTT bridge."

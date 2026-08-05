@@ -7,19 +7,52 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::vault::{vault_root, world_cfg};
-use crate::config;
 use crate::error::{AppError, AppResult};
-use crate::foundry::{self, load_settings};
+use crate::foundry::{self, load_settings_for};
 use crate::state::AppState;
+use crate::store::campaigns;
 
-/// GET — current bridge settings; the password is never echoed, only its presence.
-pub async fn get_settings(State(state): State<AppState>) -> AppResult<Json<Value>> {
-    let s = load_settings(&state)?;
-    Ok(Json(json!({
+/// 404 on an id no world answers to, so a typo can't quietly stash settings
+/// under a scope nothing will ever read.
+fn known_campaign(state: &AppState, campaign_id: &str) -> AppResult<()> {
+    state
+        .with_db(|conn| campaigns::world_root_for_id(conn, campaign_id))?
+        .ok_or_else(|| AppError::NotFound(format!("Campaign not found: {campaign_id}")))?;
+    Ok(())
+}
+
+/// Settings for one scope: `campaign_id: None` is the app-wide default, `Some`
+/// one campaign's own bridge. `own` says which of the two the values came from,
+/// so the UI can show "using the app default" without a second request.
+fn settings_json(state: &AppState, campaign_id: Option<&str>) -> AppResult<Value> {
+    let (s, own) = state.with_db(|conn| {
+        let own = match campaign_id {
+            Some(id) => foundry::has_own_settings(conn, id)?,
+            None => true,
+        };
+        Ok::<_, AppError>((foundry::read_settings(conn, campaign_id)?, own))
+    })?;
+    Ok(json!({
         "server_url": s.server_url,
         "user_id": s.user_id,
         "password_set": !s.password.is_empty(),
-    })))
+        "own": own,
+    }))
+}
+
+/// GET — the app-wide default bridge settings; the password is never echoed,
+/// only its presence.
+pub async fn get_settings(State(state): State<AppState>) -> AppResult<Json<Value>> {
+    Ok(Json(settings_json(&state, None)?))
+}
+
+/// GET — the settings in effect for one campaign (its own, else the default).
+pub async fn get_campaign_settings(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+) -> AppResult<Json<Value>> {
+    known_campaign(&state, &campaign_id)?;
+    Ok(Json(settings_json(&state, Some(&campaign_id))?))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -28,31 +61,66 @@ pub struct SettingsRequest {
     pub user_id: Option<String>,
     /// Omit to keep the stored password; empty string clears it.
     pub password: Option<String>,
+    /// Campaign scope only: drop this world's own bridge and fall back to the
+    /// app-wide default. Any other field in the same request is ignored.
+    pub use_default: Option<bool>,
 }
 
-/// PUT — update bridge settings (only the fields present are written).
+/// PUT — update the app-wide default (only the fields present are written).
 pub async fn put_settings(
     State(state): State<AppState>,
     Json(req): Json<SettingsRequest>,
 ) -> AppResult<Json<Value>> {
+    state.with_db(|conn| write_scope(conn, None, &req))?;
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+/// PUT — give this campaign its own bridge, or (with `use_default`) take it away.
+pub async fn put_campaign_settings(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<SettingsRequest>,
+) -> AppResult<Json<Value>> {
+    known_campaign(&state, &campaign_id)?;
     state.with_db(|conn| {
-        if let Some(v) = &req.server_url {
-            config::set_value(conn, "foundry_server_url", v.trim())?;
+        if req.use_default == Some(true) {
+            return foundry::clear_own_settings(conn, &campaign_id);
         }
-        if let Some(v) = &req.user_id {
-            config::set_value(conn, "foundry_user_id", v.trim())?;
-        }
-        if let Some(v) = &req.password {
-            config::set_value(conn, "foundry_password", v)?;
-        }
-        Ok::<_, AppError>(())
+        write_scope(conn, Some(campaign_id.as_str()), &req)
     })?;
     Ok(Json(json!({ "status": "ok" })))
 }
 
-/// POST — verify the bridge can authenticate against the live world.
+fn write_scope(
+    conn: &rusqlite::Connection,
+    campaign_id: Option<&str>,
+    req: &SettingsRequest,
+) -> AppResult<()> {
+    foundry::write_settings(
+        conn,
+        campaign_id,
+        req.server_url.as_deref().map(str::trim),
+        req.user_id.as_deref().map(str::trim),
+        req.password.as_deref(),
+    )
+}
+
+/// POST — verify the app-wide default can authenticate against the live world.
 pub async fn test_connection(State(state): State<AppState>) -> AppResult<Json<Value>> {
-    let s = load_settings(&state)?;
+    test_scope(&state, None).await
+}
+
+/// POST — same test, against the bridge this campaign actually uses.
+pub async fn test_campaign_connection(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+) -> AppResult<Json<Value>> {
+    known_campaign(&state, &campaign_id)?;
+    test_scope(&state, Some(&campaign_id)).await
+}
+
+async fn test_scope(state: &AppState, campaign_id: Option<&str>) -> AppResult<Json<Value>> {
+    let s = load_settings_for(state, campaign_id)?;
     if !s.is_complete() {
         return Err(AppError::BadRequest(
             "Foundry bridge is not fully configured (server URL, user id, password).".into(),
@@ -92,7 +160,7 @@ pub async fn sync(
     State(state): State<AppState>,
     Path(campaign_id): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let s = load_settings(&state)?;
+    let s = load_settings_for(&state, Some(&campaign_id))?;
     if !s.is_complete() {
         return Err(AppError::BadRequest(
             "Foundry bridge is not fully configured (server URL, user id, password).".into(),

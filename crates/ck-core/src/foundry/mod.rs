@@ -27,12 +27,15 @@ pub fn version_compatible(version: &str) -> bool {
 use crate::config;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Connection settings for the Foundry bridge (stored in the global app DB).
+/// Connection settings for the Foundry bridge. Stored in the global app DB, not
+/// the world folder: a world is meant to be portable/shareable and this carries
+/// a password.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FoundrySettings {
     pub server_url: String,
@@ -46,15 +49,81 @@ impl FoundrySettings {
     }
 }
 
-/// Read the bridge settings from the global app DB.
-pub fn load_settings(state: &AppState) -> AppResult<FoundrySettings> {
-    state.with_db(|conn| {
-        Ok(FoundrySettings {
-            server_url: config::get_value(conn, "foundry_server_url")?.unwrap_or_default(),
-            user_id: config::get_value(conn, "foundry_user_id")?.unwrap_or_default(),
-            password: config::get_value(conn, "foundry_password")?.unwrap_or_default(),
-        })
+const SETTING_KEYS: [&str; 3] = ["foundry_server_url", "foundry_user_id", "foundry_password"];
+
+/// A campaign's own bridge lives under `<key>:<campaign_id>`; the bare keys are
+/// the app-wide default every campaign falls back to.
+fn scoped_key(key: &str, campaign_id: Option<&str>) -> String {
+    match campaign_id {
+        Some(id) => format!("{key}:{id}"),
+        None => key.to_string(),
+    }
+}
+
+/// The campaign is self-configured when it has its own server URL. Scope is
+/// all-or-nothing on purpose: a per-field fallback could pair one world's user
+/// id with another server's password, which fails in a way nobody can debug.
+fn own_scope<'a>(conn: &Connection, campaign_id: Option<&'a str>) -> AppResult<Option<&'a str>> {
+    let Some(id) = campaign_id.filter(|id| !id.is_empty()) else {
+        return Ok(None);
+    };
+    let url = config::get_value(conn, &scoped_key(SETTING_KEYS[0], Some(id)))?;
+    Ok(url.map(|_| id))
+}
+
+/// True when this campaign has a bridge of its own rather than using the
+/// app-wide default.
+pub fn has_own_settings(conn: &Connection, campaign_id: &str) -> AppResult<bool> {
+    Ok(own_scope(conn, Some(campaign_id))?.is_some())
+}
+
+pub fn read_settings(conn: &Connection, campaign_id: Option<&str>) -> AppResult<FoundrySettings> {
+    let scope = own_scope(conn, campaign_id)?;
+    let get = |key: &str| -> AppResult<String> {
+        Ok(config::get_value(conn, &scoped_key(key, scope))?.unwrap_or_default())
+    };
+    Ok(FoundrySettings {
+        server_url: get(SETTING_KEYS[0])?,
+        user_id: get(SETTING_KEYS[1])?,
+        password: get(SETTING_KEYS[2])?,
     })
+}
+
+/// Write a scope's settings. `None` for a field keeps what is stored; the
+/// password is cleared only by an explicit empty string.
+pub fn write_settings(
+    conn: &Connection,
+    campaign_id: Option<&str>,
+    server_url: Option<&str>,
+    user_id: Option<&str>,
+    password: Option<&str>,
+) -> AppResult<()> {
+    for (key, value) in SETTING_KEYS.iter().zip([server_url, user_id, password]) {
+        if let Some(v) = value {
+            config::set_value(conn, &scoped_key(key, campaign_id), v)?;
+        }
+    }
+    Ok(())
+}
+
+/// Drop a campaign's own bridge so it falls back to the app-wide default. Blanks
+/// rather than deletes — same effect for `own_scope`, and it clears the password.
+pub fn clear_own_settings(conn: &Connection, campaign_id: &str) -> AppResult<()> {
+    write_settings(conn, Some(campaign_id), Some(""), Some(""), Some(""))
+}
+
+/// The bridge settings in effect for a campaign — its own when it has them,
+/// otherwise the app-wide default. `None` reads the app-wide default itself.
+pub fn load_settings_for(
+    state: &AppState,
+    campaign_id: Option<&str>,
+) -> AppResult<FoundrySettings> {
+    state.with_db(|conn| read_settings(conn, campaign_id))
+}
+
+/// The app-wide default bridge settings.
+pub fn load_settings(state: &AppState) -> AppResult<FoundrySettings> {
+    load_settings_for(state, None)
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +593,98 @@ mod tests {
             "alpha" => Some("aaaaaaaaaaaaaaaa".to_string()),
             _ => None,
         }
+    }
+
+    #[test]
+    fn campaign_bridge_overrides_the_app_default_whole() {
+        let conn = crate::db::open_in_memory().unwrap();
+        write_settings(
+            &conn,
+            None,
+            Some("https://one.example.com"),
+            Some("aaaaaaaaaaaaaaaa"),
+            Some("pw-default"),
+        )
+        .unwrap();
+
+        // No own URL → the app-wide default, and the UI is told it isn't its own.
+        assert!(!has_own_settings(&conn, "w-1").unwrap());
+        let s = read_settings(&conn, Some("w-1")).unwrap();
+        assert_eq!(s.server_url, "https://one.example.com");
+        assert_eq!(s.password, "pw-default");
+
+        write_settings(
+            &conn,
+            Some("w-1"),
+            Some("https://two.example.com"),
+            Some("bbbbbbbbbbbbbbbb"),
+            Some("pw-own"),
+        )
+        .unwrap();
+        assert!(has_own_settings(&conn, "w-1").unwrap());
+        let s = read_settings(&conn, Some("w-1")).unwrap();
+        assert_eq!(s.server_url, "https://two.example.com");
+        assert_eq!(s.user_id, "bbbbbbbbbbbbbbbb");
+        assert_eq!(s.password, "pw-own");
+        // Other campaigns and the default itself are untouched.
+        assert_eq!(
+            read_settings(&conn, Some("w-2")).unwrap().server_url,
+            "https://one.example.com"
+        );
+        assert_eq!(
+            read_settings(&conn, None).unwrap().server_url,
+            "https://one.example.com"
+        );
+
+        clear_own_settings(&conn, "w-1").unwrap();
+        assert!(!has_own_settings(&conn, "w-1").unwrap());
+        let s = read_settings(&conn, Some("w-1")).unwrap();
+        assert_eq!(s.server_url, "https://one.example.com");
+        // The world's own password is gone, not left behind under its key.
+        assert_eq!(s.password, "pw-default");
+        assert_eq!(
+            config::get_value(&conn, "foundry_password:w-1").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn own_url_without_a_password_does_not_borrow_the_default_one() {
+        let conn = crate::db::open_in_memory().unwrap();
+        write_settings(
+            &conn,
+            None,
+            Some("https://one.example.com"),
+            Some("aaaaaaaaaaaaaaaa"),
+            Some("pw-default"),
+        )
+        .unwrap();
+        write_settings(
+            &conn,
+            Some("w-1"),
+            Some("https://two.example.com"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Scope is all-or-nothing: a half-filled world bridge reads incomplete
+        // rather than pairing its URL with the default's credentials.
+        let s = read_settings(&conn, Some("w-1")).unwrap();
+        assert_eq!(s.server_url, "https://two.example.com");
+        assert!(s.user_id.is_empty());
+        assert!(s.password.is_empty());
+        assert!(!s.is_complete());
+    }
+
+    #[test]
+    fn a_world_with_no_id_uses_the_app_default() {
+        let conn = crate::db::open_in_memory().unwrap();
+        write_settings(&conn, None, Some("https://one.example.com"), None, None).unwrap();
+        assert_eq!(
+            read_settings(&conn, Some("")).unwrap().server_url,
+            "https://one.example.com"
+        );
     }
 
     #[test]

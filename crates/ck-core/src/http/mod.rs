@@ -98,6 +98,14 @@ pub fn router(state: AppState) -> Router {
             get(foundry::get_settings).put(foundry::put_settings),
         )
         .route("/foundry/test", post(foundry::test_connection))
+        .route(
+            "/campaigns/:id/foundry/settings",
+            get(foundry::get_campaign_settings).put(foundry::put_campaign_settings),
+        )
+        .route(
+            "/campaigns/:id/foundry/test",
+            post(foundry::test_campaign_connection),
+        )
         .route("/campaigns/:id/foundry/sync", post(foundry::sync))
         .route("/campaigns/:id/vault/kinds", get(vault::kind_schemas))
         .route("/campaigns/:id/vault/snippets", get(vault::list_snippets))

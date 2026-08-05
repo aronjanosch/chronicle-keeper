@@ -956,15 +956,17 @@ export async function saveConfig(payload, apiBaseValue) {
   return updated;
 }
 
-// Foundry bridge (Phase 23) — codex → Journals projection.
-export async function loadFoundrySettings() {
-  return apiFetch('/foundry/settings');
+// Foundry bridge (Phase 23) — codex → Journals projection. Without a campaignId
+// these read/write the app-wide default; with one, that world's own bridge
+// (falling back to the default until it has one — `own` says which).
+export async function loadFoundrySettings(campaignId) {
+  return apiFetch(campaignId ? `/campaigns/${campaignId}/foundry/settings` : '/foundry/settings');
 }
-export async function saveFoundrySettings(payload) {
-  return apiJson('/foundry/settings', 'PUT', payload);
+export async function saveFoundrySettings(payload, campaignId) {
+  return apiJson(campaignId ? `/campaigns/${campaignId}/foundry/settings` : '/foundry/settings', 'PUT', payload);
 }
-export async function testFoundry() {
-  return apiJson('/foundry/test', 'POST', {});
+export async function testFoundry(campaignId) {
+  return apiJson(campaignId ? `/campaigns/${campaignId}/foundry/test` : '/foundry/test', 'POST', {});
 }
 export async function syncFoundry(campaignId) {
   return apiJson(`/campaigns/${campaignId}/foundry/sync`, 'POST', {});

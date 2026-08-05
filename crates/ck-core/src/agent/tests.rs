@@ -1363,6 +1363,7 @@ async fn eval_injection_real_provider_never_auto_writes() {
         timeout: 120,
         needs_key: false,
         num_ctx_max: None,
+        retries: 0,
     };
     let (state, root, cfg) = hostile_world("eval");
     let chat = chats::create_chat(&root).unwrap();

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::error::{AppError, AppResult};
 use crate::llm::agent::Msg;
-use crate::llm::{self, ChatRequest, Resolved};
+use crate::llm::{self, Resolved};
 
 /// Cap each rendered message so the summarization prompt stays bounded even for
 /// a chat full of large tool results.
@@ -65,16 +65,7 @@ pub async fn run_compact(
         return Err(AppError::BadRequest("Nothing to compact yet.".into()));
     }
     let prompt = format!("{PROMPT}\n\n---\nConversation:\n\n{}", render(&msgs));
-    let req = ChatRequest {
-        transport: resolved.transport,
-        api_base: &resolved.api_base,
-        api_key: &resolved.api_key,
-        model: &resolved.model,
-        prompt: &prompt,
-        timeout_secs: resolved.timeout,
-        num_ctx_max: resolved.num_ctx_max,
-    };
-    let summary = llm::chat(&req, false)
+    let summary = llm::chat(&resolved.chat_req(&prompt), false)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Compaction failed: {}", e.0)))?;
     let summary = summary.trim().to_string();

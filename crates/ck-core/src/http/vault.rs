@@ -924,20 +924,7 @@ pub async fn enhance_pages(
                 .collect();
             let titles: Vec<String> = entries.iter().map(|(t, _)| t.clone()).collect();
             let prompt = build_batch_prompt(&entries, folder_kind, &lang_name);
-            let raw = match crate::llm::chat(
-                &crate::llm::ChatRequest {
-                    transport: target.transport,
-                    api_base: &target.api_base,
-                    api_key: &target.api_key,
-                    model: &target.model,
-                    prompt: &prompt,
-                    timeout_secs: target.timeout,
-                    num_ctx_max: target.num_ctx_max,
-                },
-                true,
-            )
-            .await
-            {
+            let raw = match crate::llm::chat(&target.chat_req(&prompt), true).await {
                 Ok(r) => r,
                 Err(_) => {
                     failed += chunk.len();

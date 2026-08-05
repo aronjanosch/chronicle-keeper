@@ -28,6 +28,9 @@ fn default_config() -> Vec<(&'static str, String)> {
         ("litellm_api_key", "".into()),
         ("litellm_api_base", "".into()),
         ("litellm_timeout_seconds", "120".into()),
+        // Extra attempts after a transient provider failure (429 rate limit,
+        // overload). The provider's own retry interval sets the wait; 0 = fail fast.
+        ("llm_retry_attempts", "3".into()),
         ("default_language", "en".into()),
         ("whisperx_model", "nemo-parakeet-tdt-0.6b-v3".into()),
         ("transcription_accelerator", "auto".into()),
@@ -108,6 +111,7 @@ pub struct ConfigResponse {
     pub litellm_model: String,
     pub litellm_api_base: String,
     pub litellm_timeout_seconds: i64,
+    pub llm_retry_attempts: i64,
     pub default_language: String,
     pub whisperx_model: String,
     pub transcription_provider: String,
@@ -135,6 +139,7 @@ pub struct UpdateConfigRequest {
     pub litellm_api_key: Option<String>,
     pub litellm_api_base: Option<String>,
     pub litellm_timeout_seconds: Option<i64>,
+    pub llm_retry_attempts: Option<i64>,
     pub default_language: Option<String>,
     pub whisperx_model: Option<String>,
     pub transcription_provider: Option<String>,
@@ -231,6 +236,10 @@ pub fn to_response(map: &HashMap<String, String>) -> ConfigResponse {
         litellm_model: get_str(map, "litellm_model"),
         litellm_api_base: get_str(map, "litellm_api_base"),
         litellm_timeout_seconds: get_int(map, "litellm_timeout_seconds"),
+        llm_retry_attempts: map
+            .get("llm_retry_attempts")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3),
         default_language: get_str(map, "default_language"),
         whisperx_model: get_str(map, "whisperx_model"),
         transcription_provider_effective: resolve_transcription_provider(&pref),
@@ -326,6 +335,10 @@ pub fn apply_update(conn: &Connection, req: &UpdateConfigRequest) -> AppResult<(
     set(
         "litellm_timeout_seconds",
         req.litellm_timeout_seconds.map(|n| n.to_string()),
+    )?;
+    set(
+        "llm_retry_attempts",
+        req.llm_retry_attempts.map(|n| n.clamp(0, 10).to_string()),
     )?;
     set("default_language", req.default_language.clone())?;
     set("whisperx_model", req.whisperx_model.clone())?;

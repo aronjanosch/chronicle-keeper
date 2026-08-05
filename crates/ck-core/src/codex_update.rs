@@ -243,7 +243,7 @@ pub async fn generate_streamed<F: FnMut(UpdateProgress) + Send>(
         ),
         &world_ctx,
     );
-    let raw = llm::chat(&chat_req(&resolved, &stage1), true)
+    let raw = llm::chat(&resolved.chat_req(&stage1), true)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Codex update request failed: {}", e.0)))?;
     let (mut proposals, entity_hints) = parse_candidates(&raw, &pages);
@@ -278,7 +278,7 @@ pub async fn generate_streamed<F: FnMut(UpdateProgress) + Send>(
     }
     let stage2 = build_grounding_prompt(&proposals, &retrieved, &turns);
     let token_estimate = (stage2.len() / 4) as u64;
-    let verdicts = match llm::chat(&chat_req(&resolved, &stage2), true).await {
+    let verdicts = match llm::chat(&resolved.chat_req(&stage2), true).await {
         Ok(raw) => parse_verdicts(&raw),
         Err(e) => {
             // Grounding is what makes proposals trustworthy — don't ship
@@ -317,18 +317,6 @@ pub async fn generate_streamed<F: FnMut(UpdateProgress) + Send>(
     };
     write_run(&session_dir, &run)?;
     Ok(run)
-}
-
-fn chat_req<'a>(resolved: &'a llm::Resolved, prompt: &'a str) -> llm::ChatRequest<'a> {
-    llm::ChatRequest {
-        transport: resolved.transport,
-        api_base: &resolved.api_base,
-        api_key: &resolved.api_key,
-        model: &resolved.model,
-        prompt,
-        timeout_secs: resolved.timeout,
-        num_ctx_max: resolved.num_ctx_max,
-    }
 }
 
 // ── Stage 1: candidates ───────────────────────────────────────────

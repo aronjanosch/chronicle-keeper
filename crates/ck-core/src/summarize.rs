@@ -80,7 +80,7 @@ async fn run_summarize(
         // Codex freeform notes retired (Phase 2) — page `summary:` frontmatter
         // is the context source; richer injection lands with Phase 4.
         let codex_text = String::new();
-        let gm = campaign.as_ref().map(|c| c.gm.clone()).unwrap_or_default();
+        let gms = campaign.as_ref().map(|c| c.gms.clone()).unwrap_or_default();
         // Files-as-truth: the glossary one-liners come from vault page `summary:`
         // frontmatter (every world has a vault by construction).
         let codex_entries: Vec<crate::models::CodexEntry> = campaign
@@ -120,7 +120,7 @@ async fn run_summarize(
             language,
             codex_text,
             codex_entries,
-            gm,
+            gms,
             known_tags,
             resolved,
             world_ctx,
@@ -132,7 +132,7 @@ async fn run_summarize(
         language,
         codex_text,
         codex_entries,
-        gm,
+        gms,
         known_tags,
         resolved,
         world_ctx,
@@ -143,7 +143,7 @@ async fn run_summarize(
         req.title.as_deref(),
         &codex_text,
         &codex_entries,
-        &gm,
+        &gms,
     );
     let summary_prompt = crate::agent::context::apply_world_context(
         &build_summary_prompt(
@@ -161,18 +161,9 @@ async fn run_summarize(
     // spends a long stretch in prefill before the first token. Flip to "reading"
     // so the user sees motion instead of a frozen pane.
     emit(SummaryProgress::Reading);
-    let summary_text = llm::chat_stream(
-        &llm::ChatRequest {
-            transport: resolved.transport,
-            api_base: &resolved.api_base,
-            api_key: &resolved.api_key,
-            model: &resolved.model,
-            prompt: &summary_prompt,
-            timeout_secs: resolved.timeout,
-            num_ctx_max: resolved.num_ctx_max,
-        },
-        |tok| emit(SummaryProgress::Token(tok.to_string())),
-    )
+    let summary_text = llm::chat_stream(&resolved.chat_req(&summary_prompt), |tok| {
+        emit(SummaryProgress::Token(tok.to_string()))
+    })
     .await
     .map_err(|e| {
         AppError::Internal(anyhow::anyhow!(
@@ -191,15 +182,11 @@ async fn run_summarize(
     // looks identical to "no metadata found" and hides a broken auto-fill.
     emit(SummaryProgress::Metadata);
     let metadata_text = match llm::chat(
-        &llm::ChatRequest {
-            transport: resolved.transport,
-            api_base: &resolved.api_base,
-            api_key: &resolved.api_key,
-            model: &resolved.model,
-            prompt: &build_metadata_prompt(&summary_text, &language, &known_tags),
-            timeout_secs: resolved.timeout,
-            num_ctx_max: resolved.num_ctx_max,
-        },
+        &resolved.chat_req(&build_metadata_prompt(
+            &summary_text,
+            &language,
+            &known_tags,
+        )),
         true,
     )
     .await
@@ -329,25 +316,14 @@ pub async fn generate_recap(
         &world_ctx,
     );
 
-    let recap_text = llm::chat(
-        &llm::ChatRequest {
-            transport: resolved.transport,
-            api_base: &resolved.api_base,
-            api_key: &resolved.api_key,
-            model: &resolved.model,
-            prompt: &prompt,
-            timeout_secs: resolved.timeout,
-            num_ctx_max: resolved.num_ctx_max,
-        },
-        false,
-    )
-    .await
-    .map_err(|e| {
-        AppError::Internal(anyhow::anyhow!(
-            "Recap failed: {}",
-            llm::friendly_llm_error(&e.0)
-        ))
-    })?;
+    let recap_text = llm::chat(&resolved.chat_req(&prompt), false)
+        .await
+        .map_err(|e| {
+            AppError::Internal(anyhow::anyhow!(
+                "Recap failed: {}",
+                llm::friendly_llm_error(&e.0)
+            ))
+        })?;
     let recap_text = recap_text.trim().to_string();
     if recap_text.is_empty() {
         return Err(AppError::Internal(anyhow::anyhow!(
@@ -375,7 +351,7 @@ fn build_context(
     title_override: Option<&str>,
     codex: &str,
     codex_entries: &[crate::models::CodexEntry],
-    gm: &str,
+    gms: &[String],
 ) -> Value {
     let campaign = session
         .get("campaign")
@@ -386,7 +362,7 @@ fn build_context(
         "session_number": campaign.get("session_number"),
         "title": title_override.map(Value::from).or_else(|| campaign.get("title").cloned()),
         "date": campaign.get("date"),
-        "gm": gm,
+        "gm": gms,
         "speakers": session.get("speakers").cloned().unwrap_or_else(|| json!([])),
         "codex": codex,
         "codex_entries": codex_entries.iter().map(|e| json!({

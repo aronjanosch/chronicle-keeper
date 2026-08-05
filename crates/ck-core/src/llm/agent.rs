@@ -644,8 +644,7 @@ pub async fn agent_chat_stream<F: FnMut(AgentDelta)>(
         }
     };
 
-    let resp = req.send().await.map_err(|e| LlmError(e.to_string()))?;
-    let resp = super::error_for_status(resp).await?;
+    let resp = super::send_retrying(req, resolved.retries).await?;
 
     let mut state = StreamState::default();
     let mut stream = resp.bytes_stream();

@@ -109,6 +109,8 @@ pub async fn test_provider(
             prompt: "Hi",
             timeout_secs: 15,
             num_ctx_max: None,
+            // A reachability probe must answer now, not wait out a rate limit.
+            retries: 0,
         },
         false,
     )

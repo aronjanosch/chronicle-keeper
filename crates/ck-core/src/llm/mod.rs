@@ -305,6 +305,24 @@ pub struct Resolved {
     pub timeout: u64,
     pub needs_key: bool,
     pub num_ctx_max: Option<u32>,
+    /// Extra attempts after a transient failure (rate limit / overload). 0 = fail fast.
+    pub retries: u32,
+}
+
+impl Resolved {
+    /// A one-shot chat request against this target. Callers only supply the prompt.
+    pub fn chat_req<'a>(&'a self, prompt: &'a str) -> ChatRequest<'a> {
+        ChatRequest {
+            transport: self.transport,
+            api_base: &self.api_base,
+            api_key: &self.api_key,
+            model: &self.model,
+            prompt,
+            timeout_secs: self.timeout,
+            num_ctx_max: self.num_ctx_max,
+            retries: self.retries,
+        }
+    }
 }
 
 /// Resolve provider/model/base/timeout for a call, layering per-request overrides
@@ -371,6 +389,12 @@ pub fn resolve(
         .then(|| cfg.get("ollama_num_ctx_max").and_then(|s| s.parse().ok()))
         .flatten();
 
+    let retries = cfg
+        .get("llm_retry_attempts")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3u32)
+        .min(10);
+
     Ok(Resolved {
         provider,
         transport: p.transport,
@@ -380,6 +404,7 @@ pub fn resolve(
         timeout,
         needs_key: p.needs_key,
         num_ctx_max,
+        retries,
     })
 }
 
@@ -416,6 +441,7 @@ pub struct ChatRequest<'a> {
     pub prompt: &'a str,
     pub timeout_secs: u64,
     pub num_ctx_max: Option<u32>,
+    pub retries: u32,
 }
 
 /// One chat completion. Returns the assistant message text.
@@ -428,6 +454,7 @@ pub async fn chat(req: &ChatRequest<'_>, json_mode: bool) -> Result<String, LlmE
         prompt,
         timeout_secs,
         num_ctx_max,
+        retries,
     } = req;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(*timeout_secs))
@@ -472,8 +499,7 @@ pub async fn chat(req: &ChatRequest<'_>, json_mode: bool) -> Result<String, LlmE
             if !api_key.is_empty() {
                 req = req.bearer_auth(api_key);
             }
-            let resp = req.send().await.map_err(|e| LlmError(e.to_string()))?;
-            let resp = error_for_status(resp).await?;
+            let resp = send_retrying(req, *retries).await?;
             let v: Value = resp.json().await.map_err(|e| LlmError(e.to_string()))?;
             let prompt_eval_count = v.get("prompt_eval_count").and_then(Value::as_u64);
             let eval_count = v.get("eval_count").and_then(Value::as_u64);
@@ -513,8 +539,7 @@ pub async fn chat(req: &ChatRequest<'_>, json_mode: bool) -> Result<String, LlmE
             if !api_key.is_empty() {
                 req = req.bearer_auth(api_key);
             }
-            let resp = req.send().await.map_err(|e| LlmError(e.to_string()))?;
-            let resp = error_for_status(resp).await?;
+            let resp = send_retrying(req, *retries).await?;
             let v: Value = resp.json().await.map_err(|e| LlmError(e.to_string()))?;
             Ok(extract_openai_content(&v))
         }
@@ -539,15 +564,12 @@ pub async fn chat(req: &ChatRequest<'_>, json_mode: bool) -> Result<String, LlmE
                 "messages": [{ "role": "user", "content": content }],
             });
             let url = format!("{}/v1/messages", base.trim_end_matches('/'));
-            let resp = client
+            let req = client
                 .post(url)
                 .header("x-api-key", *api_key)
                 .header("anthropic-version", "2023-06-01")
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| LlmError(e.to_string()))?;
-            let resp = error_for_status(resp).await?;
+                .json(&body);
+            let resp = send_retrying(req, *retries).await?;
             let v: Value = resp.json().await.map_err(|e| LlmError(e.to_string()))?;
             Ok(extract_anthropic_content(&v))
         }
@@ -662,6 +684,7 @@ pub async fn chat_stream<F: FnMut(&str)>(
         prompt,
         timeout_secs,
         num_ctx_max,
+        retries,
     } = req;
     if *transport == Transport::Unsupported {
         return Err(LlmError(
@@ -742,8 +765,7 @@ pub async fn chat_stream<F: FnMut(&str)>(
         Transport::Unsupported => unreachable!(),
     };
 
-    let resp = req.send().await.map_err(|e| LlmError(e.to_string()))?;
-    let resp = error_for_status(resp).await?;
+    let resp = send_retrying(req, *retries).await?;
 
     let mut stream = resp.bytes_stream();
     // Chunks split anywhere, so buffer raw bytes and only decode a line once it's
@@ -959,6 +981,127 @@ async fn error_for_status(resp: reqwest::Response) -> Result<reqwest::Response, 
     Err(LlmError(format!("HTTP {status}: {}", body.trim())))
 }
 
+// ---- transient-failure retry ----
+
+/// Longest single wait we'll honour. A provider hint above this means the budget
+/// is gone for minutes, not seconds — surface it instead of hanging the run.
+const MAX_WAIT_SECS: f64 = 60.0;
+
+/// A rate limit (429) or provider overload is a wait-and-retry condition, not a
+/// user error. Everything else (bad key, unknown model, malformed request) is
+/// deterministic and must fail on the first try.
+fn is_transient(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 429 | 502 | 503 | 504 | 529)
+}
+
+/// Parse a wait hint into seconds: `Retry-After` is bare seconds, OpenAI's
+/// headers and prose use Go-style durations (`2.192s`, `20ms`, `1m30s`).
+fn parse_wait_secs(raw: &str) -> Option<f64> {
+    let s = raw.trim().to_ascii_lowercase();
+    let mut rest = s.as_str();
+    let mut total = 0.0;
+    let mut matched = false;
+    while !rest.is_empty() {
+        let after_digits = rest.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.');
+        let split = rest.len() - after_digits.len();
+        if split == 0 {
+            break;
+        }
+        // Trailing punctuation ("2.192s.") lands here as an unparseable chunk.
+        let Ok(value) = rest[..split].parse::<f64>() else {
+            break;
+        };
+        rest = after_digits;
+        let (mult, unit_len) = if rest.starts_with("ms") {
+            (0.001, 2)
+        } else if rest.starts_with('s') {
+            (1.0, 1)
+        } else if rest.starts_with('m') {
+            (60.0, 1)
+        } else if rest.starts_with('h') {
+            (3600.0, 1)
+        } else {
+            (1.0, 0)
+        };
+        total += value * mult;
+        matched = true;
+        rest = &rest[unit_len..];
+    }
+    matched.then_some(total)
+}
+
+/// How long the provider wants us to wait, in its own words. Headers first
+/// (`Retry-After`, then OpenAI's per-bucket reset), else the message body, where
+/// OpenAI puts the only precise figure: "Please try again in 2.192s."
+fn wait_hint(headers: &reqwest::header::HeaderMap, body: &str) -> Option<f64> {
+    for name in [
+        "retry-after",
+        "x-ratelimit-reset-tokens",
+        "x-ratelimit-reset-requests",
+    ] {
+        if let Some(secs) = headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_wait_secs)
+        {
+            return Some(secs);
+        }
+    }
+    let lower = body.to_ascii_lowercase();
+    let at = lower.find("try again in ")? + "try again in ".len();
+    let token: String = lower[at..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '.')
+        .collect();
+    parse_wait_secs(&token)
+}
+
+/// Send a request, waiting out transient rate limits. Honours the provider's own
+/// retry interval when it gives one, else backs off exponentially. Returns the
+/// first successful response, or the last failure's status + body.
+async fn send_retrying(
+    req: reqwest::RequestBuilder,
+    retries: u32,
+) -> Result<reqwest::Response, LlmError> {
+    let mut pending = req;
+    let mut attempt = 0u32;
+    loop {
+        // Cloning must happen before send() consumes the builder; a streamed
+        // body can't be cloned, and then there is nothing to retry with.
+        let next = pending.try_clone();
+        let resp = pending.send().await.map_err(|e| LlmError(e.to_string()))?;
+        if resp.status().is_success() {
+            return Ok(resp);
+        }
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let body = resp.text().await.unwrap_or_default();
+        if attempt >= retries || !is_transient(status) || next.is_none() {
+            return Err(LlmError(format!("HTTP {status}: {}", body.trim())));
+        }
+        let wait = wait_hint(&headers, &body);
+        // Without a hint: 1s, 2s, 4s… A hint gets a small cushion, since the
+        // provider's own figure is the earliest moment the budget frees up.
+        let wait = match wait {
+            Some(s) => s + 0.25,
+            None => f64::from(1u32 << attempt.min(5)),
+        };
+        if wait > MAX_WAIT_SECS {
+            return Err(LlmError(format!("HTTP {status}: {}", body.trim())));
+        }
+        attempt += 1;
+        tracing::warn!(
+            %status,
+            attempt,
+            retries,
+            wait_secs = wait,
+            "transient LLM failure — waiting and retrying"
+        );
+        tokio::time::sleep(Duration::from_secs_f64(wait)).await;
+        pending = next.expect("checked above");
+    }
+}
+
 fn extract_anthropic_content(v: &Value) -> String {
     let Some(blocks) = v.get("content").and_then(Value::as_array) else {
         return String::new();
@@ -996,6 +1139,8 @@ fn extract_openai_content(v: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
 
     fn tok(transport: Transport, line: &str) -> Option<String> {
@@ -1041,6 +1186,113 @@ mod tests {
         ));
         assert!(!done(Transport::Anthropic, "event: message_stop"));
         assert_eq!(tok(Transport::Anthropic, r#"data: {"type":"ping"}"#), None);
+    }
+
+    #[test]
+    fn parses_wait_hints() {
+        assert_eq!(parse_wait_secs("3"), Some(3.0));
+        assert_eq!(parse_wait_secs("2.192s"), Some(2.192));
+        assert_eq!(parse_wait_secs("20ms"), Some(0.02));
+        assert_eq!(parse_wait_secs("1m30s"), Some(90.0));
+        assert_eq!(parse_wait_secs("6m0s"), Some(360.0));
+        assert_eq!(parse_wait_secs(""), None);
+        assert_eq!(parse_wait_secs("soon"), None);
+    }
+
+    #[test]
+    fn wait_hint_prefers_header_then_body() {
+        use reqwest::header::{HeaderMap, HeaderValue};
+        let openai_429 = "Rate limit reached for gpt-5 ... Limit 500000 TPM, Used 436092, \
+                          Requested 82181. Please try again in 2.192s. Visit …";
+        let empty = HeaderMap::new();
+        assert_eq!(wait_hint(&empty, openai_429), Some(2.192));
+        let mut h = HeaderMap::new();
+        h.insert("x-ratelimit-reset-tokens", HeaderValue::from_static("1.5s"));
+        assert_eq!(wait_hint(&h, openai_429), Some(1.5));
+        h.insert("retry-after", HeaderValue::from_static("7"));
+        assert_eq!(wait_hint(&h, openai_429), Some(7.0));
+        assert_eq!(wait_hint(&empty, "invalid api key"), None);
+    }
+
+    #[test]
+    fn only_rate_limits_and_overload_retry() {
+        use reqwest::StatusCode;
+        assert!(is_transient(StatusCode::TOO_MANY_REQUESTS));
+        assert!(is_transient(StatusCode::SERVICE_UNAVAILABLE));
+        assert!(!is_transient(StatusCode::UNAUTHORIZED));
+        assert!(!is_transient(StatusCode::BAD_REQUEST));
+        assert!(!is_transient(StatusCode::NOT_FOUND));
+    }
+
+    /// A fake OpenAI-compatible endpoint that rejects its first `fail` calls with
+    /// 429, then answers. Returns (base url, hit counter).
+    async fn rate_limited_server(
+        fail: usize,
+        status: u16,
+    ) -> (String, std::sync::Arc<AtomicUsize>) {
+        use axum::response::IntoResponse;
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let h = hits.clone();
+        let app = axum::Router::new().route(
+            "/chat/completions",
+            axum::routing::post(move || {
+                let h = h.clone();
+                async move {
+                    if h.fetch_add(1, Ordering::SeqCst) < fail {
+                        (
+                            axum::http::StatusCode::from_u16(status).unwrap(),
+                            [("retry-after", "0")],
+                            "Rate limit reached for gpt-5. Please try again in 0.01s.",
+                        )
+                            .into_response()
+                    } else {
+                        axum::Json(json!({"choices":[{"message":{"content":"ok"}}]}))
+                            .into_response()
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), hits)
+    }
+
+    fn req_to<'a>(base: &'a str, retries: u32) -> ChatRequest<'a> {
+        ChatRequest {
+            transport: Transport::OpenAiCompat,
+            api_base: base,
+            api_key: "",
+            model: "m",
+            prompt: "hi",
+            timeout_secs: 5,
+            num_ctx_max: None,
+            retries,
+        }
+    }
+
+    #[tokio::test]
+    async fn retries_a_rate_limit_then_succeeds() {
+        let (base, hits) = rate_limited_server(2, 429).await;
+        assert_eq!(chat(&req_to(&base, 3), false).await.unwrap(), "ok");
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn gives_up_after_the_configured_attempts() {
+        let (base, hits) = rate_limited_server(usize::MAX, 429).await;
+        let err = chat(&req_to(&base, 1), false).await.unwrap_err();
+        assert!(err.0.contains("429"), "{}", err.0);
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_a_permanent_error() {
+        let (base, hits) = rate_limited_server(usize::MAX, 401).await;
+        assert!(chat(&req_to(&base, 3), false).await.is_err());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 
     #[test]

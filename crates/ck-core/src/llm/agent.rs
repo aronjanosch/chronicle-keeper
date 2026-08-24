@@ -282,6 +282,13 @@ fn openai_style_body(
                 })
             })
             .collect();
+        // GPT-5.6 (sol/terra/luna) rejects chat/completions when function
+        // tools ride with any reasoning_effort other than "none" — and the
+        // family reasons by default, so the 400 fires even when the key is
+        // never sent. Pinning "none" keeps tools working (issue #15).
+        if !ollama && model.starts_with("gpt-5.6") {
+            body["reasoning_effort"] = json!("none");
+        }
     }
     body
 }
@@ -820,6 +827,19 @@ mod tests {
         assert_eq!(msgs[3]["role"], "tool");
         assert_eq!(msgs[3]["tool_call_id"], "tc1");
         assert_eq!(body["tools"][0]["function"]["name"], "search_pages");
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn gpt56_tools_pin_reasoning_effort_none() {
+        let body = openai_style_body(&sample_msgs(), &tool_defs(), "gpt-5.6-luna", true, false);
+        assert_eq!(body["reasoning_effort"], "none");
+        // No tools → no key (summarize path stays untouched).
+        let body = openai_style_body(&sample_msgs(), &[], "gpt-5.6-luna", true, false);
+        assert!(body.get("reasoning_effort").is_none());
+        // Ollama never gets the key (rejects unknown fields).
+        let body = openai_style_body(&sample_msgs(), &tool_defs(), "gpt-5.6-luna", false, true);
+        assert!(body.get("reasoning_effort").is_none());
     }
 
     #[test]

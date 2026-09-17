@@ -7,7 +7,9 @@ use serde::Serialize;
 use crate::error::{AppError, AppResult};
 
 /// Page kinds the world schema knows about (frontmatter `kind:`).
-pub const KINDS: &[&str] = &["pc", "npc", "place", "faction", "item", "event", "lore"];
+pub const KINDS: &[&str] = &[
+    "pc", "npc", "place", "faction", "item", "event", "lore", "thread",
+];
 
 #[derive(Debug, Serialize)]
 pub struct PageInfo {
@@ -458,6 +460,7 @@ pub const DEFAULT_HEADINGS: &[(&str, &[&str])] = &[
     ),
     ("item", &["Description", "Properties", "History"]),
     ("event", &["What happened", "Consequences"]),
+    ("thread", &["Current situation", "Developments"]),
 ];
 
 pub fn default_headings(kind: &str) -> &'static [&'static str] {

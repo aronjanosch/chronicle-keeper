@@ -1903,6 +1903,7 @@ fn move_with_links(ctx: &ToolCtx<'_>, from: &str, to: &str) -> Result<(), String
         .unwrap_or_default();
     vault::move_entry(&vault_root, from, to).map_err(app_err)?;
     crate::history::move_history(ctx.world_root, from, to);
+    crate::session_prep::rewrite_page_references(ctx.world_root, from, to);
 
     let (old_title, new_title) = (stem(from), stem(to));
     if !old_title.is_empty() && !old_title.eq_ignore_ascii_case(&new_title) {

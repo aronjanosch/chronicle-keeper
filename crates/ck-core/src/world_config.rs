@@ -103,6 +103,9 @@ const DEFAULT_KINDS: &[(&str, &[&str])] = &[
     ("item", &["type", "owner", "location", "magical:checkbox"]),
     ("event", &["date:date", "location", "participants:list"]),
     ("lore", &[]),
+    // Threads are ordinary pages; `status` is open | resolved | dormant, with
+    // missing treated as open in code (FIELD_TYPES has no enum type).
+    ("thread", &["status", "summary", "involves:list"]),
 ];
 
 fn parse_field(spec: &str) -> Option<KindField> {
@@ -410,6 +413,21 @@ mod tests {
             .unwrap()
             .1
             .is_empty());
+        let thread = &schemas.iter().find(|(k, _)| k == "thread").unwrap().1;
+        assert_eq!(
+            thread[0],
+            KindField {
+                name: "status".into(),
+                ftype: "text".into()
+            }
+        );
+        assert_eq!(
+            thread[2],
+            KindField {
+                name: "involves".into(),
+                ftype: "list".into()
+            }
+        );
 
         cfg.kinds.insert(
             "npc".into(),
@@ -423,6 +441,12 @@ mod tests {
                 fields: vec!["domain".into()],
             },
         );
+        cfg.kinds.insert(
+            "thread".into(),
+            KindOverride {
+                fields: vec!["status".into(), "stakes:list".into()],
+            },
+        );
         let schemas = cfg.kind_schemas();
         let npc = &schemas.iter().find(|(k, _)| k == "npc").unwrap().1;
         assert_eq!(npc.len(), 2);
@@ -431,5 +455,9 @@ mod tests {
         assert!(schemas
             .iter()
             .any(|(k, f)| k == "deity" && f[0].name == "domain"));
+        let thread = &schemas.iter().find(|(k, _)| k == "thread").unwrap().1;
+        assert_eq!(thread.len(), 2);
+        assert_eq!(thread[1].name, "stakes");
+        assert_eq!(thread[1].ftype, "list");
     }
 }

@@ -218,6 +218,7 @@ pub async fn move_entry(
     } else {
         vault::move_entry(&root, &req.from, &req.to)?;
         history::move_history(&world_root, &req.from, &req.to);
+        crate::session_prep::rewrite_page_references_prefix(&world_root, &req.from, &req.to);
         // Folder move: every child path changed — full rebuild.
         reindex_all(&state, &root);
     }
@@ -240,6 +241,9 @@ fn move_page_cascade(
         .unwrap_or_default();
     vault::move_entry(root, from, to)?;
     history::move_history(world_root, from, to);
+    // Prep references use exact page paths; run before the wikilink cascade,
+    // which early-returns on a folder-only move.
+    crate::session_prep::rewrite_page_references(world_root, from, to);
     rewrite_links_after_rename(state, world_root, root, from, to, sources);
     reindex_remove(state, root, from);
     reindex_page(state, root, to);
@@ -497,6 +501,7 @@ pub async fn bulk(
                 match vault::move_entry(&root, page, &to) {
                     Ok(()) => {
                         history::move_history(&world_root, page, &to);
+                        crate::session_prep::rewrite_page_references(&world_root, page, &to);
                         reindex_remove(&state, &root, page);
                         reindex_page(&state, &root, &to);
                         done += 1;

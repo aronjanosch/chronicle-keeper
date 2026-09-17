@@ -1316,6 +1316,43 @@ mod tests {
     }
 
     #[test]
+    fn thread_involves_is_a_typed_relation_that_survives_reindex() {
+        let dir = tmp_vault("thread");
+        write(
+            &dir,
+            "Threads/Missing courier.md",
+            "---\nkind: thread\nstatus: open\nsummary: Gone.\ninvolves: [\"[[Magistrate]]\", \"[[Docks]]\"]\n---\n## Current situation\n",
+        );
+        write(&dir, "Magistrate.md", "---\nkind: npc\n---\n# Magistrate\n");
+        write(&dir, "Docks.md", "---\nkind: place\n---\n# Docks\n");
+        let conn = open_index(&dir).unwrap();
+        rebuild(&conn, &dir).unwrap();
+
+        let rels = all_relations(&conn).unwrap();
+        let involves: Vec<&RelationRow> = rels
+            .iter()
+            .filter(|r| r.source_path == "Threads/Missing courier.md" && r.predicate == "involves")
+            .collect();
+        assert_eq!(involves.len(), 2);
+        assert!(involves
+            .iter()
+            .any(|r| r.target_path.as_deref() == Some("Magistrate.md")));
+
+        // A status edit is ordinary frontmatter; reindex keeps it and the kind.
+        std::fs::write(
+            &dir.join("Threads/Missing courier.md"),
+            "---\nkind: thread\nstatus: resolved\nsummary: Found.\ninvolves:\n  - \"[[Magistrate]]\"\n---\n## Current situation\nFound.\n",
+        )
+        .unwrap();
+        rebuild(&conn, &dir).unwrap();
+        let content = std::fs::read_to_string(dir.join("Threads/Missing courier.md")).unwrap();
+        let (fm, _) = vault::split_frontmatter(&content);
+        assert_eq!(vault::fm_get(&fm, "status"), Some("resolved"));
+        assert_eq!(vault::fm_get(&fm, "kind"), Some("thread"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn rebuild_resolves_and_breaks_links() {
         let dir = tmp_vault("rebuild");
         write(

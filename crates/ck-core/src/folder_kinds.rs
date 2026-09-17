@@ -160,6 +160,23 @@ const KEYWORDS: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "thread",
+        &[
+            "thread",
+            "threads",
+            "plot",
+            "plots",
+            "quest",
+            "quests",
+            "storyline",
+            "storylines",
+            "faden",
+            "faeden",
+            "handlung",
+            "handlungsstraenge",
+        ],
+    ),
+    (
         "lore",
         &[
             "lore",
@@ -285,6 +302,9 @@ mod tests {
         assert_eq!(kind_for_folder("Städte"), Some("place"));
         assert_eq!(kind_for_folder("Player Characters"), Some("pc"));
         assert_eq!(kind_for_folder("2 Fraktionen"), Some("faction"));
+        assert_eq!(kind_for_folder("Threads"), Some("thread"));
+        assert_eq!(kind_for_folder("04-Quests"), Some("thread"));
+        assert_eq!(kind_for_folder("Storylines"), Some("thread"));
         assert_eq!(kind_for_folder("Zettelkasten"), None);
     }
 }

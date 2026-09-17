@@ -74,6 +74,10 @@ pub async fn run_brief<L: AgentLlm, F: FnMut(TurnEvent) + Send>(
     sys.push_str(&crate::agent::context::digest(world_root, cfg));
 
     let registry = tools::read_tools();
+    // dispatch() has live write arms; the brief run must only reach the tools
+    // the read registry actually declares.
+    let read_only: std::collections::HashSet<&str> =
+        registry.iter().map(|tool| tool.name.as_str()).collect();
     let ctx = tools::ToolCtx {
         state,
         world_root,
@@ -110,9 +114,16 @@ pub async fn run_brief<L: AgentLlm, F: FnMut(TurnEvent) + Send>(
                 diff: None,
             });
             // Read-only registry — a model that tries to write just gets an error.
-            let (content, is_error) = match tools::dispatch(&ctx, &call.name, &call.arguments) {
-                Ok(raw) => (raw, false),
-                Err(msg) => (msg, true),
+            let (content, is_error) = if !read_only.contains(call.name.as_str()) {
+                (
+                    format!("Tool {} is not available in a read-only run.", call.name),
+                    true,
+                )
+            } else {
+                match tools::dispatch(&ctx, &call.name, &call.arguments) {
+                    Ok(raw) => (raw, false),
+                    Err(msg) => (msg, true),
+                }
             };
             emit(TurnEvent::ToolResult {
                 name: call.name.clone(),

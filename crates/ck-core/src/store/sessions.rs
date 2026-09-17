@@ -72,7 +72,11 @@ fn ensure_id(dir: &Path, st: &mut SessionToml) {
 }
 
 pub(crate) fn locate(conn: &Connection, session_id: &str) -> AppResult<Option<SessionLoc>> {
-    if session_id.is_empty() || session_id.contains(['/', '\\', '.']) && session_id.contains("..") {
+    if session_id.is_empty()
+        || session_id.contains(['/', '\\'])
+        || session_id == "."
+        || session_id == ".."
+    {
         return Ok(None);
     }
     // Bare uploads: dir name == session id.

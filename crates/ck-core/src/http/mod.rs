@@ -8,6 +8,7 @@ mod foundry;
 mod index;
 mod llm;
 mod prompts;
+mod session_prep;
 mod sessions;
 mod transcribe;
 mod upload;
@@ -206,6 +207,12 @@ pub fn router(state: AppState) -> Router {
         .route("/session/:id/metadata", get(sessions::metadata))
         .route("/session-metadata", post(sessions::set_metadata))
         .route("/sessions/:id", delete(sessions::delete))
+        .route(
+            "/sessions/:id/prep",
+            get(session_prep::get)
+                .put(session_prep::put)
+                .layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
         // Update the Codex (Phase 5): AI page proposals after a summary
         .route(
             "/sessions/:id/codex-update",

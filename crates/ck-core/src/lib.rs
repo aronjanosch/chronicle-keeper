@@ -20,6 +20,7 @@ pub mod paths;
 pub mod prompts;
 pub mod seed;
 pub mod session_files;
+pub mod session_prep;
 pub mod session_search;
 pub mod state;
 pub mod store;

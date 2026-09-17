@@ -12,6 +12,8 @@ pub enum AppError {
     #[error("{0}")]
     BadRequest(String),
     #[error("{0}")]
+    Unprocessable(String),
+    #[error("{0}")]
     Conflict(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
@@ -22,6 +24,7 @@ impl AppError {
         match self {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::Unprocessable(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }

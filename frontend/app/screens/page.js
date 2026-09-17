@@ -131,6 +131,46 @@ function setFmSummary(content, summary) {
   return joinDoc(lines.join('\n'), body);
 }
 
+// `status:` (threads only) — replace/append the scalar line. Missing/unknown
+// values are treated as `open`; everything else in the file is preserved.
+const THREAD_STATUSES = ['open', 'resolved', 'dormant'];
+function setFmStatus(content, status) {
+  const { fm, body } = splitDoc(content);
+  const val = THREAD_STATUSES.includes(status) ? status : 'open';
+  const lines = fm ? fm.split('\n') : [];
+  const i = lines.findIndex((l) => /^status:/.test(l));
+  const line = `status: ${val}`;
+  if (i >= 0) lines[i] = line; else lines.push(line);
+  return joinDoc(lines.join('\n'), body);
+}
+
+// Thread status selector — rendered only for `kind: thread` pages. Saves through
+// the ordinary page-save path, so history and the index refresh as usual.
+function ThreadStatusCard({ page, onSave }) {
+  const cur = (parseProps(splitDoc(page.content).fm).find((p) => p.key === 'status') || {}).values?.[0];
+  const status = THREAD_STATUSES.includes(cur) ? cur : 'open';
+  const options = [
+    { key: 'open', label: 'Open', tone: 'var(--burgundy)' },
+    { key: 'resolved', label: 'Resolved', tone: 'var(--moss)' },
+    { key: 'dormant', label: 'Dormant', tone: 'var(--ink-muted)' },
+  ];
+  return html`<${RailCard} icon="feather" title="Thread status">
+    <div style=${{ display: 'flex', gap: 4 }}>
+      ${options.map((o) => {
+        const on = o.key === status;
+        return html`<button key=${o.key} type="button" aria-pressed=${on}
+          onClick=${() => { if (!on) onSave(setFmStatus(page.content, o.key)).catch(() => {}); }}
+          style=${{ flex: 1, padding: '6px 8px', borderRadius: 5, cursor: on ? 'default' : 'pointer',
+            border: `1px solid ${on ? o.tone : 'var(--rule)'}`, background: on ? 'var(--paper-deep)' : 'transparent',
+            color: on ? o.tone : 'var(--ink-muted)', fontFamily: 'inherit', fontSize: 12, fontWeight: on ? 600 : 400 }}>
+          ${o.label}
+        </button>`;
+      })}
+    </div>
+    <div class="ck-rail-hint">Open, resolved, or dormant. Saved with the page, so it survives reindexing.</div>
+  </${RailCard}>`;
+}
+
 // The AI's memory: the one-liner fed to summaries. Click to edit, blur saves.
 function SummaryCard({ page, onSave }) {
   const [editing, setEditing] = useState(false);
@@ -583,6 +623,14 @@ function PageRail({ page, path, pages, links, relations, schemas, atlasMaps, cam
   const words = prose.trim() ? prose.trim().split(/\s+/).length : 0;
   const edited = meta?.modified ? new Date(meta.modified * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : null;
 
+  // Threads get a status selector, but a world whose custom thread schema
+  // deliberately drops `status` keeps its own fields — we only add a status
+  // line when the schema still declares it or the page already carries one.
+  const threadFields = schemaFor(schemas, 'thread');
+  const hasStatusField = threadFields.some((f) => f.name === 'status')
+    || parseProps(fm).some((p) => p.key === 'status');
+  const showThreadStatus = page.kind === 'thread' && (!threadFields.length || hasStatusField);
+
   return html`<aside style=${{ width: railW, flex: `0 0 ${railW}px`, position: 'relative', borderLeft: '1px solid var(--rule-soft)', background: 'var(--paper)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
     <${ResizeHandle} side="left" onMouseDown=${onRailResize} />
     <div style=${{ display: 'flex', padding: '0 8px', borderBottom: '1px solid var(--rule-soft)' }}>
@@ -595,6 +643,7 @@ function PageRail({ page, path, pages, links, relations, schemas, atlasMaps, cam
     ${railTab === 'info'
       ? html`<div style=${{ flex: 1, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
           <${InfoboxCard} fm=${fm} kind=${page.kind} schemas=${schemas} pages=${pages} />
+          ${showThreadStatus && html`<${ThreadStatusCard} page=${page} onSave=${onSave} />`}
           <${SummaryCard} page=${page} onSave=${onSave} />
           <${TagsCard} tags=${meta?.tags} />
           <${ContainsCard} path=${path} pages=${pages} relations=${relations} />
@@ -804,6 +853,7 @@ export function PageScreen() {
         { icon: 'edit', label: 'Rename', onClick: () => act.renamePage(pageLeaf) },
         { icon: 'folder', label: 'Move…', onClick: () => act.movePage(pageLeaf) },
         { icon: 'sparkle', label: 'Promote to kind…', onClick: () => act.promotePage(pageLeaf) },
+        { icon: 'link', label: 'Link to prep…', onClick: () => openModal('linkPrep', { path }) },
         { icon: 'time', label: 'History', onClick: () => openModal('pageHistory', { path, onRestored: () => readVaultPage(path).then(setPage).catch(() => {}) }) },
         { icon: 'trash', label: 'Move to trash', danger: true, onClick: () => act.deletePage(pageLeaf) },
       ]} />`}

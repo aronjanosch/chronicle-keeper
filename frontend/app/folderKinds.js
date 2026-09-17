@@ -38,6 +38,10 @@ const KEYWORDS = {
     'event', 'events', 'ereignis', 'ereignisse', 'timeline', 'zeitlinie',
     'evenements', 'eventos', 'eventi',
   ],
+  thread: [
+    'thread', 'threads', 'plot', 'plots', 'quest', 'quests', 'storyline', 'storylines',
+    'faden', 'faeden', 'handlung', 'handlungsstraenge',
+  ],
   lore: [
     'lore', 'history', 'myth', 'myths', 'legend', 'legends', 'religion', 'religions',
     'god', 'gods', 'deities', 'cosmology', 'calendar',

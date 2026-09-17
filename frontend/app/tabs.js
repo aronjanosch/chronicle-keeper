@@ -6,7 +6,7 @@ import { html, useState } from '../vendor/htm-preact-standalone.mjs';
 import { useStore, navigate, activePagePath, closeTab, closeOtherTabs, reopenClosedTab, moveTab, openInNewTab } from './core.js';
 import { Icon, openContextMenu } from './ui.js';
 
-const KIND_ICONS = { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', lore: 'scroll' };
+const KIND_ICONS = { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', thread: 'feather', lore: 'scroll' };
 
 function titleOf(path) {
   const i = path.lastIndexOf('/');

@@ -61,7 +61,7 @@ function pageScore(q, p) {
   return Math.max(...names.map((n) => fuzzyScore(q, n)));
 }
 
-const KIND_ICON = { npc: 'users', pc: 'users', place: 'compass', faction: 'flag', item: 'sword', lore: 'doc' };
+const KIND_ICON = { npc: 'users', pc: 'users', place: 'compass', faction: 'flag', item: 'sword', event: 'cal', thread: 'feather', lore: 'doc' };
 
 function Row({ item, active, onHover, onRun }) {
   return html`<div onMouseMove=${onHover} onClick=${onRun}

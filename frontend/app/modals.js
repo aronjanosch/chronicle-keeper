@@ -4,6 +4,7 @@ import { store, closeModal, navigate, setOp, openModal, apiFetch, fmtDateTime } 
 import { Icon, Btn, Field, Input, Textarea, Select, Spinner } from './ui.js';
 import { CommandPalette } from './screens/palette.js';
 import { kindForFolder } from './folderKinds.js';
+import { loadPrep, savePrep } from './prep.js';
 import {
   createCampaign, updateCampaign, saveSessionMetadata, loadSession,
   runExport,
@@ -23,6 +24,7 @@ const CODEX_KINDS = [
   { value: 'pc', label: 'PC' }, { value: 'npc', label: 'NPC' }, { value: 'place', label: 'Place' },
   { value: 'faction', label: 'Faction' }, { value: 'item', label: 'Item' },
   { value: 'event', label: 'Event' },
+  { value: 'thread', label: 'Thread' },
   { value: 'lore', label: 'Lore' },
 ];
 
@@ -489,29 +491,34 @@ function kindOptions() {
 
 // ── New page (Phase 16): title + template — the template's frontmatter
 // picks the kind. Falls back to a kind picker when a world has no templates.
-function NewPageModal({ folder = '', kind: presetKind = 'npc', title: initialTitle = '', onCreated }) {
+// `lockKind` (explicit "New thread") keeps the requested kind authoritative: it
+// uses a same-kind template when one exists (respecting a custom thread
+// template) and otherwise the kind's schema, never some other template.
+function NewPageModal({ folder = '', kind: presetKind = 'npc', title: initialTitle = '', onCreated, lockKind = false }) {
   const templates = store.templates || [];
-  const defaultTpl = (templates.find((t) => t.kind === presetKind) || templates[0])?.name || '';
+  const matchingTpl = templates.find((t) => t.kind === presetKind);
+  const useTemplate = lockKind ? !!matchingTpl : templates.length > 0;
+  const defaultTpl = (matchingTpl || templates[0])?.name || '';
   const [title, setTitle] = useState(initialTitle);
   const [tpl, setTpl] = useState(defaultTpl);
   const [kind, setKind] = useState(presetKind);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
-  const hasTemplates = templates.length > 0;
   const pickedKind = templates.find((t) => t.name === tpl)?.kind;
   async function go() {
     const t = title.trim();
     if (!t) { setErr('Title is required'); return; }
     setBusy(true); setErr(null);
     try {
-      const page = await createVaultPage(t, hasTemplates ? { template: tpl } : kind, folder);
+      const page = await createVaultPage(t, useTemplate ? { template: tpl } : kind, folder);
       closeModal();
       if (onCreated) onCreated(page); else navigate('page', { path: page.path });
     } catch (e) { setErr(e.message); setBusy(false); }
   }
-  const tplOptions = templates.map((t) => ({ value: t.name, label: t.kind ? `${t.name} · ${t.kind}` : t.name }));
+  const tplPool = lockKind ? templates.filter((t) => t.kind === presetKind) : templates;
+  const tplOptions = tplPool.map((t) => ({ value: t.name, label: t.kind ? `${t.name} · ${t.kind}` : t.name }));
   return html`<${ModalShell} title="New page" footer=${html`
-    <span style=${{ flex: 1, fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>${folder ? `In ${folder}/ · ` : ''}${hasTemplates ? `Starts from the “${tpl}” template${pickedKind ? ` (${pickedKind})` : ''}` : "Starts from the kind's template"}</span>
+    <span style=${{ flex: 1, fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>${folder ? `In ${folder}/ · ` : ''}${useTemplate ? `Starts from the “${tpl}” template${pickedKind ? ` (${pickedKind})` : ''}` : "Starts from the kind's template"}</span>
     <${Btn} kind="ghost" disabled=${busy} onClick=${closeModal}>Cancel</${Btn}>
     <${Btn} kind="primary" disabled=${busy} onClick=${go}>${busy ? 'Creating…' : 'Create page'}</${Btn}>`}>
     ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
@@ -519,13 +526,97 @@ function NewPageModal({ folder = '', kind: presetKind = 'npc', title: initialTit
       <${Input} value=${title} onInput=${setTitle} placeholder="Lord Ulric Tannerheim" autofocus
         onKeydown=${(e) => { if (e.key === 'Enter') go(); }} />
     </${Field}>
-    ${hasTemplates
+    ${useTemplate
       ? html`<${Field} label="Template">
           <${Select} value=${tpl} onChange=${setTpl} options=${tplOptions} />
         </${Field}>`
       : html`<${Field} label="Kind">
           <${Select} value=${kind} onChange=${setKind} options=${kindOptions()} />
         </${Field}>`}
+  </${ModalShell}>`;
+}
+
+// ── Link a page to a session's prep (SC-03) ───────────────────────
+// The only page-side write to prep.md. Lists the current world's sessions,
+// loads the chosen session's prep, appends this page's vault-relative path to
+// selected_threads (or a chosen card's links). A stale base_revision (409) is
+// never overwritten: the modal reloads and tells the user.
+function LinkPrepModal({ path }) {
+  const sessions = store.campaignSessions || [];
+  const [sessionId, setSessionId] = useState('');
+  const [prep, setPrep] = useState(null);       // { revision, cards, selected_threads }
+  const [cardUid, setCardUid] = useState('');   // '' = selected_threads, else card uid
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [done, setDone] = useState(false);
+
+  async function load(sid, quiet) {
+    if (!sid) return;
+    setBusy(true); if (!quiet) setErr(null);
+    try {
+      const loaded = await loadPrep(sid);
+      setPrep(loaded);
+      setCardUid('');
+    } catch (e) { setErr(e.message); setPrep(null); }
+    setBusy(false);
+  }
+  useEffect(() => { setPrep(null); setCardUid(''); setDone(false); load(sessionId); }, [sessionId]);
+  useEffect(() => { setDone(false); }, [cardUid]);
+
+  async function save() {
+    if (!prep || !sessionId) return;
+    setBusy(true); setErr(null);
+    try {
+      const cards = (prep.cards || []).map((c) => {
+        if (c.uid !== cardUid) return c;
+        const links = c.links || [];
+        return links.includes(path) ? c : { ...c, links: [...links, path] };
+      });
+      const selected = cardUid
+        ? prep.selected_threads
+        : (prep.selected_threads || []).includes(path) ? prep.selected_threads : [...(prep.selected_threads || []), path];
+      const res = await savePrep(sessionId, {
+        base_revision: prep.revision,
+        cards,
+        selected_threads: selected,
+        notes: prep.notes,
+      });
+      // Adopt the server's saved document (fresh revision + ids), keeping the
+      // client uids positional so the "Add to" select stays meaningful.
+      const savedCards = (res.cards || []).map((c, i) => ({ ...c, uid: (prep.cards || [])[i]?.uid || c.uid }));
+      setPrep({ revision: res.revision, cards: savedCards, selected_threads: res.selected_threads, notes: prep.notes });
+      setDone(true);
+    } catch (e) {
+      if (e.status === 409) {
+        setErr('That preparation changed elsewhere. Reloaded the saved version — choose again (your draft here was not applied).');
+        await load(sessionId, true);
+      } else {
+        setErr(e.message);
+      }
+    }
+    setBusy(false);
+  }
+
+  const cardOptions = [{ value: '', label: 'Selected threads (document)' }]
+    .concat((prep?.cards || []).map((c) => ({ value: c.uid, label: `${c.section}: ${c.title || c.text || 'card'}`.slice(0, 70) })));
+
+  return html`<${ModalShell} title="Link to preparation" footer=${html`
+    <${Btn} kind="ghost" disabled=${busy} onClick=${closeModal}>Close</${Btn}>
+    <${Btn} kind="primary" disabled=${busy || !prep || done} onClick=${save}>${busy ? 'Saving…' : done ? 'Linked' : 'Add link'}</${Btn}>`}>
+    <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', lineHeight: 1.5 }}>
+      Adds <span style=${{ fontFamily: 'var(--font-mono)' }}>${path}</span> to a session's prep. Linking never creates a page.
+    </div>
+    ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
+    ${done && html`<div style=${{ color: 'var(--moss)', fontSize: 13 }}>Linked to the preparation.</div>`}
+    <${Field} label="Session">
+      <${Select} value=${sessionId} onChange=${setSessionId} options=${[
+        { value: '', label: sessions.length ? 'Choose a session…' : 'This world has no sessions yet' },
+        ...sessions.map((s) => ({ value: s.session_id, label: `Session ${String(s.session_number || 0).padStart(2, '0')}${s.title ? ` — ${s.title}` : ''}` })),
+      ]} />
+    </${Field}>
+    ${prep && html`<${Field} label="Add to">
+      <${Select} value=${cardUid} onChange=${setCardUid} options=${cardOptions} />
+    </${Field}>`}
   </${ModalShell}>`;
 }
 
@@ -1160,6 +1251,7 @@ export function ModalHost({ modal }) {
     case 'movePage': return html`<${MovePageModal} ...${modal.props} />`;
     case 'newPage': return html`<${NewPageModal} ...${modal.props} />`;
     case 'promotePage': return html`<${PromotePageModal} ...${modal.props} />`;
+    case 'linkPrep': return html`<${LinkPrepModal} ...${modal.props} />`;
     case 'enhanceFolder': return html`<${EnhanceFolderModal} />`;
     case 'vaultDiag': return html`<${VaultDiagnosticsModal} />`;
     case 'pageHistory': return html`<${PageHistoryModal} ...${modal.props} />`;

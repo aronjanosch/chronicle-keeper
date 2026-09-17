@@ -5,7 +5,7 @@ import { html, useEffect, useRef } from '../vendor/htm-preact-standalone.mjs';
 
 export const KIND_COLOR = {
   pc: '#B8924A', npc: '#7A2E1F', place: '#4A5D3A', faction: '#355370',
-  item: '#A87328', event: '#B47465', lore: '#8B7B5E',
+  item: '#A87328', event: '#B47465', thread: '#355370', lore: '#8B7B5E',
 };
 const DEFAULT_COLOR = '#A89880';
 

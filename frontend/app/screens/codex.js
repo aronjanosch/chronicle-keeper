@@ -18,11 +18,12 @@ export const KINDS = [
   { value: 'faction', label: 'Faction', plural: 'Factions', tone: 'ink-blue' },
   { value: 'item',    label: 'Item',    plural: 'Items',    tone: 'ochre' },
   { value: 'event',   label: 'Event',   plural: 'Events',   tone: 'ochre' },
+  { value: 'thread',  label: 'Thread',  plural: 'Threads',  tone: 'ink-blue' },
   { value: 'lore',    label: 'Lore',    plural: 'Lore',     tone: 'gilt' },
 ];
 
 export function iconForKind(k) {
-  return { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', lore: 'scroll' }[k] || 'doc';
+  return { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', thread: 'feather', lore: 'scroll' }[k] || 'doc';
 }
 export function toneForKind(k) {
   return (KINDS.find((x) => x.value === k) || {}).tone || 'burgundy';
@@ -187,6 +188,7 @@ function pageMenu(page, { onOpen, act, ren }) {
     { label: 'Copy path', icon: 'doc', onClick: () => copyText(page.path, 'Path copied') },
     '-',
     { label: 'New page in folder', icon: 'plus', onClick: () => act.newPage(dirOf(page.path)) },
+    { label: 'New thread', icon: 'feather', onClick: () => act.newThread(null) },
     { label: 'Ask Keeper about this', icon: 'feather', onClick: () => act.askKeeper(page) },
     '-',
     { label: 'Move to trash', icon: 'trash', danger: true, onClick: () => act.deletePage(page) },
@@ -196,6 +198,7 @@ function pageMenu(page, { onOpen, act, ren }) {
 function folderMenu(node, { act, ren }) {
   return (e) => openContextMenu(e, [
     { label: 'New page here', icon: 'plus', onClick: () => act.newPage(node.path) },
+    { label: 'New thread here', icon: 'feather', onClick: () => act.newThread(node.path) },
     { label: 'New subfolder', icon: 'folder', onClick: () => act.newFolder(node.path) },
     '-',
     { label: 'Rename', icon: 'edit', onClick: () => (ren ? ren.start(node.path) : act.renameFolder(node)) },
@@ -420,6 +423,7 @@ function VaultPanel({ campaign, tree, active, onOpen, act }) {
         : html`<div onDragOver=${dnd.overFolder('')} onDragLeave=${dnd.leave('')} onDrop=${dnd.dropFolder('')}
             onContextMenu=${(e) => openContextMenu(e, [
               { label: 'New page', icon: 'plus', onClick: () => act.newPage('') },
+              { label: 'New thread', icon: 'feather', onClick: () => act.newThread(null) },
               { label: 'New folder', icon: 'folder', onClick: () => act.newFolder('') },
             ])}
             style=${{ minHeight: 40, borderRadius: 5, boxShadow: dnd.over === '' && dnd.draggingPath ? 'inset 0 0 0 1px var(--burgundy-300)' : 'none' }}>
@@ -574,6 +578,7 @@ function FolderCard({ node, onOpen }) {
 export function makeVaultActions(campaign, folders, opts = {}) {
   return {
     newPage: (folder) => openModal('newPage', { folder, kind: kindForFolder(baseName(folder)) || 'npc' }),
+    newThread: (folder, onCreated) => openModal('newPage', { folder: folder || 'Threads', kind: 'thread', lockKind: true, onCreated }),
     promotePage: (p) => openModal('promotePage', { page: p, folders }),
     newFolder: (parent) => openModal('textPrompt', {
       title: 'New folder', label: parent ? `New folder inside ${parent}` : 'New folder name', placeholder: 'Riddles', confirmLabel: 'Create folder',

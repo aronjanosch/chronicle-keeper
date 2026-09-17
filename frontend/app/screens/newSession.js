@@ -63,6 +63,10 @@ export function NewSessionScreen({ store }) {
   // When `attach` is set we're adding a recording to an existing session
   // (upload-later flow) rather than creating a fresh draft.
   const attachId = store.route?.params?.attach || null;
+  // `intent` picks the two sessions-list entry points: 'prepare' creates a
+  // draft and opens Prepare; 'record' (or absent) keeps the recording flow.
+  const intent = store.route?.params?.intent === 'prepare' ? 'prepare' : 'record';
+  const preparing = intent === 'prepare';
   const [sid, setSid] = useState(null);
   const [number, setNumber] = useState(c?.next_session_number ?? '');
   const [tracks, setTracks] = useState([]);
@@ -165,7 +169,7 @@ export function NewSessionScreen({ store }) {
         title: title.trim() || null, date: date || null,
         metadata: meta || EMPTY_META, notes: notes.trim() || null,
       });
-      await loadSession(id);          // navigates to session screen
+      await loadSession(id, { view: preparing ? 'prepare' : 'record' }); // navigates to session screen
       if (transcribeNow) runTranscribe();  // fire-and-forget; banner shows progress
     } catch (e) { setErr(e.message); setBusy(false); }
   }
@@ -179,16 +183,23 @@ export function NewSessionScreen({ store }) {
     ]} right=${html`
       <div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <${Btn} kind="ghost" onClick=${() => (attachId ? navigate('session', { id: attachId }) : navigate('campaign', { id: c?.campaign_id }))}>Cancel</${Btn}>
-        <${Btn} kind="secondary" disabled=${busy} onClick=${() => begin(false)}>${tracks.length ? 'Save draft' : 'Save without recording'}</${Btn}>
-        <${Btn} kind="primary" iconRight="arrow-r" disabled=${busy || !tracks.length} onClick=${() => begin(true)}>
-          ${busy ? 'Saving…' : 'Begin transcription'}
-        </${Btn}>
+        ${preparing
+          ? html`
+            <${Btn} kind="secondary" disabled=${busy || !tracks.length} onClick=${() => begin(true)}>Create & transcribe</${Btn}>
+            <${Btn} kind="primary" iconRight="arrow-r" disabled=${busy} onClick=${() => begin(false)}>
+              ${busy ? 'Saving…' : 'Create session'}
+            </${Btn}>`
+          : html`
+            <${Btn} kind="secondary" disabled=${busy} onClick=${() => begin(false)}>${tracks.length ? 'Save draft' : 'Save without recording'}</${Btn}>
+            <${Btn} kind="primary" iconRight="arrow-r" disabled=${busy || !tracks.length} onClick=${() => begin(true)}>
+              ${busy ? 'Saving…' : 'Begin transcription'}
+            </${Btn}>`}
       </div>`} />`}
   >
     <datalist id="ck-roster">${roster.map((p, i) => html`<option key=${i} value=${p.player_name} />`)}</datalist>
 
     <div style=${{ marginBottom: 18 }}>
-      <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${attachId ? 'Add recording' : 'New session'} · ${c?.name}</div>
+      <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${attachId ? 'Add recording' : preparing ? 'Prepare a session' : 'New session'} · ${c?.name}</div>
       <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, letterSpacing: '-0.015em', color: 'var(--ink)', lineHeight: 1.15, marginTop: 2 }}>
         Session <span style=${{ color: 'var(--ink-muted)', fontStyle: 'italic' }}>#${number === '' || number == null ? '…' : number}</span>
       </h1>
@@ -198,13 +209,22 @@ export function NewSessionScreen({ store }) {
 
     <div style=${{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16 }}>
       <div>
-        ${!tracks.length ? html`
+        ${!tracks.length ? (preparing ? html`
+          <div style=${{ background: 'var(--surface)', border: '1px dashed var(--rule)', borderRadius: 8, padding: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style=${{ width: 34, height: 34, flex: '0 0 auto', borderRadius: 8, background: 'var(--paper-deep)', border: '1px solid var(--rule)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-faint)' }}><${Icon} name="upload" size=${15} /></div>
+            <div style=${{ flex: 1, minWidth: 0 }}>
+              <div style=${{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 500, color: 'var(--ink-soft)' }}>Attach a recording later</div>
+              <div style=${{ fontSize: 12, color: 'var(--ink-muted)', fontStyle: 'italic', fontFamily: 'var(--font-display)' }}>Optional — you can prepare now and record whenever. Import a transcript from Record later too.</div>
+            </div>
+            <${Btn} kind="ghost" size="sm" disabled=${uploading} onClick=${() => fileRef.current?.click()}>${uploading ? 'Unpacking…' : 'Choose file'}</${Btn}>
+            <input ref=${fileRef} type="file" accept=".zip,.flac,.wav,.mp3,.m4a,.ogg" style=${{ display: 'none' }} onChange=${onFile} disabled=${uploading} />
+          </div>` : html`
           <div onClick=${() => fileRef.current?.click()} style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '48px 24px', background: 'var(--surface)', border: '1.5px dashed var(--rule-strong)', borderRadius: 8, cursor: uploading ? 'default' : 'pointer', textAlign: 'center' }}>
             ${uploading ? html`<${Spinner} size=${22} />` : html`<div style=${{ width: 44, height: 44, borderRadius: 8, background: 'var(--paper-deep)', border: '1px solid var(--rule)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--burgundy)' }}><${Icon} name="upload" size=${18} /></div>`}
             <div style=${{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 500, color: 'var(--ink-soft)' }}>${uploading ? 'Unpacking recording…' : 'Drop a recording'}</div>
             <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic', fontFamily: 'var(--font-display)' }}>A Craig Bot .zip with one track per speaker, or a single audio file (flac, wav, mp3, m4a, ogg).</div>
             <input ref=${fileRef} type="file" accept=".zip,.flac,.wav,.mp3,.m4a,.ogg" style=${{ display: 'none' }} onChange=${onFile} disabled=${uploading} />
-          </div>` : html`
+          </div>`) : html`
           <div style=${{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: 'var(--moss-50)', border: '1px solid rgba(74,93,58,.22)', borderRadius: 8, marginBottom: 16 }}>
             <div style=${{ width: 36, height: 36, borderRadius: 8, background: 'var(--moss)', color: '#FBF6E9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><${Icon} name="check" size=${14} /></div>
             <div style=${{ flex: 1 }}>

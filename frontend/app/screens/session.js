@@ -1,9 +1,12 @@
-// Screen 04 — Session Detail. Pipeline strip, summary prose, speakers, metadata.
-import { html, useState } from '../../vendor/htm-preact-standalone.mjs';
+// Screen 04 — Session Detail. Prepare / Record / Review local views. Record
+// hosts the existing pipeline strip, summary prose, speakers, and metadata.
+import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal, fmtDate, fmtDateTime, toneFor } from '../core.js';
-import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, saveSummaryEdit, loadSession, importTranscript } from '../actions.js';
+import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, saveSummaryEdit, loadSession, importTranscript, loadCodexUpdate } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
-import { Icon, Sigil, Btn, Pipeline, Markdown, Empty, Menu } from '../ui.js';
+import { Icon, Sigil, Btn, Pipeline, Markdown, Empty, Menu, Segmented, Card } from '../ui.js';
+import { SessionPrepare } from './prepare.js';
+import { CodexUpdatePane } from './codexUpdate.js';
 
 // Read a transcript file the user made elsewhere. Plain file input rather than a
 // drop zone: this is a rare, deliberate action, not part of the normal flow.
@@ -225,6 +228,35 @@ function SummaryCard({ store, hasS, hasT }) {
   </div>`;
 }
 
+// The review pane needs run + proposals loaded. When hosting under Review the
+// standalone screen's auto-generate effect is disabled, so fetch the current
+// run once if the session summary was loaded without one.
+function useCodexUpdate(store, sess, enabled) {
+  useEffect(() => {
+    if (!enabled || !sess || store.codexUpdate) return;
+    if (!(store.summaries || []).length) return;
+    loadCodexUpdate(sess.session_id).catch(() => {});
+  }, [enabled, sess?.session_id, store.summaries.length]);
+}
+
+function ReviewPane({ store, sess }) {
+  const hasS = (store.summaries || []).length > 0;
+  useCodexUpdate(store, sess, hasS);
+  if (!hasS) {
+    return html`<${Card} title="Update the Codex">
+      <div style=${{ fontSize: 13, color: 'var(--ink-muted)', lineHeight: 1.6 }}>
+        Add a transcript and summary to generate updates.
+      </div>
+      <div style=${{ marginTop: 12 }}>
+        <${Btn} kind="secondary" size="sm" icon="arrow-r" onClick=${() => navigate('session', { id: sess.session_id, view: 'record' })}>Return to Record</${Btn}>
+      </div>
+    </${Card}>`;
+  }
+  // SC-06 replaces this with the development-based review; until then Review
+  // hosts the existing Update-the-Codex UI without auto-generating.
+  return html`<${CodexUpdatePane} store=${store} />`;
+}
+
 export function SessionScreen({ store }) {
   const sess = store.session;
   if (!sess) return html`<div />`;
@@ -234,6 +266,24 @@ export function SessionScreen({ store }) {
   const speakers = sess.speakers || [];
   const hasT = store.transcripts.length > 0;
   const hasS = store.summaries.length > 0;
+
+  // Local view: explicit route param wins; otherwise default per the UX spec.
+  // Bare sessions have no world, so Prepare is unavailable (the API 422s) —
+  // fall back to Record rather than opening an editor that cannot load.
+  // The legacy `codexUpdate` route resolves to this session's Review view so
+  // history/back behave as if Review were opened locally.
+  const hasWorld = !!(c?.campaign_id || cam.campaign_id);
+  const explicit = store.route.name === 'codexUpdate' ? 'review' : store.route.params?.view;
+
+  // Approximate "a current unfinished review exists" from the existing
+  // Update-the-Codex run; SC-04 replaces this with the real review record.
+  const cuRun = store.codexUpdate;
+  const cuStale = cuRun && store.summaries[0]?.created_at
+    && new Date(store.summaries[0].created_at) > new Date(cuRun.generated_at);
+  const reviewPending = hasS && cuRun && cuRun.status === 'open' && !cuStale;
+
+  const view = explicit
+    || (reviewPending ? 'review' : hasWorld && !hasT && !hasS ? 'prepare' : 'record');
 
   const stages = [
     { key: 'u', label: 'Recording', done: tracks.length > 0, current: tracks.length === 0, detail: tracks.length ? `${tracks.length} track${tracks.length === 1 ? '' : 's'}` : 'No upload', meta: tracks.length ? '' : 'Upload a Craig ZIP' },
@@ -248,19 +298,52 @@ export function SessionScreen({ store }) {
     && !(store.summaries[0]?.created_at && new Date(store.summaries[0].created_at) > new Date(cu.generated_at));
   const codexPending = hasS && !cuReviewed;
 
-  const primary = !tracks.length
-    ? html`<${Btn} kind="primary" icon="upload" onClick=${() => navigate('newSession', { id: cam.campaign_id, attach: sess.session_id })}>Upload recording</${Btn}>`
-    : !hasT
+  // Existing transcript/summary dominate: an imported transcript with no audio
+  // must offer Summarize, not Upload, as primary.
+  const summarizeBtn = html`<${Btn} kind="primary" icon="sparkle" onClick=${() => navigate('summarize', { id: sess.session_id })}>Summarize</${Btn}>`;
+  const recordPrimary = hasT
+    ? (!hasS ? summarizeBtn : html`<${Btn} kind="secondary" icon="sparkle" onClick=${() => openModal('confirm', {
+          title: 'Re-summarize',
+          message: 'Re-summarizing replaces the current summary, including any manual edits. Continue?',
+          confirmLabel: 'Re-summarize',
+          onConfirm: () => navigate('summarize', { id: sess.session_id }),
+        })}>Re-summarize</${Btn}>
+        <${Btn} kind=${codexPending ? 'primary' : 'secondary'} icon="book" onClick=${() => navigate('session', { id: sess.session_id, view: 'review' })}>Review world updates</${Btn}>`)
+    : tracks.length
       ? html`<${Btn} kind="primary" icon="mic" onClick=${() => runTranscribe()}>Transcribe</${Btn}>`
-      : !hasS
-        ? html`<${Btn} kind="primary" icon="sparkle" onClick=${() => navigate('summarize', { id: sess.session_id })}>Summarize</${Btn}>`
-        : html`<${Btn} kind="secondary" icon="sparkle" onClick=${() => openModal('confirm', {
-              title: 'Re-summarize',
-              message: 'Re-summarizing replaces the current summary, including any manual edits. Continue?',
-              confirmLabel: 'Re-summarize',
-              onConfirm: () => navigate('summarize', { id: sess.session_id }),
-            })}>Re-summarize</${Btn}>
-            <${Btn} kind=${codexPending ? 'primary' : 'secondary'} icon="book" onClick=${() => navigate('codexUpdate', { id: sess.session_id })}>Update the Codex</${Btn}>`;
+      : html`<${Btn} kind="primary" icon="upload" onClick=${() => navigate('newSession', { id: cam.campaign_id, attach: sess.session_id })}>Upload recording</${Btn}>`;
+
+  // The overflow menu is shared across Prepare / Record / Review — session-level
+  // utilities (delete, edit, export, import) must stay reachable from any view.
+  const sessionMenu = html`<${Menu} items=${[
+    { label: 'Edit session', icon: 'edit', onClick: () => openModal('session', { session: sess }) },
+    { label: 'Export…', icon: 'export', disabled: !hasS, onClick: () => openModal('export', {}) },
+    { label: 'Re-transcribe', icon: 'mic', hidden: !hasT, onClick: () => openModal('confirm', {
+      title: 'Re-transcribe session',
+      message: 'Run transcription again? A new transcript is added; existing transcripts are kept.',
+      confirmLabel: 'Re-transcribe',
+      onConfirm: () => runTranscribe(),
+    }) },
+    { label: 'Import transcript…', icon: 'upload', onClick: pickTranscriptFile },
+    { label: 'Delete session', icon: 'trash', danger: true, onClick: () => openModal('confirm', {
+      title: 'Delete session',
+      message: 'Delete this session? This removes its transcripts and summaries permanently.',
+      onConfirm: () => deleteSession(sess.session_id),
+    }) },
+  ]} />`;
+
+  // Only the prominent primary action follows the active view. Prepare has no
+  // record/transcribe primary; Review has none (its pane owns its actions).
+  const viewPrimary = view === 'record'
+    ? html`${tracks.length > 0 && !hasT ? html`<${Btn} kind="secondary" size="sm" icon="users" onClick=${() => navigate('newSession', { id: cam.campaign_id, attach: sess.session_id })}>Label speakers</${Btn}>` : ''}${recordPrimary}`
+    : view === 'review'
+      ? html`<${Btn} kind="secondary" icon="book" onClick=${() => navigate('session', { id: sess.session_id, view: 'record' })}>Back to Record</${Btn}>`
+      : html`<span style=${{ fontSize: 12, color: 'var(--ink-faint)', fontFamily: 'var(--font-display)', fontStyle: 'italic' }}>Saves automatically</span>`;
+
+  const sessionActions = html`<div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
+    ${viewPrimary}
+    ${sessionMenu}
+  </div>`;
 
   return html`<${Shell}
     sidebar=${html`<${Sidebar} variant="campaign" active="sessions" campaign=${c} />`}
@@ -268,27 +351,7 @@ export function SessionScreen({ store }) {
       { label: 'Worlds', onClick: () => navigate('library') },
       c && { label: c.name, onClick: () => openCampaign(c.campaign_id) },
       `Session ${cam.session_number || '?'}`,
-    ]} right=${html`
-      <div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        ${tracks.length > 0 && !hasT ? html`<${Btn} kind="secondary" icon="users" onClick=${() => navigate('newSession', { id: cam.campaign_id, attach: sess.session_id })}>Label speakers</${Btn}>` : ''}
-        ${primary}
-        <${Menu} items=${[
-          { label: 'Edit session', icon: 'edit', onClick: () => openModal('session', { session: sess }) },
-          { label: 'Export…', icon: 'export', disabled: !hasS, onClick: () => openModal('export', {}) },
-          { label: 'Re-transcribe', icon: 'mic', hidden: !hasT, onClick: () => openModal('confirm', {
-            title: 'Re-transcribe session',
-            message: 'Run transcription again? A new transcript is added; existing transcripts are kept.',
-            confirmLabel: 'Re-transcribe',
-            onConfirm: () => runTranscribe(),
-          }) },
-          { label: 'Import transcript…', icon: 'upload', onClick: pickTranscriptFile },
-          { label: 'Delete session', icon: 'trash', danger: true, onClick: () => openModal('confirm', {
-            title: 'Delete session',
-            message: 'Delete this session? This removes its transcripts and summaries permanently.',
-            onConfirm: () => deleteSession(sess.session_id),
-          }) },
-        ]} />
-      </div>`} />`}
+    ]} right=${sessionActions} />`}
   >
     <div style=${{ display: 'flex', alignItems: 'flex-start', gap: 20, marginBottom: 22 }}>
       <div style=${{ width: 64, height: 64, flex: '0 0 auto', background: 'var(--burgundy-50)', color: 'var(--burgundy-700)', borderRadius: 8, border: '1px solid rgba(122,46,31,.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)' }}>
@@ -305,14 +368,28 @@ export function SessionScreen({ store }) {
         <div style=${{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 8, fontSize: 12.5, color: 'var(--ink-muted)' }}>
           ${cam.date && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 5 }}><${Icon} name="cal" size=${12} /> ${fmtDate(cam.date)}</span>`}
           <span style=${{ display: 'flex', alignItems: 'center', gap: 5 }}><${Icon} name="users" size=${12} /> ${speakers.length || tracks.length} speaker${(speakers.length || tracks.length) === 1 ? '' : 's'}</span>
-          ${hasS && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--moss)' }}><span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--moss)' }} /> Complete · ready to export</span>`}
+          ${hasS && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--moss)' }}><span style=${{ width: 6, height: 6, borderRadius: '50%', background: 'var(--moss)' }} /> Summary ready</span>`}
         </div>
       </div>
     </div>
 
+    <div style=${{ marginBottom: 18 }}>
+      <${Segmented} value=${view} onChange=${(v) => navigate('session', { id: sess.session_id, view: v })}
+        options=${[
+          { value: 'prepare', label: 'Prepare', icon: 'edit' },
+          { value: 'record', label: 'Record', icon: 'mic' },
+          { value: 'review', label: 'Review', icon: 'book' },
+        ]} />
+    </div>
+
+    ${view === 'prepare'
+      ? html`<${SessionPrepare} session=${sess} campaign=${c} />`
+      : view === 'review'
+        ? html`<${ReviewPane} store=${store} sess=${sess} />`
+        : html`<div class="ck-session-record">
     <${Pipeline} stages=${stages} />
 
-    <div style=${{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 16, marginTop: 22 }}>
+    <div class="ck-session-body" style=${{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 16, marginTop: 22 }}>
       <${SummaryCard} store=${store} hasS=${hasS} hasT=${hasT} />
 
       <div style=${{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -344,5 +421,6 @@ export function SessionScreen({ store }) {
         </div>
       </div>
     </div>
+    </div>`}
   </${Shell}>`;
 }

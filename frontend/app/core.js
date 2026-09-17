@@ -9,7 +9,8 @@ export const store = {
   apiToken: null,
   shellMode: false,       // true when the Tauri shell injected the API base (browser-dev → false)
 
-  // routing: { name: 'library'|'campaign'|'sessions'|'session'|'newSession'|'summarize'|'settings'|'codex'|'page', params }
+  // routing: { name: 'library'|'campaign'|'sessions'|'session'|'newSession'|'summarize'|'settings'|'codex'|'page'|'codexUpdate', params }
+  // `session` params: { id, view? } where view is 'prepare'|'record'|'review'. `codexUpdate` { id } opens Review.
   route: { name: 'library', params: {} },
 
   // data
@@ -75,7 +76,26 @@ export function bump(domain) {
 const navStack = { back: [], fwd: [] };
 const NAV_CAP = 50;
 
+// A screen holding unsaved work registers a leave guard; navigation consults it
+// before flipping the route. The guard is called with `resume`, a function that
+// performs the original navigation bypassing the guard. It returns true to allow
+// the navigation, or false to block it and later call `resume` itself once the
+// work is safe.
+let leaveGuard = null;
+export function setLeaveGuard(fn) {
+  leaveGuard = fn;
+  return () => { if (leaveGuard === fn) leaveGuard = null; };
+}
+
+function guarded(resume) {
+  return !leaveGuard || leaveGuard(resume) !== false;
+}
+
 export function navigate(name, params = {}) {
+  guarded(() => navigateNow(name, params));
+}
+
+function navigateNow(name, params = {}) {
   const cur = store.route;
   const same = cur.name === name && JSON.stringify(cur.params) === JSON.stringify(params);
   if (!same) {
@@ -88,6 +108,13 @@ export function navigate(name, params = {}) {
 }
 
 export function navigateBack() {
+  guarded(() => navigateBackNow());
+}
+export function navigateForward() {
+  guarded(() => navigateForwardNow());
+}
+
+function navigateBackNow() {
   const entry = navStack.back.pop();
   if (!entry) return;
   navStack.fwd.push({ name: store.route.name, params: store.route.params });
@@ -95,7 +122,7 @@ export function navigateBack() {
   setState({ route: entry, canNavBack: navStack.back.length > 0, canNavFwd: navStack.fwd.length > 0 });
 }
 
-export function navigateForward() {
+function navigateForwardNow() {
   const entry = navStack.fwd.pop();
   if (!entry) return;
   navStack.back.push({ name: store.route.name, params: store.route.params });
@@ -257,7 +284,9 @@ export async function apiFetch(path, options = {}) {
   if (!res.ok) {
     let detail = res.statusText;
     try { const data = await res.json(); detail = data.detail || JSON.stringify(data); } catch (_) {}
-    throw new Error(detail);
+    const err = new Error(detail);
+    err.status = res.status; // callers distinguish 409 (stale) from 422 (invalid)
+    throw err;
   }
   return res.json();
 }

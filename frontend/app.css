@@ -234,6 +234,16 @@ span.ck-embed-src.ck-wikilink:hover { color: var(--burgundy); }
 /* Reading-view right rail (design page.jsx): infobox, AI memory, tags, backlinks */
 .ck-rail { width: 264px; flex: 0 0 auto; border-left: 1px solid var(--rule-soft); overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; background: var(--paper); }
 @media (max-width: 1100px) { .ck-rail { display: none; } }
+
+/* Session Record body: stack the summary + side rail at narrow widths so the
+   essential actions stay reachable without horizontal scrolling (UX: <900px). */
+@media (max-width: 900px) { .ck-session-body { grid-template-columns: 1fr !important; } }
+
+/* Visually hidden, but available to screen readers (polite status regions). */
+.ck-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 .ck-rail-card { background: var(--surface); border: 1px solid var(--rule-soft); border-radius: 8px; padding: 12px 14px; }
 .ck-rail-head { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 9px; cursor: pointer; user-select: none; }
 .ck-rail-head:hover { color: var(--ink-muted); }

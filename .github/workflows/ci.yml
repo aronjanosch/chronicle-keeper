@@ -58,3 +58,8 @@ jobs:
           find frontend -name '*.mjs' -o -name '*.js' | while read -r f; do
             node --check "$f" || exit 1
           done
+      - name: node --test frontend unit tests
+        run: |
+          find frontend -name '*.test.mjs' | while read -r f; do
+            node --test "$f" || exit 1
+          done

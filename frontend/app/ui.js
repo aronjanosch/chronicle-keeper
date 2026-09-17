@@ -250,6 +250,27 @@ export function Menu({ items, align = 'right', title = 'More actions', label }) 
   </div>`;
 }
 
+// ── Segmented control — a small nav switcher (Prepare · Record · Review) ──
+// options: [{ value, label, icon?, disabled? }]. The active segment is a raised
+// chip; disabled options are inert but still announced.
+export function Segmented({ options, value, onChange, style = {} }) {
+  return html`<div style=${{ display: 'inline-flex', gap: 2, padding: 2, background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 6, ...style }}>
+    ${options.map((o) => html`<button key=${o.value} type="button" aria-pressed=${o.value === value}
+      disabled=${o.disabled}
+      onClick=${() => { if (!o.disabled && o.value !== value) onChange?.(o.value); }}
+      style=${{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 4,
+        border: 'none', background: o.value === value ? 'var(--paper-deep)' : 'transparent',
+        color: o.disabled ? 'var(--ink-ghost)' : o.value === value ? 'var(--ink)' : 'var(--ink-muted)',
+        fontFamily: 'inherit', fontSize: 12.5, fontWeight: o.value === value ? 500 : 400,
+        cursor: o.disabled ? 'default' : 'pointer',
+      }}>
+      ${o.icon && html`<${Icon} name=${o.icon} size=${12} />`}
+      ${o.label}
+    </button>`)}
+  </div>`;
+}
+
 // ── Context menu (Phase 14A) ──────────────────────────────────────
 // One app-wide right-click menu: call openContextMenu(e, items) from any
 // onContextMenu handler; ContextMenuHost (mounted once in main.js) renders it
@@ -811,7 +832,7 @@ function fillAssetImgs(scope, campaignId, urls, isDead) {
   }
 }
 
-const KIND_ICONS = { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', lore: 'scroll' };
+const KIND_ICONS = { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', thread: 'feather', lore: 'scroll' };
 
 // Asset name (from `image:` frontmatter) → authenticated blob URL, revoked on unmount.
 export function useAsset(cid, name) {

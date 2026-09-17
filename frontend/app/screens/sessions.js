@@ -63,7 +63,10 @@ export function SessionsScreen({ store }) {
   return html`<${Shell}
     sidebar=${html`<${Sidebar} variant="campaign" active="sessions" campaign=${c} />`}
     topbar=${html`<${Topbar} crumbs=${[{ label: 'Worlds', onClick: () => navigate('library') }, c.name, 'Sessions']} right=${html`
-      <${Btn} kind="primary" icon="mic" onClick=${() => navigate('newSession', { id: c.campaign_id })}>New session</${Btn}>`} />`}
+      <div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <${Btn} kind="primary" icon="edit" onClick=${() => navigate('newSession', { id: c.campaign_id, intent: 'prepare' })}>Prepare a session</${Btn}>
+        <${Btn} kind="secondary" icon="mic" onClick=${() => navigate('newSession', { id: c.campaign_id, intent: 'record' })}>Add a past session</${Btn}>
+      </div>`} />`}
   >
     <div style=${{ marginBottom: 20 }}>
       <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>The play that feeds the world</div>

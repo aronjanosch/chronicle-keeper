@@ -124,9 +124,34 @@ const STAGE_LABEL = {
   grounding: 'Verifying against the transcript…',
 };
 
+// Legacy page entry (`codexUpdate` route) kept working for deep links and the
+// standalone screen; SessionScreen's Review view is the primary host now.
 export function CodexUpdateScreen({ store }) {
   const sess = store.session;
   const c = store.campaign;
+  const cam = sess?.campaign || {};
+  if (!sess) return html`<div />`;
+
+  return html`<${Shell}
+    sidebar=${html`<${Sidebar} variant="campaign" active="sessions" campaign=${c} />`}
+    topbar=${html`<${Topbar} crumbs=${[
+      { label: 'Worlds', onClick: () => navigate('library') },
+      c && { label: c.name, onClick: () => openCampaign(c.campaign_id) },
+      { label: `Session ${cam.session_number || '?'}`, onClick: () => navigate('session', { id: sess.session_id }) },
+      'Update the Codex',
+    ]} />`}
+    bodyStyle=${{ padding: 0 }}
+  >
+    <${CodexUpdatePane} store=${store} autoGenerate=${true} />
+  </${Shell}>`;
+}
+
+// The review body, shared by the standalone Codex screen and the session
+// Review view. `autoGenerate` (default) keeps the standalone route's existing
+// behavior; the session Review host passes false so opening the view never
+// fires an unsolicited generation call.
+export function CodexUpdatePane({ store, autoGenerate = false }) {
+  const sess = store.session;
   const cam = sess?.campaign || {};
   const run = store.codexUpdate && store.codexUpdate.status !== 'none' ? store.codexUpdate : null;
   const streaming = store.codexUpdateStreaming;
@@ -142,7 +167,7 @@ export function CodexUpdateScreen({ store }) {
   const runStale = run && summaryAt && new Date(summaryAt) > new Date(run.generated_at);
 
   useEffect(() => {
-    if (!sess) return;
+    if (!sess || !autoGenerate) return;
     (async () => {
       const r = await loadCodexUpdate(sess.session_id);
       const fresh = r && r.status !== 'none'
@@ -193,30 +218,27 @@ export function CodexUpdateScreen({ store }) {
 
   const sectionHead = (label) => html`<div style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', padding: '12px 4px 4px' }}>${label}</div>`;
 
-  return html`<${Shell}
-    sidebar=${html`<${Sidebar} variant="campaign" active="sessions" campaign=${c} />`}
-    topbar=${html`<${Topbar} crumbs=${[
-      { label: 'Worlds', onClick: () => navigate('library') },
-      c && { label: c.name, onClick: () => openCampaign(c.campaign_id) },
-      { label: `Session ${cam.session_number || '?'}`, onClick: () => navigate('session', { id: sess.session_id }) },
-      'Update the Codex',
-    ]} right=${html`
-      <div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        ${run && !streaming && html`<${Btn} kind="ghost" icon="sparkle" onClick=${() => runCodexUpdate()}>Regenerate</${Btn}>`}
-        <${Btn} kind="ghost" onClick=${skip}>Skip for now</${Btn}>
-        <${Btn} kind="primary" icon="check" disabled=${busy || !!streaming || !acceptedIds.length} onClick=${doCommit}>
-          ${busy ? 'Committing…' : `Commit ${acceptedIds.length} change${acceptedIds.length === 1 ? '' : 's'}`}
-        </${Btn}>
-      </div>`} />`}
-    bodyStyle=${{ padding: 0 }}
-  >
-    <div style=${{ display: 'grid', gridTemplateColumns: '348px 1fr', height: '100%' }}>
+  // One primary per state: generate when there is no run yet, commit once
+  // proposals are selected. Opening Review never auto-generates (SC-02).
+  const actions = html`<div style=${{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+    ${!run && !streaming && html`<${Btn} kind="primary" size="sm" icon="sparkle" onClick=${() => runCodexUpdate()}>Find world updates</${Btn}>`}
+    ${run && !streaming && html`<${Btn} kind="ghost" size="sm" icon="sparkle" onClick=${() => runCodexUpdate()}>Regenerate</${Btn}>`}
+    ${run && !streaming && html`<${Btn} kind="ghost" size="sm" onClick=${skip}>Skip for now</${Btn}>`}
+    ${run && !streaming && html`<${Btn} kind="primary" size="sm" icon="check" disabled=${busy || !acceptedIds.length} onClick=${doCommit}>
+      ${busy ? 'Committing…' : `Commit ${acceptedIds.length} change${acceptedIds.length === 1 ? '' : 's'}`}
+    </${Btn}>`}
+  </div>`;
+
+  // Hosted inside the session screen's padded body, so a bounded min-height
+  // keeps both columns scrollable instead of overflowing the Shell.
+  return html`<div style=${{ display: 'grid', gridTemplateColumns: '348px 1fr', minHeight: 560, border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden', background: 'var(--surface)' }}>
       <div style=${{ borderRight: '1px solid var(--rule-soft)', overflow: 'auto', padding: '20px 16px', display: 'flex', flexDirection: 'column' }}>
         <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)' }}>Session ${cam.session_number || '?'} · proposed</div>
         <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 500, letterSpacing: '-0.015em', lineHeight: 1.15, marginTop: 3 }}>Update the Codex</h1>
         <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 5, lineHeight: 1.5, fontFamily: 'var(--font-display)', fontStyle: 'italic' }}>
           The Chronicle read the transcript and the summary. Here's what it would change. Nothing is written until you commit.
         </div>
+        <div style=${{ marginTop: 12 }}>${actions}</div>
 
         ${streaming && html`<div style=${{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 20, padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 7, fontSize: 12.5, color: 'var(--ink-soft)' }}>
           <${Spinner} size=${14} /> ${STAGE_LABEL[streaming.stage] || 'Working…'}
@@ -288,8 +310,7 @@ export function CodexUpdateScreen({ store }) {
           </div>
         </div>` : !streaming && html`<${Empty} icon="book" title="No proposal selected">Pick a proposal on the left to review its changes.</${Empty}>`}
       </div>
-    </div>
-  </${Shell}>`;
+    </div>`;
 }
 
 // Transcript-grounded provenance bar + collapsible cited excerpt ("Show it").

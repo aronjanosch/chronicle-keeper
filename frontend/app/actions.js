@@ -621,7 +621,10 @@ export async function deleteAtlasMap(mapId) {
 }
 
 // ── Sessions ──────────────────────────────────────────────────────
-export async function loadSession(id) {
+// `params` may carry { view } for the local Prepare/Record/Review choice. When
+// navigating within the same session, keep the current view so an explicit
+// choice is not clobbered by a re-load; otherwise accept the optional params.
+export async function loadSession(id, params) {
   setState({ loading: true, error: null });
   try {
     const session = await apiFetch(`/session/${id}`);
@@ -648,7 +651,10 @@ export async function loadSession(id) {
       : null;
     setState({ session, campaign, transcripts: transcripts || [], summaries: summaries || [], summaryPreview, codexUpdate, loading: false });
     if (loadErr) setOp(`Couldn't load this session's artifacts: ${loadErr.message}`, 'err');
-    navigate('session', { id });
+    const sameSession = store.route.name === 'session' && store.route.params?.id === id;
+    const view = params?.view ?? (sameSession ? store.route.params?.view : undefined);
+    const next = view ? { id, view } : { id };
+    navigate('session', next);
   } catch (e) { setState({ error: e.message, loading: false }); }
 }
 

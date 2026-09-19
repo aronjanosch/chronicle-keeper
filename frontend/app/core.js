@@ -304,11 +304,12 @@ export function apiJson(path, method, body) {
 // parsed `data:` payload. EventSource can't carry a POST body or the auth
 // header, so we read the response body ourselves and split on SSE frame
 // boundaries (\n\n). Resolves when the stream ends.
-export async function apiStream(path, body, onEvent) {
+export async function apiStream(path, body, onEvent, { signal } = {}) {
   const res = await fetch(apiUrl(path), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(body),
+    signal,
   });
   if (!res.ok || !res.body) {
     let detail = res.statusText;

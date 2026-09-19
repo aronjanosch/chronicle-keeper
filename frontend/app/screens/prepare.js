@@ -7,7 +7,7 @@
 // by linking), and an unresolved reference stays visible instead of being guessed.
 import { html, useState, useEffect, useRef } from '../../vendor/htm-preact-standalone.mjs';
 import { copyText, loadVaultTree } from '../actions.js';
-import { useStore, setLeaveGuard } from '../core.js';
+import { useStore, setLeaveGuard, navigate } from '../core.js';
 import { Btn, Card, Menu, Icon, Spinner } from '../ui.js';
 import { iconForKind, makeVaultActions } from './codex.js';
 import { openPageEvt } from '../tabs.js';
@@ -16,6 +16,10 @@ import {
   PREP_SECTIONS, PREP_OUTCOMES, newCard, cardsInSection, hasOpening,
   moveCard, removeCard, restoreCard, duplicateCard, applyOutcome, loadPrep, savePrep,
 } from '../prep.js';
+import {
+  MAX_SUGGESTIONS, suggestPrep, acceptSuggestion, canAcceptOpening, replaceOpening,
+  dismissSuggestion,
+} from '../prepSuggest.js';
 
 function serializeDraftText(cards) {
   const out = [];
@@ -48,11 +52,11 @@ function RefChip({ path, pages, onRemove }) {
       <span style=${{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${title}</span>
     </span>
     ${unresolved && html`<span style=${{ fontSize: 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>missing</span>`}
-    <button type="button" aria-label=${`Remove link to ${title}`} title="Remove link"
+    ${onRemove && html`<button type="button" aria-label=${`Remove link to ${title}`} title="Remove link"
       onClick=${onRemove}
       style=${{ display: 'flex', padding: 1, border: 'none', background: 'none', color: 'inherit', cursor: 'pointer', opacity: 0.7 }}>
       <${Icon} name="x" size=${10} />
-    </button>
+    </button>`}
   </span>`;
 }
 
@@ -102,6 +106,60 @@ function IconBtn({ name, label, onClick, disabled }) {
     onMouseLeave=${disabled ? null : (e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--ink-muted)'; }}>
     <${Icon} name=${name} size=${13} />
   </button>`;
+}
+
+const SUGGEST_STAGE_LABEL = { reading: 'Reading session', grounding: 'Checking sources', building: 'Preparing ideas' };
+
+// One Keeper suggestion. Ephemeral until "Add to prep"; Adjust edits the text in
+// place, and "Why this fits" hides the rationale + source links behind a toggle.
+// An `is_idea` suggestion is labeled as a creative idea, never presented as fact.
+function SuggestionRow({ s, pages, adjusting, adjustText, openingBlocked, onStartAdjust, onAdjustDraft, onCommitAdjust, onCancelAdjust, onAdd, onReplace, onDismiss }) {
+  const [expanded, setExpanded] = useState(false);
+  const section = PREP_SECTIONS.find((x) => x.key === s.section);
+  const links = s.links || [];
+  return html`<div style=${{ border: '1px solid var(--rule-soft)', borderRadius: 7, background: 'var(--surface-raised)', padding: '10px 12px' }}>    <div style=${{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+      <span style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-faint)', border: '1px solid var(--rule-soft)', borderRadius: 999, padding: '1px 7px' }}>${section?.label || s.section}</span>
+      ${s.is_idea && html`<span title="A creative prompt, not a fact from your notes" style=${{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 600, letterSpacing: '0.03em', textTransform: 'uppercase', color: 'var(--ochre)', background: 'var(--ochre-50)', border: '1px solid rgba(168,115,40,.3)', borderRadius: 999, padding: '1px 7px' }}>
+        <${Icon} name="sparkle" size=${10} /> Creative idea
+      </span>`}
+    </div>
+    ${s.title && !adjusting && html`<div style=${{ fontFamily: 'var(--font-display)', fontWeight: 500, fontSize: 13.5, color: 'var(--ink)', marginBottom: 2 }}>${s.title}</div>`}
+    ${adjusting
+      ? html`<textarea autofocus value=${adjustText} onInput=${(e) => onAdjustDraft(e.target.value)}
+          onKeyDown=${(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onCommitAdjust(); }
+            else if (e.key === 'Escape') { e.preventDefault(); onCancelAdjust(); }
+          }}
+          rows=${3}
+          style=${{ width: '100%', boxSizing: 'border-box', resize: 'vertical', padding: '7px 9px', border: '1px solid var(--rule-strong)', borderRadius: 5, background: 'var(--surface)', color: 'var(--ink)', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.5, outline: 'none' }} />`
+      : html`<div style=${{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>${s.text}</div>`}
+    ${(s.rationale || links.length) && html`<div style=${{ marginTop: 7 }}>
+      <button type="button" aria-expanded=${expanded}
+        onClick=${() => setExpanded((v) => !v)}
+        style=${{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: 0, border: 'none', background: 'none', color: 'var(--ink-muted)', fontSize: 11.5, cursor: 'pointer' }}>
+        <${Icon} name=${expanded ? 'chev-d' : 'chev-r'} size=${11} /> Why this fits
+      </button>
+      ${expanded && html`<div style=${{ marginTop: 6, paddingLeft: 16 }}>
+        ${s.rationale && html`<div style=${{ fontSize: 12, color: 'var(--ink-muted)', lineHeight: 1.5, fontStyle: 'italic' }}>${s.rationale}</div>`}
+        ${links.length && html`<div style=${{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+          ${links.map((p) => html`<${RefChip} key=${p} path=${p} pages=${pages} />`)}
+        </div>`}
+      </div>`}
+    </div>`}
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 9 }}>
+      ${adjusting
+        ? html`
+          <${Btn} kind="primary" size="sm" icon="check" onClick=${onCommitAdjust}>Save wording</${Btn}>
+          <${Btn} kind="ghost" size="sm" onClick=${onCancelAdjust}>Cancel</${Btn}>`
+        : html`
+          ${openingBlocked
+            ? html`<${Btn} kind="secondary" size="sm" icon="undo" onClick=${onReplace}>Replace opening</${Btn}>`
+            : html`<${Btn} kind="secondary" size="sm" icon="plus" onClick=${onAdd}>Add to prep</${Btn}>`}
+          <${Btn} kind="ghost" size="sm" icon="edit" onClick=${onStartAdjust}>Adjust</${Btn}>
+          <span style=${{ flex: 1 }} />
+          <${Btn} kind="ghost" size="sm" onClick=${onDismiss}>Dismiss</${Btn}>`}
+    </div>
+  </div>`;
 }
 
 function CardRow({ card, first, last, editing, draft, noteEditing, pages, onMove, onMenu, onCommit, onCancel, onDraft, onStartNote, onCommitNote, onAddLink, onRemoveLink }) {
@@ -164,6 +222,15 @@ export function SessionPrepare({ session, campaign }) {
   // Set when a navigation was blocked because the save failed: the intended
   // navigation resume fn plus the error, resolved by Retry / Leave without saving.
   const [leaveIssue, setLeaveIssue] = useState(null);
+  // Keeper suggestions (SC-07). `suggest` = { phase: 'idle'|'streaming'|'error',
+  // stage?, items[], error?, code? }; nothing generates until the first click.
+  const [suggest, setSuggest] = useState({ phase: 'idle', items: [] });
+  const [ideasOpen, setIdeasOpen] = useState(false);
+  const [focusText, setFocusText] = useState('');
+  const [adjustId, setAdjustId] = useState(null);
+  const [adjustDraft, setAdjustDraft] = useState('');
+  // The explicit "Replace opening" confirmation, with the old text shown.
+  const [confirmReplace, setConfirmReplace] = useState(null);
   const store = useStore();
 
   const draftRef = useRef(null);
@@ -172,6 +239,7 @@ export function SessionPrepare({ session, campaign }) {
   const editDraftRef = useRef(editDraft);
   const pendingNav = useRef(null);
   const statusRef = useRef(status);
+  const suggestAbortRef = useRef(null);
   sessionIdRef.current = sessionId;
   editingUidRef.current = editingUid;
   editDraftRef.current = editDraft;
@@ -245,12 +313,25 @@ export function SessionPrepare({ session, campaign }) {
   }
 
   useEffect(() => {
+    // A new session must not inherit the previous one's suggestions or prompt.
+    setSuggest({ phase: 'idle', items: [] });
+    setFocusText('');
+    setAdjustId(null);
+    setConfirmReplace(null);
     reload();
     // Best-effort flush on unmount (a guarded navigation already flushed; this
     // covers app teardown and hot reloads).
     return () => { queueRef.current && queueRef.current.flush(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, hasWorld]);
+
+  // A suggestion stream belongs to one session. Switching sessions (or unmount)
+  // drops the request and its suggestions so it can never land on a new screen.
+  useEffect(() => () => {
+    const c = suggestAbortRef.current;
+    suggestAbortRef.current = null;
+    if (c) c.abort();
+  }, [sessionId]);
 
   // Leave guard: fold the active editor back into the draft, flush pending work,
   // and only then allow the navigation. A failed save blocks the leave and shows
@@ -441,6 +522,89 @@ export function SessionPrepare({ session, campaign }) {
     });
   }
 
+  // Keeper suggestion actions (SC-07). Nothing here runs on mount: generation
+  // is always an explicit click. Manual edits are untouched by all of it.
+  async function runSuggest() {
+    if (!sessionId || suggestAbortRef.current) return;
+    const linkedPaths = draftRef.current?.selected_threads || [];
+    const controller = new AbortController();
+    suggestAbortRef.current = controller;
+    setAdjustId(null);
+    // Keep the previous run visible while a new one streams; only replace it on
+    // a successful done. A failure or cancel never discards prior suggestions.
+    setSuggest((cur) => ({ phase: 'streaming', stage: 'reading', items: cur.items || [] }));
+    try {
+      const res = await suggestPrep(sessionId, {
+        instruction: focusText,
+        linkedPaths,
+        onEvent: (ev) => {
+          if (ev?.stage === 'reading' || ev?.stage === 'grounding' || ev?.stage === 'building') {
+            setSuggest((cur) => ({ ...cur, stage: ev.stage }));
+          }
+        },
+      }, { signal: controller.signal });
+      if (suggestAbortRef.current !== controller) return; // superseded
+      suggestAbortRef.current = null;
+      if (res.ok) {
+        const items = (res.suggestions || []).slice(0, MAX_SUGGESTIONS);
+        setSuggest({ phase: items.length ? 'idle' : 'empty', stage: null, items });
+      } else {
+        setSuggest((cur) => ({ ...cur, phase: 'error', stage: null, error: res.message || 'The Keeper could not prepare ideas.', code: res.code }));
+      }
+    } catch (e) {
+      if (suggestAbortRef.current !== controller) return;
+      suggestAbortRef.current = null;
+      // An abort is a deliberate cancel, not a failure: keep whatever arrived.
+      if (e?.name === 'AbortError') { setSuggest((cur) => ({ ...cur, phase: 'idle', stage: null })); return; }
+      setSuggest((cur) => ({ ...cur, phase: 'error', stage: null, error: e?.message || 'The Keeper could not prepare ideas.' }));
+    }
+  }
+
+  function cancelSuggest() {
+    const c = suggestAbortRef.current;
+    suggestAbortRef.current = null;
+    if (c) c.abort();
+    setSuggest((cur) => ({ ...cur, phase: 'idle', stage: null }));
+  }
+
+  function addSuggestion(s) {
+    update((cards) => acceptSuggestion(cards, s));
+    // Drop an errored/empty panel back to idle; leave a live stream untouched.
+    setSuggest((cur) => ({
+      phase: cur.phase === 'streaming' ? cur.phase : 'idle',
+      stage: cur.stage, items: dismissSuggestion(cur.items, s.id),
+    }));
+    setAdjustId(null);
+  }
+
+  function startAdjust(s) {
+    setAdjustId(s.id);
+    setAdjustDraft(s.text || '');
+  }
+
+  function commitAdjust() {
+    const id = adjustId;
+    const text = adjustDraft.trim();
+    setAdjustId(null);
+    if (!id || !text) return;
+    setSuggest((cur) => ({ ...cur, items: cur.items.map((s) => (s.id === id ? { ...s, text } : s)) }));
+  }
+
+  // An opening suggestion never silently adds or replaces: the caller must open
+  // the confirmation (old text shown) and then run this.
+  function requestReplaceOpening(s) {
+    const existing = (draftRef.current?.cards || []).find((c) => c.section === 'opening');
+    setConfirmReplace({ suggestion: s, existing: existing || null });
+  }
+
+  function confirmReplaceOpening() {
+    const pending = confirmReplace;
+    setConfirmReplace(null);
+    if (!pending) return;
+    update((cards) => replaceOpening(cards, pending.suggestion));
+    setSuggest((cur) => ({ ...cur, items: dismissSuggestion(cur.items, pending.suggestion.id) }));
+  }
+
   function onMenu(card) {
     const items = [
       { label: 'Edit', icon: 'edit', onClick: () => startEdit(card) },
@@ -494,6 +658,94 @@ export function SessionPrepare({ session, campaign }) {
       </div>
     </${Card}>`;
   }
+
+  // "Ask Keeper for ideas" (SC-07): a compact affordance inside Prepare that
+  // expands into a panel. Expanding never generates; the button does. Manual
+  // cards stay fully usable while streaming and after a failure — only this
+  // panel's contents change.
+  function suggestionPanel() {
+    if (!ideasOpen) {
+      return html`<div style=${{ display: 'flex' }}>
+        <${Btn} kind="ghost" size="sm" icon="sparkle" onClick=${() => setIdeasOpen(true)}>Ask Keeper for ideas</${Btn}>
+      </div>`;
+    }
+    const streaming = suggest.phase === 'streaming';
+    const streamLabel = SUGGEST_STAGE_LABEL[suggest.stage] || 'Thinking';
+    // Undefined until /llm-providers loads: don't block on unknown state, let
+    // the request surface the real error. Once known, guide the user to Settings.
+    const providerReady = !Array.isArray(store.llmProviders)
+      || store.llmProviders.some((p) => !p.needs_key || p.has_key);
+    if (!providerReady) {
+      return html`<${Card} title="Ask Keeper for ideas" bodyPad=${false}
+        right=${html`<${Btn} kind="ghost" size="sm" onClick=${() => setIdeasOpen(false)}>Close</${Btn}>`}>
+        <div style=${{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '14px 18px', fontSize: 12.5, color: 'var(--ink-soft)' }}>
+          <${Icon} name="sparkle" size=${14} style=${{ color: 'var(--ink-muted)' }} />
+          <span style=${{ flex: 1, minWidth: 200, lineHeight: 1.5 }}>
+            No AI provider is configured yet. Add a local Ollama model or a cloud key, then ask the Keeper for ideas here. Manual prep works either way.
+          </span>
+          <${Btn} kind="secondary" size="sm" icon="cog" onClick=${() => navigate('settings')}>Open Settings</${Btn}>
+        </div>
+      </${Card}>`;
+    }
+    const body = html`<div style=${{ padding: '12px 18px' }}>
+      <div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input value=${focusText} placeholder="What should we focus on?" disabled=${streaming}
+          onInput=${(e) => setFocusText(e.target.value)}
+          onKeyDown=${(e) => { if (e.key === 'Enter' && !streaming) runSuggest(); }}
+          style=${{ flex: 1, minWidth: 0, padding: '7px 10px', border: '1px solid var(--rule)', borderRadius: 5, background: 'var(--surface-raised)', color: 'var(--ink)', fontFamily: 'inherit', fontSize: 13, outline: 'none' }} />
+        ${streaming
+          ? html`<${Btn} kind="secondary" size="sm" onClick=${cancelSuggest}>Cancel</${Btn}>`
+          : html`<${Btn} kind="primary" size="sm" icon="sparkle" onClick=${runSuggest}>${suggest.phase === 'idle' && suggest.items.length ? 'Regenerate' : 'Ask Keeper'}</${Btn}>`}
+      </div>
+      <div style=${{ fontSize: 11.5, color: 'var(--ink-faint)', marginTop: 6, lineHeight: 1.45 }}>
+        Grounded in your selected threads, linked pages, and recent summaries. Nothing is added to prep until you choose it.
+      </div>
+
+      ${streaming && html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic' }}>
+        <${Spinner} size=${12} /> ${streamLabel}…
+      </div>`}
+
+      ${suggest.phase === 'empty' && html`<div style=${{ marginTop: 12, fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic' }}>
+        The Keeper had no suggestions this time. Manual prep below is unchanged.
+      </div>`}
+
+      ${suggest.phase === 'error' && html`<div style=${{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 12, padding: '10px 12px', background: 'var(--burgundy-50)', border: '1px solid rgba(122,46,31,.22)', borderRadius: 7, fontSize: 12.5, color: 'var(--ink-soft)' }}>
+        <${Icon} name="flame" size=${13} style=${{ color: 'var(--burgundy)' }} />
+        <span style=${{ flex: 1, minWidth: 180, lineHeight: 1.45 }}>
+          ${suggest.code === 'provider'
+            ? 'No AI provider is configured yet. Set one up, then try again.'
+            : `Keeper suggestions failed: ${suggest.error || 'unknown error'}`}
+        </span>
+        ${suggest.code === 'provider' && html`<${Btn} kind="ghost" size="sm" icon="cog" onClick=${() => navigate('settings')}>Open Settings</${Btn}>`}
+        <${Btn} kind="secondary" size="sm" icon="undo" onClick=${runSuggest}>Retry</${Btn}>
+      </div>`}
+
+      ${suggest.items.length > 0 && html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+        ${suggest.items.slice(0, MAX_SUGGESTIONS).map((s) => html`<${SuggestionRow} key=${s.id} s=${s} pages=${pagesByPath}
+          adjusting=${adjustId === s.id} adjustText=${adjustDraft}
+          openingBlocked=${s.section === 'opening' && !canAcceptOpening(draft?.cards || [], s)}
+          onStartAdjust=${() => startAdjust(s)}
+          onAdjustDraft=${setAdjustDraft}
+          onCommitAdjust=${commitAdjust}
+          onCancelAdjust=${() => setAdjustId(null)}
+          onAdd=${() => addSuggestion(s)}
+          onReplace=${() => requestReplaceOpening(s)}
+          onDismiss=${() => setSuggest((cur) => ({ ...cur, items: dismissSuggestion(cur.items, s.id) }))} />`)}
+      </div>`}
+    </div>`;
+    return html`<${Card} title="Ask Keeper for ideas" bodyPad=${false}
+      right=${html`<${Btn} kind="ghost" size="sm" onClick=${() => setIdeasOpen(false)}>Close</${Btn}>`}>${body}</${Card}>`;
+  }
+
+  const confirmBar = confirmReplace && html`<div style=${{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 16, padding: '11px 14px', background: 'var(--ochre-50)', border: '1px solid rgba(168,115,40,.28)', borderRadius: 8, fontSize: 12.5, color: 'var(--ink-soft)' }}>
+    <${Icon} name="undo" size=${14} style=${{ color: 'var(--ochre)', marginTop: 2 }} />
+    <div style=${{ flex: 1, minWidth: 200, lineHeight: 1.5 }}>
+      <div style=${{ fontWeight: 500, marginBottom: 3 }}>Replace your current opening?</div>
+      <div style=${{ color: 'var(--ink-muted)', whiteSpace: 'pre-wrap' }}>${confirmReplace.existing?.text || '(empty opening)'}</div>
+    </div>
+    <${Btn} kind="secondary" size="sm" onClick=${() => setConfirmReplace(null)}>Keep current</${Btn}>
+    <${Btn} kind="primary" size="sm" icon="check" onClick=${confirmReplaceOpening}>Replace opening</${Btn}>
+  </div>`;
 
   if (status === 'loading') {
     return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 9, padding: '30px 4px', color: 'var(--ink-muted)', fontStyle: 'italic' }}>
@@ -562,9 +814,12 @@ export function SessionPrepare({ session, campaign }) {
 
     <div class="ck-sr-only" role="status" aria-live="polite">${announce}</div>
 
+    ${confirmBar}
+
     <div style=${{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       ${PREP_SECTIONS.map(sectionCard)}
       ${selectedThreadsCard()}
+      ${suggestionPanel()}
     </div>
 
     ${pickTarget && html`<div style=${{ marginTop: 12 }}>

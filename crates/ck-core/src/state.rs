@@ -116,6 +116,10 @@ pub struct AppState {
     /// .../mode` flips it mid-run so the very next gate check picks up e.g. a
     /// switch into Yolo instead of waiting for the turn to finish.
     pub agent_modes: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicU8>>>>,
+    /// Per-world write coordination for multi-file review application. Keyed by
+    /// vault path; application holds this across its whole preflight/write/
+    /// journal sequence so two applies can't interleave page writes in one world.
+    pub world_writes: Arc<tokio::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 pub type AgentAsks =
@@ -137,6 +141,7 @@ impl AppState {
             agent_runs: Arc::new(Mutex::new(HashMap::new())),
             agent_asks: Arc::new(Mutex::new(HashMap::new())),
             agent_modes: Arc::new(Mutex::new(HashMap::new())),
+            world_writes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -205,5 +210,12 @@ impl AppState {
         watchers.remove(vault); // Drop stops the watcher thread
         let mut seqs = self.vault_seqs.lock().unwrap_or_else(|e| e.into_inner());
         seqs.remove(vault);
+    }
+
+    /// Serialize multi-file application within one world. Returns the lock to
+    /// hold for the duration of a preflight/journal/write sequence.
+    pub async fn world_write_lock(&self, vault: &Path) -> Arc<tokio::sync::Mutex<()>> {
+        let mut map = self.world_writes.lock().await;
+        map.entry(vault.to_path_buf()).or_default().clone()
     }
 }

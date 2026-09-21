@@ -21,7 +21,6 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
-use crate::vault;
 
 pub const REVIEW_FILE: &str = "review.json";
 pub const REVIEW_HISTORY_DIR: &str = "review-history";
@@ -217,7 +216,9 @@ pub fn review_path(session_dir: &Path) -> PathBuf {
 }
 
 pub fn history_path(session_dir: &Path, run_id: &str) -> PathBuf {
-    session_dir.join(REVIEW_HISTORY_DIR).join(format!("{run_id}.json"))
+    session_dir
+        .join(REVIEW_HISTORY_DIR)
+        .join(format!("{run_id}.json"))
 }
 
 /// Read the current run. `Ok(None)` when no review exists (a legacy
@@ -372,7 +373,9 @@ pub fn put(session_dir: &Path, req: PutReviewRequest) -> AppResult<(ReviewRun, S
         .ok_or_else(|| AppError::NotFound("No review for this session.".into()))?;
     require_revision(&loaded, &req.base_revision)?;
     if loaded.run.run_id != req.run_id {
-        return Err(AppError::Conflict("This is not the current review run.".into()));
+        return Err(AppError::Conflict(
+            "This is not the current review run.".into(),
+        ));
     }
     let mut run = loaded.run;
 
@@ -528,7 +531,9 @@ pub fn apply(
 
     require_revision(&loaded, &req.base_revision)?;
     if loaded.run.run_id != req.run_id {
-        return Err(AppError::Conflict("This is not the current review run.".into()));
+        return Err(AppError::Conflict(
+            "This is not the current review run.".into(),
+        ));
     }
     if req.development_ids.is_empty() {
         return Err(AppError::Unprocessable(
@@ -586,18 +591,18 @@ fn apply_group(
     request_id: &str,
     payload_hash: &str,
 ) -> AppResult<GroupResult> {
-    let dev = &run.developments[dev_idx];
+    let dev_id = run.developments[dev_idx].id.clone();
 
     // 1. Preflight every target. A mismatch makes the whole group conflicted
     //    with zero writes.
     let mut conflicted: Vec<String> = Vec::new();
-    for t in &dev.targets {
+    for t in &run.developments[dev_idx].targets {
         if current_hash(vault_root, &t.path)? != t.base_hash {
             conflicted.push(t.path.clone());
         }
     }
     let app_id = Uuid::new_v4().to_string();
-    let journal_targets: Vec<JournalTarget> = dev
+    let journal_targets: Vec<JournalTarget> = run.developments[dev_idx]
         .targets
         .iter()
         .map(|t| JournalTarget {
@@ -623,7 +628,7 @@ fn apply_group(
         id: app_id.clone(),
         request_id: request_id.to_string(),
         payload_hash: payload_hash.to_string(),
-        development_ids: vec![dev.id.clone()],
+        development_ids: vec![dev_id.clone()],
         status,
         created_at: now_iso(),
         targets: journal_targets,
@@ -636,7 +641,7 @@ fn apply_group(
     save(session_dir, run)?;
     if status == ApplicationStatus::Conflicted {
         return Ok(GroupResult {
-            development_id: dev.id.clone(),
+            development_id: dev_id,
             application_id: app_id,
             status: ApplicationStatus::Conflicted,
             written: Vec::new(),
@@ -648,7 +653,6 @@ fn apply_group(
     // 3. Write each target atomically, recording history and journal progress.
     let mut written = Vec::new();
     let mut conflict_after = Vec::new();
-    let dev_id = run.developments[dev_idx].id.clone();
     let paths: Vec<(String, String, String)> = run.developments[dev_idx]
         .targets
         .iter()
@@ -689,7 +693,7 @@ fn apply_group(
     }
 
     Ok(GroupResult {
-        development_id: dev.id.clone(),
+        development_id: dev_id,
         application_id: app_id,
         status: final_status,
         written,
@@ -760,7 +764,9 @@ pub fn recover(
     // Recovery is the one mutation that must ignore a stale revision: the point
     // is to reconcile a run whose writes were interrupted.
     if loaded.run.run_id != req.run_id {
-        return Err(AppError::Conflict("This is not the current review run.".into()));
+        return Err(AppError::Conflict(
+            "This is not the current review run.".into(),
+        ));
     }
     let app_idx = loaded
         .run
@@ -827,7 +833,12 @@ pub fn recover(
             let _ = crate::history::record(wr, vault_root, path, "keeper");
         }
         write_target(vault_root, path, &after)?;
-        set_target_state(&mut loaded.run, &req.application_id, path, TargetState::Written);
+        set_target_state(
+            &mut loaded.run,
+            &req.application_id,
+            path,
+            TargetState::Written,
+        );
         written.push(path.clone());
     }
     pending.clear();
@@ -869,7 +880,9 @@ pub fn finish(session_dir: &Path, req: FinishRequest) -> AppResult<(ReviewRun, S
         .ok_or_else(|| AppError::NotFound("No review for this session.".into()))?;
     require_revision(&loaded, &req.base_revision)?;
     if loaded.run.run_id != req.run_id {
-        return Err(AppError::Conflict("This is not the current review run.".into()));
+        return Err(AppError::Conflict(
+            "This is not the current review run.".into(),
+        ));
     }
     let mut run = loaded.run;
     if req.defer_pending {
@@ -915,7 +928,9 @@ pub fn reopen(session_dir: &Path, req: ReopenRequest) -> AppResult<(ReviewRun, S
         .ok_or_else(|| AppError::NotFound("No review for this session.".into()))?;
     require_revision(&loaded, &req.base_revision)?;
     if loaded.run.run_id != req.run_id {
-        return Err(AppError::Conflict("This is not the current review run.".into()));
+        return Err(AppError::Conflict(
+            "This is not the current review run.".into(),
+        ));
     }
     let mut run = loaded.run;
     run.status = ReviewStatus::Open; // applied developments stay immutable
@@ -944,7 +959,9 @@ pub fn flags(loaded: &Loaded) -> ReviewFlags {
         .filter(|a| {
             matches!(
                 a.status,
-                ApplicationStatus::Prepared | ApplicationStatus::Conflicted | ApplicationStatus::Partial
+                ApplicationStatus::Prepared
+                    | ApplicationStatus::Conflicted
+                    | ApplicationStatus::Partial
             )
         })
         .map(|a| a.id.clone())
@@ -1110,7 +1127,9 @@ fn parse_development_decision(s: &str) -> AppResult<Decision> {
         "applied" => Err(AppError::Conflict(
             "Applied developments cannot be set directly.".into(),
         )),
-        other => Err(AppError::Unprocessable(format!("Unknown decision: {other}"))),
+        other => Err(AppError::Unprocessable(format!(
+            "Unknown decision: {other}"
+        ))),
     }
 }
 
@@ -1121,7 +1140,9 @@ fn parse_possibility_decision(s: &str) -> AppResult<PossibilityDecision> {
         "saved_to_prep" => Err(AppError::Conflict(
             "Saving a possibility to prep goes through the carry endpoint.".into(),
         )),
-        other => Err(AppError::Unprocessable(format!("Unknown decision: {other}"))),
+        other => Err(AppError::Unprocessable(format!(
+            "Unknown decision: {other}"
+        ))),
     }
 }
 
@@ -1246,7 +1267,8 @@ mod tests {
         let dir = tmp_dir("noselect");
         let vault = tmp_dir("noselect-vault");
         let mut run = new_run("s1");
-        run.developments.push(development("d1", "A.md", None, "new"));
+        run.developments
+            .push(development("d1", "A.md", None, "new"));
         let rev = save(&dir, &run).unwrap();
         let err = apply(
             &dir,
@@ -1272,7 +1294,8 @@ mod tests {
         let vault = tmp_dir("stale-vault");
         std::fs::write(vault.join("A.md"), "changed externally").unwrap();
         let mut run = new_run("s1");
-        run.developments.push(development("d1", "A.md", Some("original"), "new"));
+        run.developments
+            .push(development("d1", "A.md", Some("original"), "new"));
         let rev = save(&dir, &run).unwrap();
         let report = apply(
             &dir,
@@ -1301,7 +1324,8 @@ mod tests {
         let vault = tmp_dir("apply-vault");
         std::fs::write(vault.join("A.md"), "before").unwrap();
         let mut run = new_run("s1");
-        run.developments.push(development("d1", "A.md", Some("before"), "after"));
+        run.developments
+            .push(development("d1", "A.md", Some("before"), "after"));
         let rev = save(&dir, &run).unwrap();
         let request_id = Uuid::new_v4().to_string();
         let req = ApplyRequest {
@@ -1313,7 +1337,10 @@ mod tests {
         let first = apply(&dir, &vault, None, req).unwrap();
         assert!(!first.replayed);
         assert_eq!(first.groups[0].status, ApplicationStatus::Applied);
-        assert_eq!(std::fs::read_to_string(vault.join("A.md")).unwrap(), "after");
+        assert_eq!(
+            std::fs::read_to_string(vault.join("A.md")).unwrap(),
+            "after"
+        );
 
         // Replay with the SAME request id returns recorded results without a
         // stale-revision error and without rewriting.
@@ -1414,8 +1441,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.groups[0].status, ApplicationStatus::Applied);
-        assert_eq!(std::fs::read_to_string(vault.join("A.md")).unwrap(), "after-a");
-        assert_eq!(std::fs::read_to_string(vault.join("B.md")).unwrap(), "after-b");
+        assert_eq!(
+            std::fs::read_to_string(vault.join("A.md")).unwrap(),
+            "after-a"
+        );
+        assert_eq!(
+            std::fs::read_to_string(vault.join("B.md")).unwrap(),
+            "after-b"
+        );
         std::fs::remove_dir_all(dir).ok();
         std::fs::remove_dir_all(vault).ok();
     }
@@ -1425,7 +1458,8 @@ mod tests {
         let dir = tmp_dir("partial");
         let vault = tmp_dir("partial-vault");
         let mut run = new_run("s1");
-        run.developments.push(development("d1", "A.md", None, "after"));
+        run.developments
+            .push(development("d1", "A.md", None, "after"));
         let rev = save(&dir, &run).unwrap();
         let app_id = Uuid::new_v4().to_string();
         run.developments[0].application_id = Some(app_id.clone());
@@ -1471,7 +1505,8 @@ mod tests {
     fn finish_blocks_while_recovery_is_active() {
         let dir = tmp_dir("finish");
         let mut run = new_run("s1");
-        run.developments.push(development("d1", "A.md", None, "after"));
+        run.developments
+            .push(development("d1", "A.md", None, "after"));
         run.applications.push(Application {
             id: Uuid::new_v4().to_string(),
             request_id: Uuid::new_v4().to_string(),
@@ -1499,7 +1534,8 @@ mod tests {
     fn adjusting_clears_selection_and_records_confirmation() {
         let dir = tmp_dir("adjust");
         let mut run = new_run("s1");
-        run.developments.push(development("d1", "A.md", None, "after"));
+        run.developments
+            .push(development("d1", "A.md", None, "after"));
         let rev = save(&dir, &run).unwrap();
         let (saved, _) = put(
             &dir,

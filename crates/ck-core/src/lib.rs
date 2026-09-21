@@ -17,6 +17,7 @@ pub mod llm;
 pub mod models;
 pub mod normalize;
 pub mod paths;
+pub mod prep_suggest;
 pub mod prompts;
 pub mod review_generate;
 pub mod seed;

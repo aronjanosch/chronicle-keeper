@@ -214,6 +214,8 @@ pub fn router(state: AppState) -> Router {
                 .put(session_prep::put)
                 .layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
         )
+        .route("/sessions/:id/prep/suggest", post(session_prep::suggest))
+        .route("/sessions/:id/prep/carry", post(session_prep::carry))
         // Session review (SC-04): typed developments applied as recoverable groups
         .route(
             "/sessions/:id/review",

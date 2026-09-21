@@ -401,7 +401,7 @@ Recent page tails:\n{tails}"
     )
 }
 
-fn tail_chars(s: &str, n: usize) -> String {
+pub(crate) fn tail_chars(s: &str, n: usize) -> String {
     let trimmed = s.trim();
     let start = trimmed
         .char_indices()
@@ -586,7 +586,7 @@ pub(crate) fn transcript_turns(transcript: &str) -> Vec<String> {
 }
 
 /// Turn indices (0-based) matching any term, with ±1 context, capped.
-fn matching_turns(turns: &[String], terms: &[String]) -> Vec<usize> {
+pub(crate) fn matching_turns(turns: &[String], terms: &[String]) -> Vec<usize> {
     let terms: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
     let mut hits: Vec<usize> = Vec::new();
     for (i, t) in turns.iter().enumerate() {
@@ -684,7 +684,7 @@ fn parse_verdicts(raw: &str) -> HashMap<String, (bool, (usize, usize))> {
 }
 
 /// Clamp the model's claimed range to turns we actually retrieved (1-based out).
-fn clamp_range(claimed: (usize, usize), retrieved: &[usize]) -> (usize, usize) {
+pub(crate) fn clamp_range(claimed: (usize, usize), retrieved: &[usize]) -> (usize, usize) {
     let lo = retrieved.iter().min().map(|i| i + 1).unwrap_or(1);
     let hi = retrieved.iter().max().map(|i| i + 1).unwrap_or(1);
     let start = claimed.0.clamp(lo, hi);
@@ -692,7 +692,7 @@ fn clamp_range(claimed: (usize, usize), retrieved: &[usize]) -> (usize, usize) {
     (start, end)
 }
 
-fn excerpt_of(turns: &[String], start: usize, end: usize) -> String {
+pub(crate) fn excerpt_of(turns: &[String], start: usize, end: usize) -> String {
     let mut out = String::new();
     for i in start..=end.min(turns.len()) {
         if i == 0 {
@@ -709,7 +709,7 @@ fn excerpt_of(turns: &[String], start: usize, end: usize) -> String {
     out.trim_end().to_string()
 }
 
-fn parse_json_lenient(raw: &str) -> Value {
+pub(crate) fn parse_json_lenient(raw: &str) -> Value {
     serde_json::from_str(raw.trim())
         .or_else(|_| {
             let start = raw.find(['{', '[']);
@@ -815,78 +815,121 @@ pub fn commit(session_dir: &Path, vault_root: &Path, ids: &[String]) -> AppResul
 /// already exists (a hand-made stub, or the same page under a title that
 /// carries its folder). Resolving means updating it — never a second copy.
 fn apply_proposal(world_root: Option<&Path>, vault_root: &Path, p: &Proposal) -> AppResult<String> {
-    let target = match &p.page {
-        Some(rel) if vault_root.join(rel).is_file() => Some(rel.clone()),
-        Some(rel) => vault::find_page(vault_root, rel)
-            .ok_or_else(|| AppError::NotFound(format!("Page vanished: {rel}")))
-            .map(Some)?,
-        None => vault::find_page(vault_root, &p.title),
-    };
-    let (title_folder, name) = vault::split_page_title(&p.title);
-
-    let (rel, content) = match target {
-        Some(rel) => {
-            let mut content = vault::read_page(vault_root, &rel)?.content;
-            for c in &p.changes {
-                match c {
-                    Change::Summary { new, .. } => {
-                        content = vault::overwrite_summary(&content, new);
-                    }
-                    Change::Body { anchor, text } => {
-                        content = vault::append_under_heading(&content, anchor, text);
-                    }
-                    Change::Rel { field, add, .. } => {
-                        content = vault::fm_append_list_value(&content, field, add);
-                    }
-                    // "New page" that turned out to exist: fill the blanks its
-                    // frontmatter is missing, append the rest under ## Notes.
-                    Change::New { summary, body } => {
-                        content = vault::set_frontmatter_fields(&content, &p.kind, summary);
-                        if !body.trim().is_empty() {
-                            content = vault::append_under_heading(&content, "## Notes", body);
-                        }
-                    }
-                }
-            }
-            (rel, content)
-        }
-        None => {
-            let folder = p
-                .folder
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .or(title_folder)
-                .or_else(|| vault::folder_for_kind(vault_root, &p.kind));
-            let stem = vault::safe_page_filename(&name);
-            let rel = match folder {
-                Some(f) => format!("{}/{stem}.md", f.trim_matches('/')),
-                None => format!("{stem}.md"),
-            };
-            let (summary, body) = p
-                .changes
-                .iter()
-                .find_map(|c| match c {
-                    Change::New { summary, body } => Some((summary.clone(), body.clone())),
-                    _ => None,
-                })
-                .unwrap_or_default();
-            let mut content = vault::page_file_content(&name, &p.kind, &summary, &body);
-            for c in &p.changes {
-                if let Change::Rel { field, add, .. } = c {
-                    content = vault::fm_append_list_value(&content, field, add);
-                }
-            }
-            (rel, content)
-        }
-    };
-
+    let (rel, exists) = target_path(
+        vault_root,
+        p.page.as_deref(),
+        &p.title,
+        &p.kind,
+        p.folder.as_deref(),
+    )?;
+    let (_, content) = render_target(vault_root, &rel, exists, &p.title, &p.kind, &p.changes)?;
     if let Some(wr) = world_root {
         let _ = crate::history::record_now(wr, vault_root, &rel, "keeper");
     }
     vault::write_page(vault_root, &rel, &content)?;
     Ok(rel)
+}
+
+/// Where a proposal lands, and whether that page already exists.
+///
+/// The target is resolved here rather than trusted from the model: a page the
+/// model called "new" often already exists (a hand-made stub, or the same page
+/// under a title that carries its folder). Resolving means updating it — never
+/// a second copy.
+pub(crate) fn target_path(
+    vault_root: &Path,
+    page: Option<&str>,
+    title: &str,
+    kind: &str,
+    folder: Option<&str>,
+) -> AppResult<(String, bool)> {
+    let existing = match page {
+        Some(rel) if vault_root.join(rel).is_file() => Some(rel.to_string()),
+        Some(rel) => vault::find_page(vault_root, rel)
+            .ok_or_else(|| AppError::NotFound(format!("Page vanished: {rel}")))
+            .map(Some)?,
+        None => vault::find_page(vault_root, title),
+    };
+    if let Some(rel) = existing {
+        return Ok((rel, true));
+    }
+    let (title_folder, name) = vault::split_page_title(title);
+    let folder = folder
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or(title_folder)
+        .or_else(|| vault::folder_for_kind(vault_root, kind));
+    let stem = vault::safe_page_filename(&name);
+    let rel = match folder {
+        Some(f) => format!("{}/{stem}.md", f.trim_matches('/')),
+        None => format!("{stem}.md"),
+    };
+    Ok((rel, false))
+}
+
+/// The exact bytes a set of changes produces at `rel`, without writing: the
+/// before-state (`None` for a new page) and the after-state. Preview and write
+/// go through this one function so what the review shows is what lands.
+pub(crate) fn render_target(
+    vault_root: &Path,
+    rel: &str,
+    exists: bool,
+    title: &str,
+    kind: &str,
+    changes: &[Change],
+) -> AppResult<(Option<String>, String)> {
+    if exists {
+        let before = vault::read_page(vault_root, rel)?.content;
+        let mut content = before.clone();
+        for c in changes {
+            match c {
+                Change::Summary { new, .. } => {
+                    content = vault::overwrite_summary(&content, new);
+                }
+                Change::Body { anchor, text } => {
+                    content = vault::append_under_heading(&content, anchor, text);
+                }
+                Change::Rel { field, add, .. } => {
+                    content = vault::fm_append_list_value(&content, field, add);
+                }
+                // "New page" that turned out to exist: fill the blanks its
+                // frontmatter is missing, append the rest under ## Notes.
+                Change::New { summary, body } => {
+                    content = vault::set_frontmatter_fields(&content, kind, summary);
+                    if !body.trim().is_empty() {
+                        content = vault::append_under_heading(&content, "## Notes", body);
+                    }
+                }
+            }
+        }
+        return Ok((Some(before), content));
+    }
+
+    let (_, name) = vault::split_page_title(title);
+    let (summary, body) = changes
+        .iter()
+        .find_map(|c| match c {
+            Change::New { summary, body } => Some((summary.clone(), body.clone())),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let mut content = vault::page_file_content(&name, kind, &summary, &body);
+    for c in changes {
+        match c {
+            Change::Rel { field, add, .. } => {
+                content = vault::fm_append_list_value(&content, field, add);
+            }
+            Change::Body { anchor, text } => {
+                content = vault::append_under_heading(&content, anchor, text);
+            }
+            Change::Summary { new, .. } => {
+                content = vault::overwrite_summary(&content, new);
+            }
+            Change::New { .. } => {}
+        }
+    }
+    Ok((None, content))
 }
 
 #[cfg(test)]

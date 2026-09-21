@@ -221,6 +221,18 @@ pub fn router(state: AppState) -> Router {
                 .put(session_review::put)
                 .layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
         )
+        .route(
+            "/sessions/:id/review/generate",
+            post(session_review::generate),
+        )
+        .route(
+            "/sessions/:id/review/generate/cancel",
+            post(session_review::cancel_generate),
+        )
+        .route(
+            "/sessions/:id/review/clarify",
+            post(session_review::clarify),
+        )
         .route("/sessions/:id/review/apply", post(session_review::apply))
         .route(
             "/sessions/:id/review/recover",

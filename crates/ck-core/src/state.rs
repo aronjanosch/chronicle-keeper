@@ -120,6 +120,10 @@ pub struct AppState {
     /// vault path; application holds this across its whole preflight/write/
     /// journal sequence so two applies can't interleave page writes in one world.
     pub world_writes: Arc<tokio::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
+    /// One review generation per session: session id → cancel flag. Insert =
+    /// job start (a second insert on the same session → 409), flag set =
+    /// cancel requested, by the Cancel action or by the client disconnecting.
+    pub review_jobs: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
 }
 
 pub type AgentAsks =
@@ -142,6 +146,7 @@ impl AppState {
             agent_asks: Arc::new(Mutex::new(HashMap::new())),
             agent_modes: Arc::new(Mutex::new(HashMap::new())),
             world_writes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            review_jobs: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -217,5 +222,39 @@ impl AppState {
     pub async fn world_write_lock(&self, vault: &Path) -> Arc<tokio::sync::Mutex<()>> {
         let mut map = self.world_writes.lock().await;
         map.entry(vault.to_path_buf()).or_default().clone()
+    }
+
+    /// Claim the one review-generation slot for a session. Errors while another
+    /// generation for the same session is still running.
+    pub fn review_job_begin(
+        &self,
+        session_id: &str,
+    ) -> crate::error::AppResult<Arc<std::sync::atomic::AtomicBool>> {
+        let mut map = self.review_jobs.lock().unwrap_or_else(|e| e.into_inner());
+        if map.contains_key(session_id) {
+            return Err(crate::error::AppError::Conflict(
+                "A review is already being generated for this session.".into(),
+            ));
+        }
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        map.insert(session_id.to_string(), flag.clone());
+        Ok(flag)
+    }
+
+    pub fn review_job_end(&self, session_id: &str) {
+        let mut map = self.review_jobs.lock().unwrap_or_else(|e| e.into_inner());
+        map.remove(session_id);
+    }
+
+    /// Ask a running generation to stop. False when nothing is running.
+    pub fn review_job_cancel(&self, session_id: &str) -> bool {
+        let map = self.review_jobs.lock().unwrap_or_else(|e| e.into_inner());
+        match map.get(session_id) {
+            Some(flag) => {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                true
+            }
+            None => false,
+        }
     }
 }

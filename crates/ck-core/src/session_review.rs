@@ -24,8 +24,10 @@ use crate::error::{AppError, AppResult};
 
 pub const REVIEW_FILE: &str = "review.json";
 pub const REVIEW_HISTORY_DIR: &str = "review-history";
-const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 1;
 const ABSENT: &str = "absent";
+/// Placeholder base hash for a target that does not exist yet.
+pub const ABSENT_HASH: &str = ABSENT;
 
 // ── Data model ────────────────────────────────────────────────────
 
@@ -215,10 +217,13 @@ pub fn review_path(session_dir: &Path) -> PathBuf {
     session_dir.join(REVIEW_FILE)
 }
 
-pub fn history_path(session_dir: &Path, run_id: &str) -> PathBuf {
+/// Archived runs are keyed by run id *and* the revision they held, so a run
+/// archived twice (regeneration after decisions) keeps both states.
+pub fn history_path(session_dir: &Path, run_id: &str, revision: &str) -> PathBuf {
+    let short: String = revision.chars().take(12).collect();
     session_dir
         .join(REVIEW_HISTORY_DIR)
-        .join(format!("{run_id}.json"))
+        .join(format!("{run_id}-{short}.json"))
 }
 
 /// Read the current run. `Ok(None)` when no review exists (a legacy
@@ -256,7 +261,7 @@ pub fn archive_current(session_dir: &Path) -> AppResult<()> {
     let Ok(run) = serde_json::from_slice::<ReviewRun>(&bytes) else {
         return Ok(());
     };
-    let dest = history_path(session_dir, &run.run_id);
+    let dest = history_path(session_dir, &run.run_id, &revision(&bytes));
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("create review-history: {e}")))?;
@@ -1237,8 +1242,13 @@ pub fn revision(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-fn hash_str(s: &str) -> String {
+/// Hash exact page bytes for a target's `base_hash`.
+pub fn hash_of(s: &str) -> String {
     revision(s.as_bytes())
+}
+
+fn hash_str(s: &str) -> String {
+    hash_of(s)
 }
 
 fn now_iso() -> String {

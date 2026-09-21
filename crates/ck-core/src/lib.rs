@@ -18,6 +18,7 @@ pub mod models;
 pub mod normalize;
 pub mod paths;
 pub mod prompts;
+pub mod review_generate;
 pub mod seed;
 pub mod session_files;
 pub mod session_prep;

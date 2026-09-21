@@ -5,9 +5,14 @@
 import { html, useState, useEffect, useRef } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate } from '../core.js';
 import {
-  applySelectedUpdates, cancelReviewGeneration, clarifyQuestion, finishReviewRun,
-  generateReview, loadReviewRun, recoverApplication, reopenReviewRun, saveReviewDecisions,
+  applySelectedUpdates, cancelReviewGeneration, carryToSession, clarifyQuestion, createSession,
+  finishReviewRun, generateReview, loadReviewRun, recoverApplication, refreshCampaignSessions,
+  reopenReviewRun, saveReviewDecisions,
 } from '../actions.js';
+import { loadPrep } from '../prep.js';
+import {
+  carryCandidates, draftDestinations, possibilityCandidates, suggestedDestination,
+} from '../handoff.js';
 import { newRequestId } from '../review.js';
 import {
   applicationOf, canApply, cardStatus, changesNothing, adjustmentPayload, developments,
@@ -226,7 +231,7 @@ function QuestionCard({ q, onDefer, onClarify, busy }) {
   </article>`;
 }
 
-function PossibilitySection({ run, onDismiss }) {
+function PossibilitySection({ run, onDismiss, onCarry }) {
   const [open, setOpen] = useState(false);
   const items = possibilities(run).filter((p) => p.decision !== 'dismissed');
   if (!items.length) return null;
@@ -238,7 +243,7 @@ function PossibilitySection({ run, onDismiss }) {
       <div style=${{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.55, marginTop: 5 }}>${p.text}</div>
       ${(p.source_links || []).length > 0 && html`<div style=${{ fontSize: 11.5, color: 'var(--ink-faint)', marginTop: 7 }}>From: ${p.source_links.join(' · ')}</div>`}
       <div style=${{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-        <${Btn} kind="secondary" size="sm" disabled=${true} title="Arrives with the next-session handoff">Add to prep</${Btn}>
+        <${Btn} kind="secondary" size="sm" onClick=${() => onCarry(p)}>Add to prep</${Btn}>
         <${Btn} kind="ghost" size="sm" onClick=${() => onDismiss(p)}>Dismiss</${Btn}>
       </div>
       <div style=${{ fontSize: 11.5, color: 'var(--ink-faint)', marginTop: 8 }}>This is prep material — it changes nothing in the world.</div>
@@ -260,6 +265,102 @@ function LegacyView({ run }) {
   </${Card}>`;
 }
 
+
+// Next-session handoff. Nothing is preselected, the destination is always
+// chosen, and a new session is only created when the GM asks for one.
+function HandoffPanel({ sess, store, run, open, setOpen }) {
+  const [cards, setCards] = useState(null);
+  const [chosen, setChosen] = useState([]);
+  const [dest, setDest] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null);
+
+  const destinations = draftDestinations(
+    store.campaignSessions, sess.session_id, sess.campaign?.session_number,
+  );
+
+  useEffect(() => {
+    if (!open || cards) return;
+    refreshCampaignSessions().catch(() => {});
+    loadPrep(sess.session_id).then((prep) => setCards(prep.cards || [])).catch(() => setCards([]));
+  }, [open]);
+
+  // A single later draft is offered as the default; with several, the GM picks.
+  useEffect(() => {
+    if (!open || dest) return;
+    const suggestion = suggestedDestination(destinations);
+    if (suggestion) setDest(suggestion);
+  }, [open, store.campaignSessions]);
+
+  if (!open) {
+    return html`<div style=${{ marginTop: 24 }}>
+      <${Btn} kind="secondary" size="sm" icon="arrow-r" onClick=${() => setOpen(true)}>Prepare next session</${Btn}>
+    </div>`;
+  }
+
+  const items = [...carryCandidates(cards || []), ...possibilityCandidates(run)];
+  const toggle = (id) => setChosen(chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id]);
+
+  async function carry() {
+    if (!chosen.length || !dest) return;
+    setBusy(true);
+    try {
+      await carryToSession(dest, chosen);
+      setDone(dest);
+      setChosen([]);
+    } catch (_) {} finally { setBusy(false); }
+  }
+
+  async function createAndUse() {
+    setBusy(true);
+    try {
+      const created = await createSession();
+      await refreshCampaignSessions();
+      setDest(created.session_id);
+    } catch (_) {} finally { setBusy(false); }
+  }
+
+  return html`<${Card} title="Prepare next session"
+    right=${html`<${Btn} kind="ghost" size="sm" onClick=${() => setOpen(false)}>Close</${Btn}>`}>
+    <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', lineHeight: 1.55 }}>
+      Copies stay separate from this session's preparation: new cards, unmarked, with a note of where they came from.
+    </div>
+
+    ${cards == null
+      ? html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 12.5, color: 'var(--ink-soft)' }}><${Spinner} size=${13} /> Reading this session's preparation…</div>`
+      : items.length === 0
+        ? html`<div style=${{ fontSize: 12.5, color: 'var(--ink-faint)', marginTop: 12 }}>Nothing is left to carry — every card happened, and no possibility is waiting.</div>`
+        : html`<div style=${{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            ${items.map((it) => html`<label key=${it.id} style=${{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.5, cursor: 'pointer' }}>
+              <input type="checkbox" checked=${chosen.includes(it.id)} onChange=${() => toggle(it.id)} style=${{ marginTop: 3 }} />
+              <span style=${{ flex: 1, minWidth: 0 }}>
+                ${it.label}
+                <span style=${{ color: 'var(--ink-faint)', fontSize: 11.5 }}>
+                  ${' · '}${it.kind === 'possibility' ? 'possibility' : `${it.section} · ${it.outcome}`}
+                </span>
+              </span>
+            </label>`)}
+          </div>`}
+
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
+      <select value=${dest} onChange=${(e) => setDest(e.target.value)}
+        style=${{ padding: '6px 9px', border: '1px solid var(--rule)', borderRadius: 5, background: 'var(--surface-raised)', color: 'var(--ink)', fontFamily: 'inherit', fontSize: 13 }}>
+        <option value="">Choose a session…</option>
+        ${destinations.map((d) => html`<option key=${d.session_id} value=${d.session_id}>${d.label}</option>`)}
+      </select>
+      <${Btn} kind="ghost" size="sm" disabled=${busy} onClick=${createAndUse}>Create a new session</${Btn}>
+      <${Btn} kind="primary" size="sm" icon="arrow-r" disabled=${busy || !chosen.length || !dest} onClick=${carry}>
+        ${busy ? 'Carrying…' : `Carry ${chosen.length} item${chosen.length === 1 ? '' : 's'}`}
+      </${Btn}>
+    </div>
+
+    ${done && html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 12.5, color: 'var(--moss)' }}>
+      Carried forward.
+      <${Btn} kind="ghost" size="sm" onClick=${() => navigate('session', { id: done, view: 'prepare' })}>Open that session's Prepare</${Btn}>
+    </div>`}
+  </${Card}>`;
+}
+
 export function ReviewPane({ store, sess }) {
   const hasSummary = (store.summaries || []).length > 0;
   const review = store.review;
@@ -268,6 +369,7 @@ export function ReviewPane({ store, sess }) {
   const flags = review?.flags || null;
   const legacy = isLegacy(review);
   const [confirmFinish, setConfirmFinish] = useState(false);
+  const [handoffOpen, setHandoffOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [clarifying, setClarifying] = useState(false);
   const live = useRef(null);
@@ -406,7 +508,8 @@ export function ReviewPane({ store, sess }) {
           onDefer=${deferQuestion} onClarify=${doClarify} />`)}
       </div>`}
 
-      <${PossibilitySection} run=${run} onDismiss=${dismissPossibility} />
+      <${PossibilitySection} run=${run} onDismiss=${dismissPossibility} onCarry=${() => setHandoffOpen(true)} />
+      <${HandoffPanel} sess=${sess} store=${store} run=${run} open=${handoffOpen} setOpen=${setHandoffOpen} />
     </div>`}
 
     ${!run && !legacy && !generating && html`<div style=${{ marginTop: 18 }}>

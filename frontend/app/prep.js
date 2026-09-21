@@ -123,6 +123,14 @@ export async function loadPrep(sessionId) {
   };
 }
 
+// Copy unused prep cards and saved possibilities into another session's prep.
+// `request_id` is the dedup receipt: the same retry lands one copy, not two.
+export function carryPrep(destSessionId, { base_revision, request_id, source_session_id, item_ids }) {
+  return apiJson(`/sessions/${destSessionId}/prep/carry`, 'POST', {
+    base_revision, request_id, source_session_id, item_ids,
+  });
+}
+
 export function savePrep(sessionId, { base_revision, cards, selected_threads, notes }) {
   return apiJson(`/sessions/${sessionId}/prep`, 'PUT', {
     base_revision,

@@ -2,6 +2,8 @@
 // Ported 1:1 from the legacy app.js so the backend contract is unchanged.
 import { store, setState, setOp, bump, navigate, apiFetch, apiJson, apiText, apiStream, apiUrl, slugify, toneFor, initials, loadWorldTabs, remapTabs, pruneTabs } from './core.js';
 import * as reviewApi from './review.js';
+import { carryPrep, loadPrep } from './prep.js';
+import { newRequestId } from './review.js';
 
 // ── Campaigns ─────────────────────────────────────────────────────
 export async function loadCampaigns() {
@@ -1047,6 +1049,30 @@ export async function clarifyQuestion(questionId, text) {
     setState({ reviewStreaming: null });
     setOp(e.message, 'err');
     await loadReviewRun(sid);
+    throw e;
+  }
+}
+
+// Carry unused prep and saved possibilities into the next session. The
+// destination is always chosen: a draft is never guessed, and a new session is
+// only created when the GM asks for one.
+export async function carryToSession(destSessionId, itemIds) {
+  const sourceId = store.session?.session_id;
+  if (!sourceId || !destSessionId || !itemIds.length) return null;
+  try {
+    const dest = await loadPrep(destSessionId);
+    const result = await carryPrep(destSessionId, {
+      base_revision: dest.revision,
+      request_id: newRequestId(),
+      source_session_id: sourceId,
+      item_ids: itemIds,
+    });
+    setOp(`Carried ${itemIds.length} item${itemIds.length === 1 ? '' : 's'} forward.`, 'done');
+    // A carried possibility is recorded as saved on the source review.
+    await loadReviewRun(sourceId).catch(() => {});
+    return result;
+  } catch (e) {
+    setOp(e.message, 'err');
     throw e;
   }
 }

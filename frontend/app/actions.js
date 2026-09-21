@@ -1,6 +1,7 @@
 // All data operations. Thin wrappers over the HTTP client that update the store.
 // Ported 1:1 from the legacy app.js so the backend contract is unchanged.
 import { store, setState, setOp, bump, navigate, apiFetch, apiJson, apiText, apiStream, apiUrl, slugify, toneFor, initials, loadWorldTabs, remapTabs, pruneTabs } from './core.js';
+import * as reviewApi from './review.js';
 
 // ── Campaigns ─────────────────────────────────────────────────────
 export async function loadCampaigns() {
@@ -646,10 +647,12 @@ export async function loadSession(id, params) {
       const latest = summaries[0];
       try { summaryPreview = { id: latest.id, text: await apiText(`/sessions/${id}/summaries/${latest.id}/content`) }; } catch (_) {}
     }
-    const codexUpdate = (summaries || []).length
-      ? await apiFetch(`/sessions/${id}/codex-update`).catch(() => null)
+    // The review record drives the session's primary action, so it loads with
+    // the session rather than when Review is first opened.
+    const review = (summaries || []).length
+      ? await apiFetch(`/sessions/${id}/review`).catch(() => null)
       : null;
-    setState({ session, campaign, transcripts: transcripts || [], summaries: summaries || [], summaryPreview, codexUpdate, loading: false });
+    setState({ session, campaign, transcripts: transcripts || [], summaries: summaries || [], summaryPreview, review, reviewStreaming: null, loading: false });
     if (loadErr) setOp(`Couldn't load this session's artifacts: ${loadErr.message}`, 'err');
     const sameSession = store.route.name === 'session' && store.route.params?.id === id;
     const view = params?.view ?? (sameSession ? store.route.params?.view : undefined);
@@ -871,64 +874,179 @@ export async function runSummarize({ transcriptId, provider, model, title, conte
 // Proposals are ephemeral until commit; the backend keeps one JSON run per
 // session (Sessions/NNN/codex-proposals.json). Decisions persist as the user
 // reviews, so a half-reviewed run survives a restart.
-export async function loadCodexUpdate(sessionId) {
+// ── Session review (SC-04/05/06) ──────────────────────────────────
+// The review record owns its own revision. Every mutation sends the revision it
+// was read at, so a second window or an external edit conflicts loudly instead
+// of overwriting decisions.
+
+export async function loadReviewRun(sessionId) {
   const sid = sessionId || store.session?.session_id;
   if (!sid) return null;
-  const run = await apiFetch(`/sessions/${sid}/codex-update`).catch(() => null);
-  setState({ codexUpdate: run });
-  return run;
+  const review = await apiFetch(`/sessions/${sid}/review`).catch(() => null);
+  setState({ review });
+  return review;
 }
 
-export async function runCodexUpdate() {
+function reviewBase() {
+  const r = store.review;
+  if (!r || !r.run) return null;
+  return { run_id: r.run.run_id, base_revision: r.revision };
+}
+
+export async function generateReview({ includePossibilities = false, developmentIds = [] } = {}) {
   const sid = store.session?.session_id;
   if (!sid) return;
-  setState({ codexUpdateStreaming: { stage: 'candidates' } });
+  const base = reviewBase();
+  setState({ reviewStreaming: { stage: 'reading' } });
   try {
     let failure = null;
-    await apiStream(`/sessions/${sid}/codex-update`, {}, (ev) => {
+    await reviewApi.streamGenerate(sid, {
+      include_possibilities: includePossibilities,
+      development_ids: developmentIds,
+      ...(base || {}),
+    }, (ev) => {
       switch (ev.stage) {
-        case 'candidates':
+        case 'reading':
         case 'grounding':
-          setState({ codexUpdateStreaming: { stage: ev.stage } });
+        case 'building':
+          setState({ reviewStreaming: { stage: ev.stage } });
           break;
         case 'done':
-          setState({ codexUpdate: ev.run, codexUpdateStreaming: null });
+          // Existing output stays on screen until the new run replaces it.
+          setState({ review: { status: 'ok', run: ev.run, revision: ev.revision, flags: null }, reviewStreaming: null });
           break;
         case 'error':
-          failure = ev.message || 'Codex update failed.';
+          failure = ev.message || 'Generating the review failed.';
           break;
       }
     });
     if (failure) throw new Error(failure);
+    await loadReviewRun(sid);
   } catch (e) {
-    setState({ codexUpdateStreaming: null });
+    setState({ reviewStreaming: null });
     setOp(e.message, 'err');
   }
 }
 
-// Persist decisions / edited changes / skip. patch: { status?, proposals?: [{id, decision?, changes?}] }
-export async function saveCodexUpdateDecisions(patch) {
+export async function cancelReviewGeneration() {
   const sid = store.session?.session_id;
   if (!sid) return;
-  const run = await apiJson(`/sessions/${sid}/codex-update`, 'PUT', patch);
-  setState({ codexUpdate: run });
-  return run;
+  await reviewApi.cancelReviewGeneration(sid).catch(() => {});
+  setOp('Generation cancelled — the previous review is unchanged.', 'done');
 }
 
-export async function commitCodexUpdate(ids) {
+// decisions / adjustments / question_actions, merged with the current revision.
+export async function saveReviewDecisions(patch) {
   const sid = store.session?.session_id;
-  if (!sid) return;
-  setOp('Writing to the Codex…');
+  const base = reviewBase();
+  if (!sid || !base) return null;
   try {
-    const r = await apiJson(`/sessions/${sid}/codex-update/commit`, 'POST', { ids });
-    await loadCodexUpdate(sid);
-    await loadVaultTree(store.campaign?.campaign_id);
-    bump('vault'); // a committed page open in a tab should refresh its body
-    const stale = r.stale?.length ? ` · ${r.stale.length} stale (page changed)` : '';
-    setOp(`Updated ${r.applied} page${r.applied === 1 ? '' : 's'}${stale}`, r.stale?.length ? 'err' : 'done');
+    const r = await reviewApi.putReview(sid, { ...base, ...patch });
+    setState({ review: { ...store.review, run: r.run, revision: r.revision } });
     return r;
   } catch (e) {
     setOp(e.message, 'err');
+    if (e.status === 409) await loadReviewRun(sid);
+    throw e;
+  }
+}
+
+export async function applySelectedUpdates(ids, requestId) {
+  const sid = store.session?.session_id;
+  const base = reviewBase();
+  if (!sid || !base || !ids.length) return null;
+  setOp('Writing the selected updates…');
+  try {
+    const r = await reviewApi.applyReview(sid, { ...base, request_id: requestId, development_ids: ids });
+    setState({ review: { ...store.review, run: r.run, revision: r.revision } });
+    await loadVaultTree(store.campaign?.campaign_id);
+    bump('vault');
+    const groups = r.report?.groups || [];
+    const written = groups.reduce((n, g) => n + (g.written?.length || 0), 0);
+    const trouble = groups.filter((g) => g.status !== 'applied').length;
+    setOp(
+      `Updated ${written} page${written === 1 ? '' : 's'}${trouble ? ` · ${trouble} need${trouble === 1 ? 's' : ''} attention` : ''}`,
+      trouble ? 'err' : 'done',
+    );
+    await loadReviewRun(sid);
+    return r;
+  } catch (e) {
+    setOp(e.message, 'err');
+    await loadReviewRun(sid);
+    throw e;
+  }
+}
+
+export async function recoverApplication(applicationId, action) {
+  const sid = store.session?.session_id;
+  const base = reviewBase();
+  if (!sid || !base) return null;
+  try {
+    const r = await reviewApi.recoverReview(sid, { ...base, application_id: applicationId, action });
+    setState({ review: { ...store.review, run: r.run, revision: r.revision } });
+    await loadVaultTree(store.campaign?.campaign_id);
+    bump('vault');
+    setOp(action === 'retry' ? 'Remaining changes written.' : 'Applied files kept; the rest is deferred.', 'done');
+    await loadReviewRun(sid);
+    return r;
+  } catch (e) {
+    setOp(e.message, 'err');
+    await loadReviewRun(sid);
+    throw e;
+  }
+}
+
+export async function finishReviewRun(deferPending) {
+  const sid = store.session?.session_id;
+  const base = reviewBase();
+  if (!sid || !base) return null;
+  try {
+    const r = await reviewApi.finishReview(sid, { ...base, defer_pending: !!deferPending });
+    setState({ review: { ...store.review, run: r.run, revision: r.revision } });
+    setOp('World review finished.', 'done');
+    return r;
+  } catch (e) {
+    setOp(e.message, 'err');
+    if (e.status === 409) await loadReviewRun(sid);
+    throw e;
+  }
+}
+
+export async function reopenReviewRun() {
+  const sid = store.session?.session_id;
+  const base = reviewBase();
+  if (!sid || !base) return null;
+  try {
+    const r = await reviewApi.reopenReview(sid, base);
+    setState({ review: { ...store.review, run: r.run, revision: r.revision } });
+    return r;
+  } catch (e) {
+    setOp(e.message, 'err');
+    throw e;
+  }
+}
+
+// The GM's own words become the evidence; no transcript support is invented.
+export async function clarifyQuestion(questionId, text) {
+  const sid = store.session?.session_id;
+  const base = reviewBase();
+  if (!sid || !base) return null;
+  setState({ reviewStreaming: { stage: 'building' } });
+  let failure = null;
+  try {
+    await reviewApi.streamClarify(sid, { ...base, question_id: questionId, text }, (ev) => {
+      if (ev.stage === 'done') {
+        setState({ review: { ...store.review, run: ev.run, revision: ev.revision }, reviewStreaming: null });
+      } else if (ev.stage === 'error') {
+        failure = ev.message || 'Clarifying failed.';
+      }
+    });
+    if (failure) throw new Error(failure);
+    await loadReviewRun(sid);
+  } catch (e) {
+    setState({ reviewStreaming: null });
+    setOp(e.message, 'err');
+    await loadReviewRun(sid);
     throw e;
   }
 }

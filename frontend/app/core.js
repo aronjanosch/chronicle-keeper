@@ -10,6 +10,7 @@ export const store = {
   shellMode: false,       // true when the Tauri shell injected the API base (browser-dev → false)
 
   // routing: { name: 'library'|'campaign'|'sessions'|'session'|'newSession'|'summarize'|'settings'|'codex'|'page'|'codexUpdate', params }
+  // `codexUpdate` is the pre-SC-06 deep link; it resolves to the session's Review view.
   // `session` params: { id, view? } where view is 'prepare'|'record'|'review'. `codexUpdate` { id } opens Review.
   route: { name: 'library', params: {} },
 
@@ -28,8 +29,8 @@ export const store = {
   summaries: [],
   summaryPreview: null,   // { id, text } latest summary content for session screen
   summaryStreaming: null, // { stage:'reading'|'writing'|'metadata', text } live summarize run (null = idle)
-  codexUpdate: null,      // Phase 5 proposal run for current session ({status:'none'} = never generated)
-  codexUpdateStreaming: null, // { stage:'candidates'|'grounding' } generation in flight
+  review: null,           // SC-04 review record: { status, revision, run, flags } ({status:'none'} = never generated)
+  reviewStreaming: null,  // { stage:'reading'|'grounding'|'building' } generation in flight
   providers: null,        // transcription engines
   llmProviders: null,     // LLM provider registry
   providerStatus: null,   // { ok, reason } for the active summary provider (null = unknown)
@@ -87,8 +88,12 @@ export function setLeaveGuard(fn) {
   return () => { if (leaveGuard === fn) leaveGuard = null; };
 }
 
+// Allowed navigations run here; a guard that returns false owns `resume` and
+// performs the navigation itself once the pending work is safe.
 function guarded(resume) {
-  return !leaveGuard || leaveGuard(resume) !== false;
+  const allowed = !leaveGuard || leaveGuard(resume) !== false;
+  if (allowed) resume();
+  return allowed;
 }
 
 export function navigate(name, params = {}) {

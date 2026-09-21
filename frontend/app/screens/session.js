@@ -2,11 +2,11 @@
 // hosts the existing pipeline strip, summary prose, speakers, and metadata.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal, fmtDate, fmtDateTime, toneFor } from '../core.js';
-import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, saveSummaryEdit, loadSession, importTranscript, loadCodexUpdate } from '../actions.js';
+import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, saveSummaryEdit, loadSession, importTranscript, loadReviewRun } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Sigil, Btn, Pipeline, Markdown, Empty, Menu, Segmented, Card } from '../ui.js';
 import { SessionPrepare } from './prepare.js';
-import { CodexUpdatePane } from './codexUpdate.js';
+import { ReviewPane } from './review.js';
 
 // Read a transcript file the user made elsewhere. Plain file input rather than a
 // drop zone: this is a rare, deliberate action, not part of the normal flow.
@@ -228,33 +228,13 @@ function SummaryCard({ store, hasS, hasT }) {
   </div>`;
 }
 
-// The review pane needs run + proposals loaded. When hosting under Review the
-// standalone screen's auto-generate effect is disabled, so fetch the current
-// run once if the session summary was loaded without one.
-function useCodexUpdate(store, sess, enabled) {
+// Review state drives the session's primary action and the default view, so
+// the record is fetched once per session even before Review is opened.
+function useReviewRun(store, sess, enabled) {
   useEffect(() => {
-    if (!enabled || !sess || store.codexUpdate) return;
-    if (!(store.summaries || []).length) return;
-    loadCodexUpdate(sess.session_id).catch(() => {});
+    if (!enabled || !sess || store.review) return;
+    loadReviewRun(sess.session_id).catch(() => {});
   }, [enabled, sess?.session_id, store.summaries.length]);
-}
-
-function ReviewPane({ store, sess }) {
-  const hasS = (store.summaries || []).length > 0;
-  useCodexUpdate(store, sess, hasS);
-  if (!hasS) {
-    return html`<${Card} title="Update the Codex">
-      <div style=${{ fontSize: 13, color: 'var(--ink-muted)', lineHeight: 1.6 }}>
-        Add a transcript and summary to generate updates.
-      </div>
-      <div style=${{ marginTop: 12 }}>
-        <${Btn} kind="secondary" size="sm" icon="arrow-r" onClick=${() => navigate('session', { id: sess.session_id, view: 'record' })}>Return to Record</${Btn}>
-      </div>
-    </${Card}>`;
-  }
-  // SC-06 replaces this with the development-based review; until then Review
-  // hosts the existing Update-the-Codex UI without auto-generating.
-  return html`<${CodexUpdatePane} store=${store} />`;
 }
 
 export function SessionScreen({ store }) {
@@ -275,12 +255,13 @@ export function SessionScreen({ store }) {
   const hasWorld = !!(c?.campaign_id || cam.campaign_id);
   const explicit = store.route.name === 'codexUpdate' ? 'review' : store.route.params?.view;
 
-  // Approximate "a current unfinished review exists" from the existing
-  // Update-the-Codex run; SC-04 replaces this with the real review record.
-  const cuRun = store.codexUpdate;
-  const cuStale = cuRun && store.summaries[0]?.created_at
-    && new Date(store.summaries[0].created_at) > new Date(cuRun.generated_at);
-  const reviewPending = hasS && cuRun && cuRun.status === 'open' && !cuStale;
+  useReviewRun(store, sess, hasS);
+  // An open review with anything still undecided is what makes Review the
+  // landing view; a stale run is not pending work until it is regenerated.
+  const reviewRun = store.review?.run || null;
+  const reviewStale = !!store.review?.flags?.stale;
+  const reviewPending = hasS && !!reviewRun && reviewRun.status === 'open' && !reviewStale
+    && (reviewRun.developments || []).some((d) => d.decision === 'pending' || d.decision === 'selected');
 
   const view = explicit
     || (reviewPending ? 'review' : hasWorld && !hasT && !hasS ? 'prepare' : 'record');
@@ -291,12 +272,8 @@ export function SessionScreen({ store }) {
     { key: 's', label: 'Summarized', done: hasS, current: hasT && !hasS, detail: hasS ? `${store.summaries[0].provider} / ${store.summaries[0].model}` : 'Pending', meta: hasS ? fmtDateTime(store.summaries[0].created_at) : '' },
   ];
 
-  // Update-the-Codex review state for the latest summary: pending until the
-  // run was committed or skipped (a newer summary re-opens it).
-  const cu = store.codexUpdate;
-  const cuReviewed = cu && cu.status !== 'none' && (cu.status === 'committed' || cu.status === 'skipped')
-    && !(store.summaries[0]?.created_at && new Date(store.summaries[0].created_at) > new Date(cu.generated_at));
-  const codexPending = hasS && !cuReviewed;
+  // The world review is outstanding until a run exists and is finished.
+  const codexPending = hasS && !(reviewRun && reviewRun.status === 'finished' && !reviewStale);
 
   // Existing transcript/summary dominate: an imported transcript with no audio
   // must offer Summarize, not Upload, as primary.

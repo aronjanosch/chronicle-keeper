@@ -81,6 +81,13 @@ pub async fn commit(
     Json(req): Json<CommitRequest>,
 ) -> AppResult<Json<Value>> {
     let (dir, vault_root) = codex_update::session_paths(&state, &session_id)?;
+    // Once a new review owns this session, the legacy route must not write the
+    // same pages a second time (contract §8).
+    if crate::session_review::legacy_commit_blocked(&dir)? {
+        return Err(crate::error::AppError::Conflict(
+            "This session uses the current review. Apply updates from Review.".into(),
+        ));
+    }
     let report = codex_update::commit(&dir, &vault_root, &req.ids)?;
     // Index is a rebuildable cache — refresh touched pages best-effort.
     for rel in &report.files {

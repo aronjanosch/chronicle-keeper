@@ -9,6 +9,7 @@ mod index;
 mod llm;
 mod prompts;
 mod session_prep;
+mod session_review;
 mod sessions;
 mod transcribe;
 mod upload;
@@ -213,6 +214,20 @@ pub fn router(state: AppState) -> Router {
                 .put(session_prep::put)
                 .layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
         )
+        // Session review (SC-04): typed developments applied as recoverable groups
+        .route(
+            "/sessions/:id/review",
+            get(session_review::get)
+                .put(session_review::put)
+                .layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
+        )
+        .route("/sessions/:id/review/apply", post(session_review::apply))
+        .route(
+            "/sessions/:id/review/recover",
+            post(session_review::recover),
+        )
+        .route("/sessions/:id/review/finish", post(session_review::finish))
+        .route("/sessions/:id/review/reopen", post(session_review::reopen))
         // Update the Codex (Phase 5): AI page proposals after a summary
         .route(
             "/sessions/:id/codex-update",

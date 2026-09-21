@@ -948,10 +948,42 @@ pub struct ReviewFlags {
     pub applied_development_ids: Vec<String>,
 }
 
-/// Compute freshness and recovery flags. `stale` is true when any recorded
-/// source revision no longer matches the live file (checked by the caller that
-/// knows how to locate each source kind). Recovery is derived from the journal.
-pub fn flags(loaded: &Loaded) -> ReviewFlags {
+/// Hash the live sources a run can be generated from. A missing file hashes as
+/// `"absent"`, so deleting a summary the run was built on reads as stale rather
+/// than silently fresh.
+pub fn current_source_revisions(session_dir: &Path) -> Vec<SourceRevision> {
+    let sources = [
+        (
+            "summary",
+            crate::session_files::summary_md_path(session_dir),
+        ),
+        (
+            "transcript",
+            crate::session_files::transcript_md_path(session_dir),
+        ),
+        ("prep", crate::session_prep::prep_path(session_dir)),
+    ];
+    sources
+        .into_iter()
+        .map(|(kind, path)| SourceRevision {
+            kind: kind.to_string(),
+            hash: match std::fs::read(&path) {
+                Ok(bytes) => revision(&bytes),
+                Err(_) => ABSENT.to_string(),
+            },
+        })
+        .collect()
+}
+
+/// Compute freshness and recovery flags. `stale` is true when any source the
+/// run recorded no longer hashes the same; sources the run never recorded are
+/// ignored. Recovery is derived from the journal.
+pub fn flags(loaded: &Loaded, current: &[SourceRevision]) -> ReviewFlags {
+    let stale = loaded.run.source_revisions.iter().any(|recorded| {
+        current
+            .iter()
+            .any(|live| live.kind == recorded.kind && live.hash != recorded.hash)
+    });
     let recovery_applications: Vec<String> = loaded
         .run
         .applications
@@ -974,7 +1006,7 @@ pub fn flags(loaded: &Loaded) -> ReviewFlags {
         .map(|d| d.id.clone())
         .collect();
     ReviewFlags {
-        stale: false,
+        stale,
         recovery_needed: !recovery_applications.is_empty(),
         recovery_applications,
         applied_development_ids,
@@ -1591,6 +1623,56 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, AppError::Conflict(_)));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn edited_source_marks_the_run_stale() {
+        let dir = tmp_dir("stale-flags");
+        std::fs::write(crate::session_files::summary_md_path(&dir), "summary v1").unwrap();
+        let mut run = new_run("s1");
+        run.source_revisions = current_source_revisions(&dir);
+        save(&dir, &run).unwrap();
+
+        let loaded = load(&dir).unwrap().unwrap();
+        assert!(!flags(&loaded, &current_source_revisions(&dir)).stale);
+
+        std::fs::write(crate::session_files::summary_md_path(&dir), "summary v2").unwrap();
+        assert!(flags(&loaded, &current_source_revisions(&dir)).stale);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn recovery_flags_list_unfinished_applications() {
+        let dir = tmp_dir("recovery-flags");
+        let mut run = new_run("s1");
+        run.developments
+            .push(development("d1", "A.md", None, "after"));
+        let app_id = Uuid::new_v4().to_string();
+        run.applications.push(Application {
+            id: app_id.clone(),
+            request_id: Uuid::new_v4().to_string(),
+            payload_hash: apply_payload_hash(&["d1".to_string()]),
+            development_ids: vec!["d1".into()],
+            status: ApplicationStatus::Prepared,
+            created_at: now_iso(),
+            targets: Vec::new(),
+        });
+        save(&dir, &run).unwrap();
+
+        let loaded = load(&dir).unwrap().unwrap();
+        let f = flags(&loaded, &current_source_revisions(&dir));
+        assert!(f.recovery_needed);
+        assert_eq!(f.recovery_applications, vec![app_id]);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_new_review_blocks_the_legacy_commit_route() {
+        let dir = tmp_dir("legacy-guard");
+        assert!(!legacy_commit_blocked(&dir).unwrap());
+        save(&dir, &new_run("s1")).unwrap();
+        assert!(legacy_commit_blocked(&dir).unwrap());
         std::fs::remove_dir_all(dir).ok();
     }
 }

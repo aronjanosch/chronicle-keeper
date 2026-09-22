@@ -311,6 +311,18 @@ pub fn router(state: AppState) -> Router {
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), require_token))
         .with_state(state)
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http().make_span_with(
+                |req: &axum::http::Request<_>| {
+                    tracing::debug_span!(
+                        "request",
+                        otel.name = %format!("{} {}", req.method(), req.uri().path()),
+                        method = %req.method(),
+                        uri = %req.uri(),
+                    )
+                },
+            ),
+        )
         .layer(cors)
 }
 

@@ -7,12 +7,7 @@ use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "ck_core=debug,info".into()),
-        )
-        .init();
+    let _telemetry = ck_core::telemetry::init("ck_core=debug,info");
 
     let port: u16 = std::env::var("CK_PORT")
         .ok()

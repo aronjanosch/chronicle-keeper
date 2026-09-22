@@ -1,6 +1,7 @@
 //! Update the Codex (Phase 5): generate / review / commit AI page proposals.
 
 use std::convert::Infallible;
+use tracing::Instrument;
 
 use axum::extract::{Path, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -24,23 +25,26 @@ pub async fn generate(
     Json(req): Json<UpdateRequest>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    tokio::spawn(async move {
-        let send = |val: Value| {
-            let ev = Event::default()
-                .json_data(&val)
-                .unwrap_or_else(|_| Event::default());
-            let _ = tx.send(ev);
-        };
-        let result = codex_update::generate_streamed(&state, &session_id, &req, |p| match p {
-            UpdateProgress::Candidates => send(json!({ "stage": "candidates" })),
-            UpdateProgress::Grounding => send(json!({ "stage": "grounding" })),
-        })
-        .await;
-        match result {
-            Ok(run) => send(json!({ "stage": "done", "run": run })),
-            Err(e) => send(json!({ "stage": "error", "message": e.to_string() })),
+    tokio::spawn(
+        async move {
+            let send = |val: Value| {
+                let ev = Event::default()
+                    .json_data(&val)
+                    .unwrap_or_else(|_| Event::default());
+                let _ = tx.send(ev);
+            };
+            let result = codex_update::generate_streamed(&state, &session_id, &req, |p| match p {
+                UpdateProgress::Candidates => send(json!({ "stage": "candidates" })),
+                UpdateProgress::Grounding => send(json!({ "stage": "grounding" })),
+            })
+            .await;
+            match result {
+                Ok(run) => send(json!({ "stage": "done", "run": run })),
+                Err(e) => send(json!({ "stage": "error", "message": e.to_string() })),
+            }
         }
-    });
+        .in_current_span(),
+    );
     let stream = futures_util::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|ev| (Ok(ev), rx))
     });

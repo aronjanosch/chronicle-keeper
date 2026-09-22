@@ -28,6 +28,7 @@ pub mod session_search;
 pub mod state;
 pub mod store;
 pub mod summarize;
+pub mod telemetry;
 pub mod timeline;
 pub mod transcript_format;
 pub mod transcript_import;

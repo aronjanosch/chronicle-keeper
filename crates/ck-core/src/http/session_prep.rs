@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 use std::path::PathBuf;
+use tracing::Instrument;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -71,53 +72,56 @@ pub async fn suggest(
     Json(req): Json<SuggestRequest>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    tokio::spawn(async move {
-        let frame = |val: &Value| {
-            Event::default()
-                .json_data(val)
-                .unwrap_or_else(|_| Event::default())
-        };
-        let job = format!("{session_id}:prep");
-        let cancel = match state.review_job_begin(&job) {
-            Ok(flag) => flag,
-            Err(e) => {
-                let _ = tx.send(frame(
-                    &json!({ "stage": "error", "code": 409, "message": e.to_string() }),
-                ));
-                return;
+    tokio::spawn(
+        async move {
+            let frame = |val: &Value| {
+                Event::default()
+                    .json_data(val)
+                    .unwrap_or_else(|_| Event::default())
+            };
+            let job = format!("{session_id}:prep");
+            let cancel = match state.review_job_begin(&job) {
+                Ok(flag) => flag,
+                Err(e) => {
+                    let _ = tx.send(frame(
+                        &json!({ "stage": "error", "code": 409, "message": e.to_string() }),
+                    ));
+                    return;
+                }
+            };
+            // The SSE body is dropped the moment the client disconnects; stop the
+            // run then instead of at the next progress frame.
+            let disconnect = {
+                let (tx, cancel) = (tx.clone(), cancel.clone());
+                tokio::spawn(async move {
+                    tx.closed().await;
+                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                })
+            };
+            let send = |val: Value| {
+                if tx.send(frame(&val)).is_err() {
+                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            };
+            let result =
+                prep_suggest::suggest_streamed(&state, &session_id, &req, &cancel, |p| match p {
+                    SuggestProgress::Reading => send(json!({ "stage": "reading" })),
+                    SuggestProgress::Building => send(json!({ "stage": "building" })),
+                })
+                .await;
+            disconnect.abort();
+            state.review_job_end(&job);
+            match result {
+                Ok(suggestions) => send(json!({ "stage": "done", "suggestions": suggestions })),
+                Err(e) => send(json!({
+                    "stage": "error",
+                    "code": e.status().as_u16(),
+                    "message": e.to_string(),
+                })),
             }
-        };
-        // The SSE body is dropped the moment the client disconnects; stop the
-        // run then instead of at the next progress frame.
-        let disconnect = {
-            let (tx, cancel) = (tx.clone(), cancel.clone());
-            tokio::spawn(async move {
-                tx.closed().await;
-                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-            })
-        };
-        let send = |val: Value| {
-            if tx.send(frame(&val)).is_err() {
-                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-        };
-        let result =
-            prep_suggest::suggest_streamed(&state, &session_id, &req, &cancel, |p| match p {
-                SuggestProgress::Reading => send(json!({ "stage": "reading" })),
-                SuggestProgress::Building => send(json!({ "stage": "building" })),
-            })
-            .await;
-        disconnect.abort();
-        state.review_job_end(&job);
-        match result {
-            Ok(suggestions) => send(json!({ "stage": "done", "suggestions": suggestions })),
-            Err(e) => send(json!({
-                "stage": "error",
-                "code": e.status().as_u16(),
-                "message": e.to_string(),
-            })),
         }
-    });
+        .in_current_span(),
+    );
     let stream = futures_util::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|ev| (Ok(ev), rx))
     });

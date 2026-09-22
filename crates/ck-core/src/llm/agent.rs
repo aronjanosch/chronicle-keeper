@@ -594,6 +594,38 @@ pub async fn agent_chat_stream<F: FnMut(AgentDelta)>(
     resolved: &Resolved,
     msgs: &[Msg],
     tools: &[ToolDef],
+    on_delta: F,
+) -> Result<AssistantTurn, LlmError> {
+    use tracing::Instrument;
+    let span = tracing::info_span!(
+        "llm.agent_turn",
+        gen_ai.request.model = resolved.model.as_str(),
+        transport = ?resolved.transport,
+        messages = msgs.len(),
+        tools = tools.len(),
+    );
+    async {
+        if tracing::enabled!(target: crate::telemetry::LLM_TRACE, tracing::Level::TRACE) {
+            let messages = serde_json::to_string(msgs).unwrap_or_default();
+            tracing::trace!(target: crate::telemetry::LLM_TRACE, messages, "agent prompt");
+        }
+        let result = agent_turn_once(resolved, msgs, tools, on_delta).await;
+        match &result {
+            Ok(turn) => {
+                tracing::trace!(target: crate::telemetry::LLM_TRACE, turn = ?turn, "agent response")
+            }
+            Err(e) => tracing::warn!(error = %e.0, "agent turn failed"),
+        }
+        result
+    }
+    .instrument(span)
+    .await
+}
+
+async fn agent_turn_once<F: FnMut(AgentDelta)>(
+    resolved: &Resolved,
+    msgs: &[Msg],
+    tools: &[ToolDef],
     mut on_delta: F,
 ) -> Result<AssistantTurn, LlmError> {
     let client = reqwest::Client::builder()

@@ -4,6 +4,7 @@
 
 use std::convert::Infallible;
 use std::path::PathBuf;
+use tracing::Instrument;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -175,64 +176,72 @@ pub async fn generate(
     Json(req): Json<GenerateRequest>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    tokio::spawn(async move {
-        let frame = |val: &Value| {
-            Event::default()
-                .json_data(val)
-                .unwrap_or_else(|_| Event::default())
-        };
-        let cancel = match state.review_job_begin(&session_id) {
-            Ok(flag) => flag,
-            Err(e) => {
-                let _ = tx.send(frame(
-                    &json!({ "stage": "error", "code": 409, "message": e.to_string() }),
-                ));
-                return;
-            }
-        };
-        // The SSE body is dropped the moment the client disconnects; stop the
-        // run then instead of at the next progress frame.
-        let disconnect = {
-            let (tx, cancel) = (tx.clone(), cancel.clone());
-            tokio::spawn(async move {
-                tx.closed().await;
-                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-            })
-        };
-        // A failed send means the client is gone: stop the run rather than
-        // finish a review nobody is waiting for.
-        let send = |val: Value| {
-            if tx.send(frame(&val)).is_err() {
-                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-        };
-        let result =
-            review_generate::generate_streamed(&state, &session_id, &req, &cancel, |p| match p {
-                GenProgress::Reading => send(json!({ "stage": "reading" })),
-                GenProgress::Grounding => send(json!({ "stage": "grounding" })),
-                GenProgress::Building => send(json!({ "stage": "building" })),
-            })
+    tokio::spawn(
+        async move {
+            let frame = |val: &Value| {
+                Event::default()
+                    .json_data(val)
+                    .unwrap_or_else(|_| Event::default())
+            };
+            let cancel = match state.review_job_begin(&session_id) {
+                Ok(flag) => flag,
+                Err(e) => {
+                    let _ = tx.send(frame(
+                        &json!({ "stage": "error", "code": 409, "message": e.to_string() }),
+                    ));
+                    return;
+                }
+            };
+            // The SSE body is dropped the moment the client disconnects; stop the
+            // run then instead of at the next progress frame.
+            let disconnect = {
+                let (tx, cancel) = (tx.clone(), cancel.clone());
+                tokio::spawn(async move {
+                    tx.closed().await;
+                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                })
+            };
+            // A failed send means the client is gone: stop the run rather than
+            // finish a review nobody is waiting for.
+            let send = |val: Value| {
+                if tx.send(frame(&val)).is_err() {
+                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            };
+            let result = review_generate::generate_streamed(
+                &state,
+                &session_id,
+                &req,
+                &cancel,
+                |p| match p {
+                    GenProgress::Reading => send(json!({ "stage": "reading" })),
+                    GenProgress::Grounding => send(json!({ "stage": "grounding" })),
+                    GenProgress::Building => send(json!({ "stage": "building" })),
+                },
+            )
             .await;
-        disconnect.abort();
-        state.review_job_end(&session_id);
-        match result {
-            Ok(run) => {
-                // The revision the client must send back with its next mutation
-                // comes from the persisted bytes, not from the run in memory.
-                let revision = crate::session_review::load(&run_dir(&state, &session_id))
-                    .ok()
-                    .flatten()
-                    .map(|l| l.revision)
-                    .unwrap_or_default();
-                send(json!({ "stage": "done", "revision": revision, "run": run }));
+            disconnect.abort();
+            state.review_job_end(&session_id);
+            match result {
+                Ok(run) => {
+                    // The revision the client must send back with its next mutation
+                    // comes from the persisted bytes, not from the run in memory.
+                    let revision = crate::session_review::load(&run_dir(&state, &session_id))
+                        .ok()
+                        .flatten()
+                        .map(|l| l.revision)
+                        .unwrap_or_default();
+                    send(json!({ "stage": "done", "revision": revision, "run": run }));
+                }
+                Err(e) => send(json!({
+                    "stage": "error",
+                    "code": e.status().as_u16(),
+                    "message": e.to_string(),
+                })),
             }
-            Err(e) => send(json!({
-                "stage": "error",
-                "code": e.status().as_u16(),
-                "message": e.to_string(),
-            })),
         }
-    });
+        .in_current_span(),
+    );
     let stream = futures_util::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|ev| (Ok(ev), rx))
     });
@@ -264,30 +273,33 @@ pub async fn clarify(
     Json(req): Json<ClarifyRequest>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    tokio::spawn(async move {
-        let send = |val: Value| {
-            let ev = Event::default()
-                .json_data(&val)
-                .unwrap_or_else(|_| Event::default());
-            let _ = tx.send(ev);
-        };
-        send(json!({ "stage": "building" }));
-        match review_generate::clarify(&state, &session_id, &req).await {
-            Ok(run) => {
-                let revision = crate::session_review::load(&run_dir(&state, &session_id))
-                    .ok()
-                    .flatten()
-                    .map(|l| l.revision)
-                    .unwrap_or_default();
-                send(json!({ "stage": "done", "revision": revision, "run": run }));
+    tokio::spawn(
+        async move {
+            let send = |val: Value| {
+                let ev = Event::default()
+                    .json_data(&val)
+                    .unwrap_or_else(|_| Event::default());
+                let _ = tx.send(ev);
+            };
+            send(json!({ "stage": "building" }));
+            match review_generate::clarify(&state, &session_id, &req).await {
+                Ok(run) => {
+                    let revision = crate::session_review::load(&run_dir(&state, &session_id))
+                        .ok()
+                        .flatten()
+                        .map(|l| l.revision)
+                        .unwrap_or_default();
+                    send(json!({ "stage": "done", "revision": revision, "run": run }));
+                }
+                Err(e) => send(json!({
+                    "stage": "error",
+                    "code": e.status().as_u16(),
+                    "message": e.to_string(),
+                })),
             }
-            Err(e) => send(json!({
-                "stage": "error",
-                "code": e.status().as_u16(),
-                "message": e.to_string(),
-            })),
         }
-    });
+        .in_current_span(),
+    );
     let stream = futures_util::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|ev| (Ok(ev), rx))
     });

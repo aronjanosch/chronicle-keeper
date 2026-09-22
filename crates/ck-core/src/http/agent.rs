@@ -10,6 +10,7 @@
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tracing::Instrument;
 
 use axum::extract::{Path, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -304,7 +305,7 @@ pub async fn run_brief(
             Ok(()) => send(json!({ "type": "turn_done" })),
             Err(e) => send(json!({ "type": "error", "message": e.to_string() })),
         }
-    });
+    }.in_current_span());
 
     let stream = futures_util::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|ev| (Ok(ev), rx))
@@ -526,7 +527,7 @@ pub async fn send_message(
             Ok(()) => send(json!({ "type": "turn_done" })),
             Err(e) => send(json!({ "type": "error", "message": e.to_string() })),
         }
-    });
+    }.in_current_span());
 
     let stream = futures_util::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|ev| (Ok(ev), rx))

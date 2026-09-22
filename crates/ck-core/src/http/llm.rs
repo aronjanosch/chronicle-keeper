@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 use std::time::Instant;
+use tracing::Instrument;
 
 use axum::extract::{Path, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -204,11 +205,14 @@ pub async fn pull_provider_model(
     }
     crate::state::ModelProgress::set(&state.llm_pull_progress, "pulling", 0, 0);
     let progress = state.llm_pull_progress.clone();
-    tokio::spawn(async move {
-        if let Err(e) = llm::pull_model(&resolved.api_base, &model, &progress).await {
-            tracing::warn!("ollama pull of {model} failed: {}", e.0);
+    tokio::spawn(
+        async move {
+            if let Err(e) = llm::pull_model(&resolved.api_base, &model, &progress).await {
+                tracing::warn!("ollama pull of {model} failed: {}", e.0);
+            }
         }
-    });
+        .in_current_span(),
+    );
     Ok(Json(json!({ "started": true })))
 }
 
@@ -246,30 +250,33 @@ pub async fn summarize_stream(
     Json(req): Json<SummarizeRequest>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    tokio::spawn(async move {
-        let send = |val: serde_json::Value| {
-            let ev = Event::default()
-                .json_data(&val)
-                .unwrap_or_else(|_| Event::default());
-            let _ = tx.send(ev);
-        };
-        let result = summarize::summarize_session_streamed(&state, &req, |p| match p {
-            SummaryProgress::Reading => send(json!({ "stage": "reading" })),
-            SummaryProgress::Token(t) => send(json!({ "stage": "writing", "token": t })),
-            SummaryProgress::Metadata => send(json!({ "stage": "metadata" })),
-        })
-        .await;
-        match result {
-            Ok(r) => send(json!({
-                "stage": "done",
-                "summary": r.summary,
-                "metadata": r.metadata,
-                "provider": r.provider,
-                "model": r.model,
-            })),
-            Err(e) => send(json!({ "stage": "error", "message": e.to_string() })),
+    tokio::spawn(
+        async move {
+            let send = |val: serde_json::Value| {
+                let ev = Event::default()
+                    .json_data(&val)
+                    .unwrap_or_else(|_| Event::default());
+                let _ = tx.send(ev);
+            };
+            let result = summarize::summarize_session_streamed(&state, &req, |p| match p {
+                SummaryProgress::Reading => send(json!({ "stage": "reading" })),
+                SummaryProgress::Token(t) => send(json!({ "stage": "writing", "token": t })),
+                SummaryProgress::Metadata => send(json!({ "stage": "metadata" })),
+            })
+            .await;
+            match result {
+                Ok(r) => send(json!({
+                    "stage": "done",
+                    "summary": r.summary,
+                    "metadata": r.metadata,
+                    "provider": r.provider,
+                    "model": r.model,
+                })),
+                Err(e) => send(json!({ "stage": "error", "message": e.to_string() })),
+            }
         }
-    });
+        .in_current_span(),
+    );
 
     let stream = futures_util::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|ev| (Ok(ev), rx))

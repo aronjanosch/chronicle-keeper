@@ -467,6 +467,29 @@ pub async fn chat_cancellable(
 
 /// One chat completion. Returns the assistant message text.
 pub async fn chat(req: &ChatRequest<'_>, json_mode: bool) -> Result<String, LlmError> {
+    use tracing::Instrument;
+    let span = tracing::info_span!(
+        "llm.chat",
+        gen_ai.request.model = req.model,
+        transport = ?req.transport,
+        json_mode,
+    );
+    async {
+        tracing::trace!(target: crate::telemetry::LLM_TRACE, prompt = req.prompt, "llm prompt");
+        let result = chat_once(req, json_mode).await;
+        match &result {
+            Ok(text) => {
+                tracing::trace!(target: crate::telemetry::LLM_TRACE, response = text.as_str(), "llm response")
+            }
+            Err(e) => tracing::warn!(error = %e.0, "llm chat failed"),
+        }
+        result
+    }
+    .instrument(span)
+    .await
+}
+
+async fn chat_once(req: &ChatRequest<'_>, json_mode: bool) -> Result<String, LlmError> {
     let ChatRequest {
         transport,
         api_base,

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Recordings &amp; transcripts · Chronicle Keeper docs</title>
-  <meta name="description" content="Upload a Craig recording, label speakers, transcribe on-device, summarize with your LLM, and export to Obsidian — the full Chronicle Keeper workflow, step by step." />
+  <title>The session cycle · Chronicle Keeper docs</title>
+  <meta name="description" content="Prepare a session, record and transcribe it on-device, summarize with your LLM, review the world updates it suggests, and hand the leftovers to next time — the full Chronicle Keeper session cycle." />
   <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="../assets/style.css" />
 </head>
@@ -43,8 +43,8 @@
         <a href="keeper.html"><svg class="ic" viewBox="0 0 16 16"><path d="M2 3h12v8H6l-3 3V3Z"/></svg> The Keeper</a>
       </div>
       <div class="group">
-        <h6>Session notes</h6>
-        <a href="workflow.html" class="is-active"><svg class="ic" viewBox="0 0 16 16"><path d="M2 8h1M4 6v4M6 4v8M8 5v6M10 3v10M12 6v4M14 8h.5"/></svg> Recordings &amp; transcripts</a>
+        <h6>Running sessions</h6>
+        <a href="workflow.html" class="is-active"><svg class="ic" viewBox="0 0 16 16"><path d="M2 8h1M4 6v4M6 4v8M8 5v6M10 3v10M12 6v4M14 8h.5"/></svg> The session cycle</a>
       </div>
       <div class="group">
         <h6>Help</h6>
@@ -55,17 +55,18 @@
 
 
     <main class="docs-main">
-      <div class="crumb">Docs / Recordings &amp; transcripts</div>
-      <h1>Recordings &amp; transcripts</h1>
-      <p class="page-lede">One recording in, one finished session note out — then folded back into your world. Here's every stage of the pipeline, in the order you'll meet them.</p>
+      <div class="crumb">Docs / The session cycle</div>
+      <h1>The session cycle</h1>
+      <p class="page-lede">Prepare what might happen, record what actually did, then fold it back into your world and carry the leftovers forward. A session in Chronicle Keeper has three views — <strong>Prepare</strong>, <strong>Record</strong>, <strong>Review</strong> — and this page walks the whole loop.</p>
 
       <div class="prose">
         <div class="pipeline" style="margin-bottom:8px">
-          <div class="step"><div class="n">01</div><h4>Upload</h4><p>Craig ZIP</p></div>
-          <div class="step"><div class="n">02</div><h4>Label</h4><p>who's who</p></div>
+          <div class="step"><div class="n">01</div><h4>Prepare</h4><p>before play</p></div>
+          <div class="step"><div class="n">02</div><h4>Record</h4><p>Craig ZIP</p></div>
           <div class="step"><div class="n">03</div><h4>Transcribe</h4><p>on-device</p></div>
           <div class="step"><div class="n">04</div><h4>Summarize</h4><p>your LLM</p></div>
-          <div class="step"><div class="n">05</div><h4>Export</h4><p>Obsidian MD</p></div>
+          <div class="step"><div class="n">05</div><h4>Review</h4><p>update the world</p></div>
+          <div class="step"><div class="n">06</div><h4>Hand off</h4><p>to next time</p></div>
         </div>
 
         <h2 id="before">Before you start</h2>
@@ -75,8 +76,17 @@
           <li>You have a <strong>Craig Bot recording</strong> downloaded — the multi-track ZIP, ideally with one track per player.</li>
         </ul>
 
-        <h2 id="record">0 · Record with Craig</h2>
-        <p>During your session, <a href="https://craig.chat" target="_blank" rel="noopener">Craig</a> records each person in your Discord voice channel to their own audio track. When the session ends, download the recording and choose the <strong>multi-track</strong> download (one file per speaker) — that's what gives the cleanest transcripts, since each track is one voice.</p>
+        <h2 id="cycle">The three views of a session</h2>
+        <p>Open a session and you get three local views, in the order you use them. Nothing here is a new place in the sidebar — it's the same session, seen at three moments.</p>
+        <ul>
+          <li><strong>Prepare</strong> — what you write <em>before</em> play: an opening situation, possible scenes, things to keep in mind.</li>
+          <li><strong>Record</strong> — the recording, transcript and summary: what actually happened.</li>
+          <li><strong>Review</strong> — the world updates the session suggests, and the handoff to next time.</li>
+        </ul>
+        <p>Every part works without an LLM. Preparation is plain typing; the Keeper only adds suggestions if you ask for them.</p>
+
+        <h2 id="record">Recording with Craig</h2>
+        <p>During your session, <a href="https://craig.chat" target="_blank" rel="noopener">Craig</a> records each person in your Discord voice channel to their own audio track. When the session ends, download the recording and choose the <strong>multi-track</strong> download (one file per speaker) — that's what gives the cleanest transcripts, since each track is one voice. That ZIP is what step 3 wants.</p>
 
         <h2 id="campaign">1 · Create a campaign</h2>
         <ol class="steps">
@@ -84,20 +94,32 @@
           <li><h4>New campaign</h4><p>Give it a name (e.g. "The Sunless Citadel"). Everything — sessions, the Codex, exports — is scoped per campaign.</p></li>
         </ol>
 
-        <h2 id="upload">2 · Start a session &amp; upload</h2>
-        <ol class="steps">
-          <li><h4>New session</h4><p>Inside the campaign, start a new session. The session number is suggested automatically.</p></li>
-          <li><h4>Drop in the Craig ZIP</h4><p>Upload the recording. Chronicle Keeper unpacks the tracks and lists them.</p></li>
-        </ol>
+        <h2 id="prepare">2 · Prepare the session</h2>
+        <p>Start the session <em>before</em> you play. Inside the campaign, create a new session — the number is suggested automatically — and open <strong>Prepare</strong>. You get three sections to fill in as loosely or as carefully as you like:</p>
+        <ul>
+          <li><strong>Opening situation</strong> — how the session begins. One per session; a place, a mood, the first thing that happens.</li>
+          <li><strong>Possible scenes</strong> — moments that might come up. Nothing here is fixed until it happens at the table.</li>
+          <li><strong>Keep in mind</strong> — threads, promises and details not to forget.</li>
+        </ul>
+        <p>Cards can be reordered, duplicated and removed, and everything is saved to the session's own file, so it survives closing the app. You can link a card to a Codex page — a <a href="worlds.html">thread page</a>, an NPC, a place — and linking never invents a page: if the title is ambiguous you pick the match yourself.</p>
+        <p>After the session you can mark each card <strong>Happened</strong>, <strong>Changed</strong> or <strong>Unused</strong>. That's what makes the handoff in step 7 useful — and it's optional.</p>
+        <div class="callout callout-tip">
+          <svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg>
+          <div class="c-body"><strong>Ask Keeper for ideas</strong><p>If you have an LLM configured, <strong>Ask Keeper for ideas</strong> reads the pages and threads you linked, your current prep and the last few summaries, and offers up to five suggestions. They are suggestions: each one is added only when you click <strong>Add to prep</strong>, an existing opening is never replaced without you saying so, and anything invented rather than drawn from your world is labelled as an idea.</p></div>
+        </div>
 
-        <h2 id="label">3 · Label the speakers</h2>
+        <h2 id="upload">3 · Record &amp; upload</h2>
+        <p>Play the session, then open <strong>Record</strong> and drop in the Craig ZIP. Chronicle Keeper unpacks the tracks and lists them. Adding a recording later never disturbs the preparation you already wrote.</p>
+        <p>No recording? <strong>Import a transcript</strong> instead — a text file you already have. The session then goes straight to Summarize.</p>
+
+        <h2 id="label">4 · Label the speakers</h2>
         <p>Each track gets a name so the transcript and summary know who said what. Type the player's name (or character) next to each track. This takes a minute and pays off in a far more readable write-up.</p>
         <div class="callout callout-tip">
           <svg class="ic" viewBox="0 0 16 16"><path d="M8 1.5 3 3v5c0 3 2.4 5.5 5 6.5 2.6-1 5-3.5 5-6.5V3l-5-1.5Z"/></svg>
           <div class="c-body"><strong>Tip</strong><p>Label with the names you want to read in the notes. If your group thinks in character names, use those; the summary will follow your lead.</p></div>
         </div>
 
-        <h2 id="transcribe">4 · Transcribe</h2>
+        <h2 id="transcribe">5 · Transcribe</h2>
         <p>Hit <strong>Transcribe</strong>. The first time, the speech model downloads once (a few hundred MB). After that, every track is transcribed locally — no audio leaves your machine, no internet needed.</p>
         <ul>
           <li><strong>Engine:</strong> native Parakeet TDT v3, several× realtime on CPU.</li>
@@ -109,19 +131,40 @@
           <div class="c-body"><strong>How long does it take?</strong><p>Roughly a fraction of the session's real length on a typical laptop CPU — a 3-hour session transcribes in well under an hour, often much less. A faster CPU is faster; no GPU is required.</p></div>
         </div>
 
-        <h2 id="summarize">5 · Summarize</h2>
+        <h2 id="summarize">6 · Summarize</h2>
         <p>With transcripts ready, generate the summary using your chosen LLM. Chronicle Keeper builds a structured prompt and — crucially — injects the <a href="worlds.html#summary">summaries</a> of your world's pages so the model corrects names the transcriber mangled and grounds the recap in your canon. The result is a clean write-up: what happened, who did what, decisions, loose threads.</p>
-        <p>Read it over and edit it in place. When you're happy, the <a href="keeper.html#update-codex">Keeper can fold the session into your world</a> — proposing page edits for the NPCs you met and the things that changed, each grounded in the transcript and applied only when you approve.</p>
-        <figure><img src="../assets/screenshots/session.png" alt="A session screen with recording, transcribed and summarized stages and an Update the Codex button" /><figcaption>A session: recording → transcribed → summarized, with "Update the Codex" to fold it into your world.</figcaption></figure>
+        <p>Read it over and edit it in place. When you're happy, move to <strong>Review</strong>.</p>
+        <figure><img src="../assets/screenshots/session.png" alt="A session screen with recording, transcribed and summarized stages and an Update the Codex button" /><figcaption>A session: recording → transcribed → summarized, then on to Review.</figcaption></figure>
+
+        <h2 id="review">7 · Review the world updates</h2>
+        <p><strong>Find world updates</strong> reads the session and proposes <em>developments</em> — the things that changed in your world. Each one is a card, and a card shows three things: what happened, <strong>where it came from</strong>, and <strong>the exact lines it would write</strong> to each page. Nothing is written until you select updates and apply them; opening the screen changes nothing at all.</p>
+        <p>The point of the screen is the distinction the model is not allowed to blur:</p>
+        <ul>
+          <li><strong>Developments</strong> — what happened, backed by transcript turns. Only these can be applied.</li>
+          <li><strong>Questions</strong> — what is uncertain. A player wondering whether the courier was released is a question, not a fact. Answer it yourself and it becomes evidence you confirmed; leave it open and nothing is written.</li>
+          <li><strong>Possibilities</strong> — what <em>might</em> happen next. Off by default, never canon, and only ever useful as material for the next session's prep.</li>
+        </ul>
+        <p>Sources are visible on every card: a transcript citation names the turns it rests on, and a claim that only the summary supports is labelled <em>Summary only — not verified against the transcript</em> rather than dressed up as fact. Something an NPC asserted stays attributed to that NPC.</p>
+        <p>One development can touch several pages — a public accusation might change a person and a place at once — and the card lists every page with its own preview. <strong>Adjust</strong> lets you edit the text that would be written; doing so clears the selection so you re-read the preview before applying it.</p>
+        <div class="callout callout-note">
+          <svg class="ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 5h.01"/></svg>
+          <div class="c-body"><strong>If something goes wrong mid-apply</strong><p>Applying is recorded before it writes, so an interrupted or half-finished application is visible as <em>Partly applied</em> or <em>Interrupted</em> and can be retried — it recognises the bytes it already wrote instead of duplicating them. If you renamed or externally edited a target page in the meantime, the affected write stops and says so rather than overwriting your edit. Retrying the same apply never applies it twice.</p></div>
+        </div>
+        <p>When you're done, <strong>Finish review</strong> records what you deliberately left undone. You can reopen a finished review later; what you already applied stays applied.</p>
+
+        <h2 id="handoff">8 · Hand off to the next session</h2>
+        <p>The last thing Review offers is <strong>Prepare next session</strong>. Prep cards that did not get used, cards you marked <em>Changed</em>, and any possibility you want to keep can be copied into another session's Prepare — you choose which session, and you can create it right there. Anything you marked <em>Happened</em> stays where it happened.</p>
+        <p>Copied cards arrive as fresh, unmarked preparation with a note of where they came from, and copying the same thing twice does not produce two copies. Saving a possibility changes preparation only — it never edits a Codex page behind your back.</p>
+        <p>That closes the loop: next session already has an opening and a list of what's still unfinished, before you've written a word.</p>
 
         <h2 id="recap">Bonus · Story-so-far recap</h2>
         <p>Need to remind the table what happened last time? The <strong>recap</strong> stitches your past summaries into a short "previously on…" for the campaign — handy to read aloud at the start of a session.</p>
 
-        <h2 id="export">6 · Export</h2>
+        <h2 id="export">9 · Export</h2>
         <p>Export the finished note as <strong>Markdown with Obsidian frontmatter</strong> (YAML at the top with campaign, session number, date, players). Paste it into your vault or save the file. You can export the full transcript alongside the summary if you want the raw record too.</p>
 
         <h2 id="where-it-lives">Where everything lives</h2>
-        <p>Sessions are <a href="worlds.html#files-are-truth">plain files inside your world folder</a> — each one a <code>Sessions/&lt;NNN&gt;/</code> directory holding the audio, the transcript and the summary, right beside your wiki pages. A local index speeds up search, but the files are the truth, and nothing is uploaded.</p>
+        <p>Sessions are <a href="worlds.html#files-are-truth">plain files inside your world folder</a> — each one a <code>Sessions/&lt;NNN&gt;/</code> directory holding the audio, the transcript and the summary, right beside your wiki pages. Your preparation is a readable <code>prep.md</code> in the same directory, and the review keeps its record next to it, so both survive closing the app, moving the folder, or deleting the local index. A local index speeds up search, but the files are the truth, and nothing is uploaded.</p>
       </div>
 
       <div class="pager">

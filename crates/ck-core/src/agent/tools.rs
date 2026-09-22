@@ -107,6 +107,11 @@ pub fn read_tools() -> Vec<ToolDef> {
             schema: obj(json!({ "session": { "type": "integer" } }), &["session"]),
         },
         ToolDef {
+            name: "read_prep".into(),
+            description: "Read what the GM prepared for one session: the opening situation, possible scenes, reminders, any linked thread/Codex pages, and — after play — how each card turned out (happened, changed, unused). This is intent, not record: a scene here may never have happened. Read it when preparing a session, when asked what was planned or what went unused, or before suggesting what to carry forward.".into(),
+            schema: obj(json!({ "session": { "type": "integer" } }), &["session"]),
+        },
+        ToolDef {
             name: "search_summaries".into(),
             description: "Full-text search across the curated session summaries — the cleanest record of what happened in play. Search here before the raw transcripts. Returns matching sessions with a snippet.".into(),
             schema: obj(json!({ "query": { "type": "string" } }), &["query"]),
@@ -1463,7 +1468,13 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
                     } else {
                         format!(" ({date})")
                     };
-                    format!("- Session {n}{title}{date}")
+                    // Marked so the model knows read_prep is worth a call here,
+                    // without spending a call per session to find out.
+                    let prep = match session_dir(ctx, *n) {
+                        Ok(dir) if has_prep(&dir) => " · has prep",
+                        _ => "",
+                    };
+                    format!("- Session {n}{title}{date}{prep}")
                 })
                 .collect::<Vec<_>>()
                 .join("\n"))
@@ -1473,6 +1484,12 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             let dir = session_dir(ctx, n)?;
             let path = session_files::summary_md_path(&dir);
             std::fs::read_to_string(&path).map_err(|_| format!("Session {n} has no summary yet."))
+        }
+        "read_prep" => {
+            let n = int_arg("session").ok_or("missing 'session'")?;
+            let dir = session_dir(ctx, n)?;
+            let prep = crate::session_prep::read(&dir).map_err(app_err)?;
+            Ok(render_prep(n, &prep))
         }
         "search_summaries" => {
             let query = str_arg("query").to_lowercase();
@@ -2084,6 +2101,96 @@ fn snippet_around(text: &str, at: usize, window: usize) -> String {
         .join(" ")
 }
 
+/// Whether a session has preparation worth reading — present, parseable, and
+/// not empty. A malformed `prep.md` is not advertised, because the tool would
+/// only fail on it.
+fn has_prep(dir: &std::path::Path) -> bool {
+    crate::session_prep::read(dir)
+        .map(|p| !p.cards.is_empty() || !p.notes.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// Preparation as prose. The stored shape is YAML meant for the Prepare screen;
+/// handing the model raw frontmatter would spend context on ids and revisions it
+/// cannot use. Outcomes are shown only once play has marked them, so unplayed
+/// prep doesn't read as if everything were still open.
+fn render_prep(number: i64, prep: &crate::session_prep::PrepResponse) -> String {
+    use crate::session_prep::{PrepOutcome, PrepSection};
+    let mut out = format!(
+        "Session {number} preparation
+"
+    );
+    if prep.cards.is_empty() && prep.notes.trim().is_empty() {
+        return format!("Session {number} has no preparation.");
+    }
+    for (section, label) in [
+        (PrepSection::Opening, "Opening situation"),
+        (PrepSection::Scene, "Possible scenes"),
+        (PrepSection::Reminder, "Keep in mind"),
+    ] {
+        let cards: Vec<_> = prep.cards.iter().filter(|c| c.section == section).collect();
+        if cards.is_empty() {
+            continue;
+        }
+        out.push_str(&format!(
+            "
+## {label}
+"
+        ));
+        for card in cards {
+            let outcome = match card.outcome {
+                PrepOutcome::Unmarked => String::new(),
+                PrepOutcome::Happened => " [happened]".into(),
+                PrepOutcome::Changed => " [changed in play]".into(),
+                PrepOutcome::Unused => " [unused]".into(),
+            };
+            let title = card
+                .title
+                .as_deref()
+                .filter(|t| !t.trim().is_empty())
+                .map(|t| format!("{t}: "))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "- {title}{}{outcome}
+",
+                card.text.trim()
+            ));
+            if !card.outcome_note.trim().is_empty() {
+                out.push_str(&format!(
+                    "  note: {}
+",
+                    card.outcome_note.trim()
+                ));
+            }
+            if !card.links.is_empty() {
+                out.push_str(&format!(
+                    "  linked pages: {}
+",
+                    card.links.join(", ")
+                ));
+            }
+        }
+    }
+    if !prep.selected_threads.is_empty() {
+        out.push_str(&format!(
+            "
+Threads in focus: {}
+",
+            prep.selected_threads.join(", ")
+        ));
+    }
+    if !prep.notes.trim().is_empty() {
+        out.push_str(&format!(
+            "
+## Notes
+{}
+",
+            prep.notes.trim()
+        ));
+    }
+    out
+}
+
 fn session_dir(ctx: &ToolCtx<'_>, number: i64) -> Result<std::path::PathBuf, String> {
     let sessions = ctx.world_root.join("Sessions");
     let rd = std::fs::read_dir(&sessions).map_err(|_| "No sessions.".to_string())?;
@@ -2152,6 +2259,78 @@ mod tests {
 
     fn call(ctx: &ToolCtx<'_>, name: &str, args: Value) -> Result<String, String> {
         dispatch(ctx, name, &args)
+    }
+
+    /// Prep is written as the app writes it, through `session_prep`, so the test
+    /// breaks if the on-disk shape changes underneath the tool.
+    fn write_prep(sess: &std::path::Path) {
+        use crate::session_prep::{PrepCard, PrepOutcome, PrepSection, PutPrepRequest};
+        let mut opening = PrepCard::new(PrepSection::Opening, "The gates of Thornhold are shut.");
+        opening.outcome = PrepOutcome::Happened;
+        let mut scene = PrepCard::new(PrepSection::Scene, "A bargain with the Baron.");
+        scene.outcome = PrepOutcome::Unused;
+        scene.links = vec!["NPCs/Baron Aldric.md".into()];
+        crate::session_prep::put(
+            sess,
+            PutPrepRequest {
+                base_revision: "absent".into(),
+                cards: vec![opening, scene],
+                selected_threads: vec![],
+                notes: "start at dusk".into(),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn read_prep_reports_intent_and_outcomes_not_raw_yaml() {
+        let (state, root, cfg) = fixture_world("prep");
+        write_prep(&root.join("Sessions/001"));
+        let ctx = ToolCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+        };
+
+        let out = call(&ctx, "read_prep", json!({ "session": 1 })).unwrap();
+        assert!(out.contains("## Opening situation"));
+        assert!(out.contains("The gates of Thornhold are shut. [happened]"));
+        assert!(out.contains("## Possible scenes"));
+        assert!(out.contains("A bargain with the Baron. [unused]"));
+        assert!(out.contains("linked pages: NPCs/Baron Aldric.md"));
+        assert!(out.contains("start at dusk"));
+        // Storage detail the model cannot act on must not reach it.
+        assert!(!out.contains("ck_prep_version"));
+        assert!(!out.contains("revision"));
+        assert!(!out.contains("outcome_note"));
+
+        // The marker tells it which sessions are worth a read_prep call.
+        let listed = call(&ctx, "list_sessions", json!({})).unwrap();
+        assert!(listed.contains("Session 1"));
+        assert!(listed.contains("· has prep"));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn read_prep_is_explicit_when_a_session_was_never_prepared() {
+        let (state, root, cfg) = fixture_world("noprep");
+        let ctx = ToolCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+        };
+
+        let out = call(&ctx, "read_prep", json!({ "session": 1 })).unwrap();
+        assert_eq!(out, "Session 1 has no preparation.");
+        // An unprepared session is not advertised as having prep.
+        assert!(!call(&ctx, "list_sessions", json!({}))
+            .unwrap()
+            .contains("has prep"));
+        // An unknown session is an error, not an empty prep.
+        assert!(call(&ctx, "read_prep", json!({ "session": 99 })).is_err());
+
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

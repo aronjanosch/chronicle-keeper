@@ -8,6 +8,7 @@ debug-exports/
 # Local editor / tooling state
 .claude/
 .cursor/
+.opencode/
 
 # Stray frontend tooling (frontend is vanilla JS, no build step)
 node_modules/

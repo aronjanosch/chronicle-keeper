@@ -239,6 +239,18 @@ mod tests {
     }
 
     #[test]
+    fn the_folded_spelling_is_the_lowest_session_not_the_directory_order() {
+        // Creation order must not decide the campaign spelling: session 1 owns
+        // it even when session 2 was written first.
+        let (conn, tmp) = world("order");
+        add_session(&conn, 2, &["kampf"]);
+        add_session(&conn, 1, &["Kampf"]);
+        let counts = tag_counts(&conn, "c1").unwrap();
+        assert_eq!(counts, vec![("Kampf".into(), 2)]);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
     fn merge_into_folds_to_existing_spelling() {
         let mut v = HashMap::new();
         v.insert("kampf".into(), "Kampf".into());

@@ -52,6 +52,20 @@ pub(crate) fn session_dirs(world_root: &Path) -> Vec<PathBuf> {
             }
         }
     }
+    // `read_dir` order is filesystem-dependent; sorting makes every caller
+    // deterministic. Sort by session number rather than by name: padding is
+    // three digits, so a plain path sort would put session 1000 before 999.
+    // Non-numeric directories keep a stable place at the end. "First seen" for
+    // the tag vocabulary means the lowest session, and this is what defines it.
+    out.sort_by(|a, b| {
+        let num = |p: &Path| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.parse::<i64>().ok())
+                .unwrap_or(i64::MAX)
+        };
+        num(a).cmp(&num(b)).then_with(|| a.cmp(b))
+    });
     out
 }
 
@@ -585,4 +599,26 @@ pub fn delete_session(conn: &Connection, session_id: &str) -> AppResult<()> {
     crate::paths::move_to_trash(&loc.dir)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("move session to trash: {e}")))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_dirs_sort_numerically_past_the_padding_width() {
+        let root = std::env::temp_dir().join(format!("ck-sessdirs-{}", std::process::id()));
+        std::fs::remove_dir_all(&root).ok();
+        // Created out of order, and 1000 exceeds the three-digit padding, so a
+        // plain name sort would place it before 999.
+        for name in ["002", "1000", "999", "001", ".hidden", "notes"] {
+            std::fs::create_dir_all(root.join("Sessions").join(name)).unwrap();
+        }
+        let names: Vec<String> = session_dirs(&root)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["001", "002", "999", "1000", "notes"]);
+        std::fs::remove_dir_all(&root).ok();
+    }
 }

@@ -87,6 +87,15 @@ pub async fn suggest(
                 return;
             }
         };
+        // The SSE body is dropped the moment the client disconnects; stop the
+        // run then instead of at the next progress frame.
+        let disconnect = {
+            let (tx, cancel) = (tx.clone(), cancel.clone());
+            tokio::spawn(async move {
+                tx.closed().await;
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            })
+        };
         let send = |val: Value| {
             if tx.send(frame(&val)).is_err() {
                 cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -98,6 +107,7 @@ pub async fn suggest(
                 SuggestProgress::Building => send(json!({ "stage": "building" })),
             })
             .await;
+        disconnect.abort();
         state.review_job_end(&job);
         match result {
             Ok(suggestions) => send(json!({ "stage": "done", "suggestions": suggestions })),

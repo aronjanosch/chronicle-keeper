@@ -423,10 +423,10 @@ pub async fn suggest_streamed<F: FnMut(SuggestProgress) + Send>(
 
     cancelled(cancel)?;
     emit(SuggestProgress::Building);
-    let raw = llm::chat(&resolved.chat_req(&prompt), true)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("Prep suggestions failed: {}", e.0)))?;
+    let raw = llm::chat_cancellable(&resolved.chat_req(&prompt), true, cancel).await;
     cancelled(cancel)?;
+    let raw =
+        raw.map_err(|e| AppError::Internal(anyhow::anyhow!("Prep suggestions failed: {}", e.0)))?;
     parse_suggestions(&raw, &cited)
 }
 

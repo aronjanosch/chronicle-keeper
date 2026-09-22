@@ -444,6 +444,27 @@ pub struct ChatRequest<'a> {
     pub retries: u32,
 }
 
+/// `chat` that gives up as soon as `cancel` is set. Dropping the in-flight
+/// future aborts the HTTP request and any rate-limit wait with it.
+pub async fn chat_cancellable(
+    req: &ChatRequest<'_>,
+    json_mode: bool,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<String, LlmError> {
+    let call = chat(req, json_mode);
+    tokio::pin!(call);
+    loop {
+        tokio::select! {
+            r = &mut call => return r,
+            _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err(LlmError("cancelled".into()));
+                }
+            }
+        }
+    }
+}
+
 /// One chat completion. Returns the assistant message text.
 pub async fn chat(req: &ChatRequest<'_>, json_mode: bool) -> Result<String, LlmError> {
     let ChatRequest {

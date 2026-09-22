@@ -190,6 +190,15 @@ pub async fn generate(
                 return;
             }
         };
+        // The SSE body is dropped the moment the client disconnects; stop the
+        // run then instead of at the next progress frame.
+        let disconnect = {
+            let (tx, cancel) = (tx.clone(), cancel.clone());
+            tokio::spawn(async move {
+                tx.closed().await;
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            })
+        };
         // A failed send means the client is gone: stop the run rather than
         // finish a review nobody is waiting for.
         let send = |val: Value| {
@@ -204,6 +213,7 @@ pub async fn generate(
                 GenProgress::Building => send(json!({ "stage": "building" })),
             })
             .await;
+        disconnect.abort();
         state.review_job_end(&session_id);
         match result {
             Ok(run) => {

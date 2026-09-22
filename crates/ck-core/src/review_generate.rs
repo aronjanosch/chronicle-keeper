@@ -858,9 +858,10 @@ pub async fn generate_streamed<F: FnMut(GenProgress) + Send>(
     );
 
     cancelled(cancel)?;
-    let raw = llm::chat(&resolved.chat_req(&stage1), true)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("Review generation failed: {}", e.0)))?;
+    let raw = llm::chat_cancellable(&resolved.chat_req(&stage1), true, cancel).await;
+    cancelled(cancel)?;
+    let raw =
+        raw.map_err(|e| AppError::Internal(anyhow::anyhow!("Review generation failed: {}", e.0)))?;
     let candidates = match parse_candidates(&raw, &pages, req.include_possibilities) {
         Ok(c) => c,
         Err(first) => {
@@ -868,11 +869,11 @@ pub async fn generate_streamed<F: FnMut(GenProgress) + Send>(
             // apparently successful empty review.
             cancelled(cancel)?;
             let repair = repair_prompt(&stage1, &raw, &first.to_string());
-            let retry = llm::chat(&resolved.chat_req(&repair), true)
-                .await
-                .map_err(|e| {
-                    AppError::Internal(anyhow::anyhow!("Review generation failed: {}", e.0))
-                })?;
+            let retry = llm::chat_cancellable(&resolved.chat_req(&repair), true, cancel).await;
+            cancelled(cancel)?;
+            let retry = retry.map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("Review generation failed: {}", e.0))
+            })?;
             parse_candidates(&retry, &pages, req.include_possibilities)?
         }
     };
@@ -896,7 +897,9 @@ pub async fn generate_streamed<F: FnMut(GenProgress) + Send>(
     } else {
         cancelled(cancel)?;
         let stage2 = build_grounding_prompt(&factual, &retrieved_ordered, &turns);
-        match llm::chat(&resolved.chat_req(&stage2), true).await {
+        let graded = llm::chat_cancellable(&resolved.chat_req(&stage2), true, cancel).await;
+        cancelled(cancel)?;
+        match graded {
             Ok(raw) => parse_verdicts(&raw),
             Err(e) => {
                 // Grounding is what makes a development trustworthy. Without it

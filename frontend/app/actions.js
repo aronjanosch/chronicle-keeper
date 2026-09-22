@@ -895,10 +895,14 @@ function reviewBase() {
   return { run_id: r.run.run_id, base_revision: r.revision };
 }
 
+let reviewGenAbort = null;
+
 export async function generateReview({ includePossibilities = false, developmentIds = [] } = {}) {
   const sid = store.session?.session_id;
   if (!sid) return;
   const base = reviewBase();
+  const controller = new AbortController();
+  reviewGenAbort = controller;
   setState({ reviewStreaming: { stage: 'reading' } });
   try {
     let failure = null;
@@ -921,18 +925,22 @@ export async function generateReview({ includePossibilities = false, development
           failure = ev.message || 'Generating the review failed.';
           break;
       }
-    });
+    }, { signal: controller.signal });
     if (failure) throw new Error(failure);
     await loadReviewRun(sid);
   } catch (e) {
     setState({ reviewStreaming: null });
-    setOp(e.message, 'err');
+    if (e.name !== 'AbortError') setOp(e.message, 'err');
+  } finally {
+    if (reviewGenAbort === controller) reviewGenAbort = null;
   }
 }
 
 export async function cancelReviewGeneration() {
   const sid = store.session?.session_id;
   if (!sid) return;
+  reviewGenAbort?.abort();
+  setState({ reviewStreaming: null });
   await reviewApi.cancelReviewGeneration(sid).catch(() => {});
   setOp('Generation cancelled — the previous review is unchanged.', 'done');
 }

@@ -124,6 +124,32 @@ jobs:
           prerelease: true
           args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
 
+      # linuxdeploy (Tauri's AppImage bundler) ships AppRun.wrapped as 0770. That
+      # runs from the user's own FUSE mount, but fails with "Permission denied"
+      # whenever the image is mounted as another user (firejail, AppImageHub CI).
+      # Repack with world r-x and replace the asset tauri-action uploaded.
+      - name: Fix AppImage permissions
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          IMG="$(realpath target/release/bundle/appimage/*.AppImage)"
+          WORK="$(mktemp -d)"
+          curl -fsSL -o "$WORK/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$WORK/appimagetool" "$IMG"
+          (cd "$WORK" && "$IMG" --appimage-extract >/dev/null)
+          chmod -R a+rX "$WORK/squashfs-root"
+          ARCH=x86_64 "$WORK/appimagetool" --appimage-extract-and-run "$WORK/squashfs-root" "$IMG"
+          rm -rf "$WORK/squashfs-root"
+          (cd "$WORK" && "$IMG" --appimage-extract AppRun.wrapped >/dev/null)
+          [ "$(stat -c %a "$WORK/squashfs-root/AppRun.wrapped" | cut -c3)" -ge 5 ]
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            gh release upload "$GITHUB_REF_NAME" "$IMG" --clobber
+          fi
+
       # Always keep the installers as run artifacts — the only output on manual
       # dispatch, and a convenient mirror of the Release on tag builds.
       - name: Upload installers

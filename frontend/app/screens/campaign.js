@@ -157,6 +157,8 @@ export function CampaignScreen({ store }) {
           { label: 'Edit world', icon: 'edit', onClick: () => openModal('campaign', { edit: c }) },
           { label: 'Reveal folder', icon: 'folder', hidden: !(window.__TAURI__ && c.vault_path), onClick: () => revealPath(c.vault_path) },
           { label: 'Export world…', icon: 'download', hidden: !c.vault_path, onClick: () => openModal('exportWorld') },
+          { label: 'Export world pack…', icon: 'download', hidden: !c.vault_path, onClick: () => openModal('exportPack') },
+          { label: 'Import world pack…', icon: 'upload', hidden: !c.vault_path, onClick: () => openModal('importPack') },
           { label: 'Back up now', icon: 'shield', hidden: !c.vault_path, onClick: backupWorld },
           { label: 'Delete world', icon: 'trash', danger: true, onClick: () => {
             const n = sessions.length;

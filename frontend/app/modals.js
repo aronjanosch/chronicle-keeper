@@ -5,6 +5,7 @@ import { Icon, Btn, Field, Input, Textarea, Select, Spinner } from './ui.js';
 import { CommandPalette } from './screens/palette.js';
 import { kindForFolder } from './folderKinds.js';
 import { loadPrep, prepOps } from './prep.js';
+import { ExportPackModal, ImportPackModal } from './packs.js';
 import {
   createCampaign, updateCampaign, saveSessionMetadata, loadSession,
   runExport,
@@ -43,7 +44,7 @@ function chunkNotes(text, max = 12000) {
   return chunks.length ? chunks : [text];
 }
 
-function ModalShell({ title, children, footer, wide }) {
+export function ModalShell({ title, children, footer, wide }) {
   return html`<div class="ck-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) closeModal(); }}>
     <div class="ck" style=${{ width: wide ? 720 : 480, maxWidth: '100%', height: 'auto', maxHeight: '88vh', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 12, boxShadow: 'var(--shadow-raised)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style=${{ padding: '16px 20px', borderBottom: '1px solid var(--rule-soft)', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1245,6 +1246,8 @@ export function ModalHost({ modal }) {
     case 'quickCapture': return html`<${QuickCaptureModal} />`;
     case 'newEvent': return html`<${NewEventModal} ...${modal.props} />`;
     case 'exportWorld': return html`<${ExportWorldModal} />`;
+    case 'exportPack': return html`<${ExportPackModal} />`;
+    case 'importPack': return html`<${ImportPackModal} />`;
     default: return null;
   }
 }

@@ -10,6 +10,7 @@ import { html, useState, useEffect, useRef, useMemo, useCallback } from '../../v
 import { navigate, apiFetch, apiBlob, store, setState, splitPageRef, fmtDateTime } from '../core.js';
 import { loadAtlasMaps, createAtlasMap, saveAtlasMap, replaceAtlasMapArt, deleteAtlasMap, loadAtlasMapHistory, restoreAtlasMapVersion, pickMapImage, loadVaultTree, loadVaultLinks, createVaultPage, openCampaign } from '../actions.js';
 import { Shell, Sidebar, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
+import { MeasureLayer, MeasureReadout, UNITS } from './atlasMeasure.js';
 import { Icon, Btn, Empty, Spinner, PageBody, Input, Select, splitDoc, parseProps, openContextMenu } from '../ui.js';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -83,7 +84,7 @@ function PinMarker({ pin, invZoom, scale = 1, showLabel = true, selected, hasMap
   const k = PIN_KINDS[pin.kind] || PIN_KINDS.npc;
   const s = SEAL[k.tone] || SEAL.burgundy;
   return html`<div style=${{ position: 'absolute', left: `${pin.x * 100}%`, top: `${pin.y * 100}%`, zIndex: selected ? 40 : (hasMap ? 30 : 20) }}>
-    <div onMouseEnter=${onHover} onMouseLeave=${onLeave} onClick=${onClick} onDblClick=${onDoubleClick} onMouseDown=${onMouseDown} onContextMenu=${onMenu}
+    <div class="ck-pin" onMouseEnter=${onHover} onMouseLeave=${onLeave} onClick=${onClick} onDblClick=${onDoubleClick} onMouseDown=${onMouseDown} onContextMenu=${onMenu}
       style=${{
         position: 'absolute', left: 0, bottom: 0,
         transform: `translateX(-50%) scale(${invZoom * scale})`, transformOrigin: 'bottom center',
@@ -466,20 +467,28 @@ function MapSettings({ map, busy, onSave, onDelete, onCancel }) {
   const [confirmDel, setConfirmDel] = useState(false);
   const [err, setErr] = useState(null);
   const [versions, setVersions] = useState([]);
+  const [scaleW, setScaleW] = useState(map.scale ? String(map.scale.width) : '');
+  const [scaleU, setScaleU] = useState(map.scale?.unit || 'km');
+  const scaleVal = () => {
+    const w = parseFloat(scaleW);
+    if (!scaleW.trim()) return null;
+    return w > 0 ? { width: w, unit: scaleU } : undefined;
+  };
   useEffect(() => { loadAtlasMapHistory(map.id).then(setVersions).catch(() => {}); }, [map.id]);
   const restore = async (ts) => {
     setErr(null);
     try { await restoreAtlasMapVersion(map.id, ts); onCancel(); }
     catch (e) { setErr(e.message); }
   };
-  const dirty = name.trim() !== map.name || imagePath.trim();
+  const dirty = name.trim() !== map.name || imagePath.trim()
+    || JSON.stringify(scaleVal() ?? null) !== JSON.stringify(map.scale || null);
   const pick = async () => {
     const p = await pickMapImage();
     if (p) setImagePath(p);
   };
   const submit = async () => {
     setErr(null);
-    try { await onSave(name.trim(), imagePath.trim()); }
+    try { await onSave(name.trim(), imagePath.trim(), scaleVal()); }
     catch (e) { setErr(e.message); }
   };
   return html`<div style=${{ width: 420, background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', borderRadius: 10, boxShadow: 'var(--shadow-raised)', overflow: 'hidden' }}>
@@ -501,6 +510,20 @@ function MapSettings({ map, busy, onSave, onDelete, onCancel }) {
         </div>
         <div style=${{ fontSize: 11.5, color: 'var(--ink-faint)', marginTop: 5, lineHeight: 1.4, fontStyle: 'italic', fontFamily: 'var(--font-display)' }}>
           Pins keep their relative spots — best for a redrawn version of the same map.
+        </div>
+      </div>
+      <div>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 5 }}>Map scale</div>
+        <div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style=${{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Full width =</span>
+          <input type="number" min="0" step="any" value=${scaleW} placeholder="—" onInput=${(e) => setScaleW(e.target.value)}
+            style=${{ width: 90, fontSize: 13, padding: '4px 7px', border: '1px solid var(--rule)', borderRadius: 4 }} />
+          <select value=${scaleU} onChange=${(e) => setScaleU(e.target.value)} style=${{ fontSize: 13, padding: '4px 6px', border: '1px solid var(--rule)', borderRadius: 4 }}>
+            ${UNITS.map((u) => html`<option key=${u} value=${u}>${u}</option>`)}
+          </select>
+        </div>
+        <div style=${{ fontSize: 11.5, color: 'var(--ink-faint)', marginTop: 5, lineHeight: 1.4, fontStyle: 'italic', fontFamily: 'var(--font-display)' }}>
+          Powers the ruler. Or measure a known distance with the ruler and use "Set scale".
         </div>
       </div>
       ${versions.length > 0 && html`<div>
@@ -561,6 +584,10 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const [showLabels, setShowLabelsRaw] = useState(() => readPref('ck_atlas_labels', '1') !== '0');
   const [busy, setBusy] = useState(false);
   const [pinPos, setPinPos] = useState(null);   // { id, x, y } live override while dragging a pin
+  const [measure, setMeasure] = useState(null);   // { pts: [{x,y}] } while the ruler is open
+  const [measureHover, setMeasureHover] = useState(null);
+  const layerRef = useRef(null);
+  const wasDrag = useRef(false); // a pan drag ends in a click we must not read as a ruler point
 
   const stageRef = useRef(null);
   const drag = useRef(null);
@@ -664,7 +691,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
-      setPlacing(null); setPaletteOpen(false); setGhost(null); setNewEntry(null); setMapForm(null); setSettings(false); setViewOpts(false);
+      setPlacing(null); setPaletteOpen(false); setGhost(null); setNewEntry(null); setMapForm(null); setSettings(false); setViewOpts(false); setMeasure(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -702,6 +729,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         }
         return;
       }
+      wasDrag.current = !!(drag.current && drag.current.moved);
       drag.current = null;
     };
     window.addEventListener('mousemove', onMove);
@@ -733,7 +761,23 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     drag.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty, moved: false };
   };
 
-  const onStageMove = (e) => { if (placing) { const r = stageRef.current.getBoundingClientRect(); setGhost({ x: e.clientX - r.left, y: e.clientY - r.top }); } };
+  const onStageMove = (e) => {
+    if (placing) { const r = stageRef.current.getBoundingClientRect(); setGhost({ x: e.clientX - r.left, y: e.clientY - r.top }); }
+    else if (measure && view) setMeasureHover(screenToNorm(e.clientX, e.clientY));
+  };
+
+  const onStageClick = (e) => {
+    if (!measure || !layerRef.current?.contains(e.target) || e.target.closest('.ck-pin')) return;
+    if (wasDrag.current) { wasDrag.current = false; return; }
+    setMeasure((m) => ({ pts: [...m.pts, screenToNorm(e.clientX, e.clientY)] }));
+  };
+
+  const toggleMeasure = () => {
+    setMeasure((m) => (m ? null : { pts: [] })); setMeasureHover(null);
+    setPlacing(null); setGhost(null); setPaletteOpen(false);
+  };
+
+  useEffect(() => { setMeasure(null); setMeasureHover(null); }, [mapId]);
 
   const centerOn = useCallback((px, py, zMin) => {
     setView((v) => {
@@ -857,11 +901,17 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     }
   };
 
-  const saveSettings = async (name, imagePath) => {
+  const saveSettings = async (name, imagePath, scale) => {
     setBusy(true);
     try {
       if (imagePath) await replaceAtlasMapArt(map.id, imagePath);
-      if (name && name !== map.name) await saveAtlasMap({ ...map, name });
+      const renamed = name && name !== map.name;
+      const rescaled = scale !== undefined && JSON.stringify(scale) !== JSON.stringify(map.scale || null);
+      if (renamed || rescaled) {
+        const next = { ...map, ...(renamed ? { name } : {}) };
+        if (rescaled) { if (scale) next.scale = scale; else delete next.scale; }
+        await saveAtlasMap(next);
+      }
       setSettings(false);
     } finally {
       setBusy(false);
@@ -892,18 +942,20 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const summaryOf = (path) => (store.vaultPages || []).find((p) => p.path === path)?.summary || '';
 
   return html`<div style=${{ position: 'absolute', inset: 0, display: 'flex', minHeight: 0 }}>
-    <div ref=${stageRef} onMouseDown=${onDown} onMouseMove=${onStageMove}
+    <div ref=${stageRef} onMouseDown=${onDown} onMouseMove=${onStageMove} onClick=${onStageClick}
       style=${{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden',
         background: 'radial-gradient(circle at 50% 40%, #ECE3CB, #DCCFB0)',
-        cursor: placing ? 'crosshair' : 'grab' }}>
+        cursor: placing || measure ? 'crosshair' : 'grab' }}>
 
       ${!img && html`<div style=${{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><${Spinner} size=${22} /></div>`}
 
-      ${img && view && html`<div style=${{ position: 'absolute', top: 0, left: 0, width: W, height: H,
+      ${img && view && html`<div ref=${layerRef} style=${{ position: 'absolute', top: 0, left: 0, width: W, height: H,
         transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.zoom})`, transformOrigin: '0 0',
         transition: anim ? 'transform .55s cubic-bezier(.4,0,.2,1)' : 'none' }}>
         <img src=${img.url} width=${W} height=${H} draggable=${false}
           style=${{ display: 'block', userSelect: 'none', boxShadow: '0 10px 40px rgba(60,40,10,.28)' }} />
+
+        ${measure && html`<${MeasureLayer} pts=${measure.pts} hover=${measureHover} W=${W} H=${H} zoom=${view.zoom} active />`}
 
         ${pins.map((pin) => html`<${PinMarker} key=${pin.id} pin=${pin} invZoom=${invZoom}
           scale=${pinScale} showLabel=${showLabels}
@@ -1017,10 +1069,15 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         <button onClick=${() => { setPlacing(null); setGhost(null); }} style=${{ color: '#F7E8E2', fontSize: 12, opacity: 0.85, fontFamily: 'var(--font-mono)', background: 'none', border: 'none', cursor: 'pointer' }}>Esc to cancel</button>
       </div>`}
 
+      ${measure && html`<${MeasureReadout} pts=${measure.pts} W=${W} H=${H} scale=${map.scale}
+        onCalibrate=${(scale) => persist({ ...map, scale })}
+        onUndo=${() => setMeasure((m) => ({ pts: m.pts.slice(0, -1) }))}
+        onClear=${() => setMeasure({ pts: [] })} onClose=${() => setMeasure(null)} />`}
+
       ${''/* zoom controls — pinned LEFT so the panel never shoves them */}
       <div style=${{ position: 'absolute', bottom: 16, left: 14, zIndex: 88, display: 'flex', flexDirection: 'column', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 8, boxShadow: 'var(--shadow-card)', overflow: 'hidden' }}>
-        ${[['plus', () => zoomBy(1.4), ''], ['compass', () => { setAnim(true); if (img) setView(fitView(stage, img.w, img.h)); }, 'Fit map'], ['x', () => zoomBy(1 / 1.4), '']].map((b, i) => html`
-          <button key=${i} onClick=${b[1]} title=${b[2]} style=${{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-soft)', borderBottom: i < 2 ? '1px solid var(--rule-soft)' : 'none', background: 'transparent', borderLeft: 'none', borderRight: 'none', borderTop: 'none', cursor: 'pointer' }}>
+        ${[['plus', () => zoomBy(1.4), ''], ['compass', () => { setAnim(true); if (img) setView(fitView(stage, img.w, img.h)); }, 'Fit map'], ['x', () => zoomBy(1 / 1.4), ''], ['ruler', toggleMeasure, 'Measure distance']].map((b, i) => html`
+          <button key=${i} onClick=${b[1]} title=${b[2]} style=${{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', color: i === 3 && measure ? 'var(--burgundy)' : 'var(--ink-soft)', borderBottom: i < 3 ? '1px solid var(--rule-soft)' : 'none', background: i === 3 && measure ? 'var(--paper-deep)' : 'transparent', borderLeft: 'none', borderRight: 'none', borderTop: 'none', cursor: 'pointer' }}>
             <${Icon} name=${b[0]} size=${i === 1 ? 15 : 14} />
           </button>`)}
       </div>

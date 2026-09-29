@@ -33,6 +33,14 @@ pub struct Pin {
     pub label: Option<String>,
 }
 
+/// Real-world size of a map: its full image width spans `width` × `unit`
+/// (height follows from the image's aspect ratio).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MapScale {
+    pub width: f64,
+    pub unit: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MapDoc {
     pub id: String,
@@ -44,6 +52,8 @@ pub struct MapDoc {
     /// This map's own codex entry (Codex-relative `.md` path).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<MapScale>,
     #[serde(default)]
     pub pins: Vec<Pin>,
 }
@@ -136,6 +146,13 @@ pub fn write_map(world_root: &Path, doc: &MapDoc) -> AppResult<()> {
 /// Save a map, first snapshotting the file it replaces into map history.
 pub fn write_map_as(world_root: &Path, doc: &MapDoc, origin: &str) -> AppResult<()> {
     let path = map_path(world_root, &doc.id)?;
+    if let Some(s) = &doc.scale {
+        if !(s.width.is_finite() && s.width > 0.0) || s.unit.trim().is_empty() {
+            return Err(AppError::BadRequest(
+                "Map scale needs a positive width and a unit".into(),
+            ));
+        }
+    }
     std::fs::create_dir_all(path.parent().unwrap()).map_err(anyhow::Error::from)?;
     if let Ok(before) = std::fs::read_to_string(&path) {
         snapshot(world_root, &doc.id, &before, origin);
@@ -295,6 +312,7 @@ pub fn create_map(
         image,
         parent,
         page,
+        scale: None,
         pins: Vec::new(),
     };
     write_map(world_root, &doc)?;
@@ -628,6 +646,30 @@ mod tests {
     }
 
     #[test]
+    fn scale_roundtrips_and_rejects_nonsense() {
+        let dir = temp_world("scale");
+        let src = fake_png(&dir, "a.png");
+        let doc = create_map(&dir, "Vale", &src, None, None).unwrap();
+        let mut m = read_map(&dir, &doc.id).unwrap();
+        m.scale = Some(MapScale {
+            width: 240.0,
+            unit: "mi".into(),
+        });
+        write_map(&dir, &m).unwrap();
+        let back = read_map(&dir, &doc.id).unwrap().scale.unwrap();
+        assert_eq!((back.width, back.unit.as_str()), (240.0, "mi"));
+
+        for (w, u) in [(0.0, "mi"), (-3.0, "mi"), (f64::NAN, "mi"), (10.0, "  ")] {
+            m.scale = Some(MapScale {
+                width: w,
+                unit: u.into(),
+            });
+            assert!(write_map(&dir, &m).is_err());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn rejects_bad_input() {
         let dir = temp_world("bad");
         assert!(read_map(&dir, "../escape").is_err());
@@ -642,6 +684,7 @@ mod tests {
             image: "../../etc/passwd".into(),
             parent: None,
             page: None,
+            scale: None,
             pins: vec![],
         };
         assert!(image_path(&dir, &doc).is_err());

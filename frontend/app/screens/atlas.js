@@ -8,11 +8,13 @@
 // with the art copied alongside; pages stay files-as-truth.
 import { html, useState, useEffect, useRef, useMemo, useCallback } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, apiFetch, apiBlob, store, setState, splitPageRef, fmtDateTime } from '../core.js';
-import { loadAtlasMaps, createAtlasMap, saveAtlasMap, replaceAtlasMapArt, deleteAtlasMap, loadAtlasMapHistory, restoreAtlasMapVersion, pickMapImage, loadVaultTree, loadVaultLinks, createVaultPage, openCampaign } from '../actions.js';
+import { loadAtlasMaps, createAtlasMap, saveAtlasMap, replaceAtlasMapArt, deleteAtlasMap, loadAtlasMapHistory, restoreAtlasMapVersion, pickMapImage, loadVaultTree, loadVaultLinks, createVaultPage, saveVaultPage, openCampaign } from '../actions.js';
 import { Shell, Sidebar, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
 import { MeasureLayer, MeasureReadout, UNITS } from './atlasMeasure.js';
 import { useDrawTools, DrawLayer, DrawPalette, TextEditor } from './atlasDraw.js';
 import { createHistory } from './atlasHistory.js';
+import { RegionLayer, REGION_COLORS } from './atlasRegions.js';
+import { setPartOf } from './atlasGeom.js';
 import { Icon, Btn, Empty, Spinner, PageBody, Input, Select, splitDoc, parseProps, openContextMenu } from '../ui.js';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -172,7 +174,7 @@ function pageHeadings(md) {
   return out;
 }
 
-function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canChart, onEnterMap, onChartMap, onRemovePin, onClose }) {
+function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canChart, onEnterMap, onChartMap, onRemovePin, removeLabel = 'Remove pin', onClose }) {
   const bodyRef = useRef(null);
   const [page, setPage] = useState(null);
   const [err, setErr] = useState(null);
@@ -308,8 +310,8 @@ function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canCha
 
     <div style=${{ borderTop: '1px solid var(--rule-soft)', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12, fontSize: 11.5, color: 'var(--ink-muted)' }}>
       <span style=${{ display: 'flex', alignItems: 'center', gap: 5 }}><${Icon} name="backlink" size=${12} /> ${backlinks} backlink${backlinks === 1 ? '' : 's'}</span>
-      ${onRemovePin && html`<button onClick=${onRemovePin} title="Remove this pin (the page stays)" style=${{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--ink-faint)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11.5 }}>
-        <${Icon} name="trash" size=${11} /> Remove pin
+      ${onRemovePin && html`<button onClick=${onRemovePin} title=${`${removeLabel} (the page stays)`} style=${{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--ink-faint)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11.5 }}>
+        <${Icon} name="trash" size=${11} /> ${removeLabel}
       </button>`}
       <span style=${{ flex: 1 }} />
       <button onClick=${() => pagePath && navigate('page', { path: pagePath })} style=${{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 11px', background: 'var(--burgundy)', color: '#FBF6E9', border: '1px solid var(--burgundy-700)', borderRadius: 4, fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', cursor: 'pointer' }}>
@@ -321,10 +323,10 @@ function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canCha
 
 // Shown when a freshly-dropped pin needs a codex entry: name it to mint a new
 // page — or pick an existing page and the pin links to it instead.
-function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy }) {
+function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy, title = 'New pin', initialName = '', discardLabel = 'Discard pin', onSkip }) {
   const k = PIN_KINDS[kind] || {};
   const [width, onResize] = usePanelWidth();
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialName);
   const ex = { place: 'Port Hadwin', npc: 'Reeve Aldwin Lorne', faction: 'The Saltmen', item: 'The Tide-Glass', lore: 'The Drowned Bell', pc: 'New companion' }[kind] || 'A new place';
 
   // where the page lands — the GM's own folder tree, kind folder preselected
@@ -354,7 +356,7 @@ function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy }) {
     <div style=${{ padding: '14px 16px', borderBottom: '1px solid var(--rule-soft)', display: 'flex', alignItems: 'center', gap: 10 }}>
       <${SealHead} kind=${kind} size=${30} />
       <div style=${{ flex: 1 }}>
-        <div style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)' }}>New pin · ${k.label || 'Entry'}</div>
+        <div style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)' }}>${title} · ${k.label || 'Entry'}</div>
         <div style=${{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ink-faint)', marginTop: 1, display: 'flex', alignItems: 'center', gap: 4 }}><${Icon} name="folder" size=${10} /> ${folder || '(vault root)'}</div>
       </div>
       <button onClick=${onCancel} style=${{ width: 28, height: 28, borderRadius: 4, color: 'var(--ink-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer' }}><${Icon} name="x" size=${14} /></button>
@@ -405,7 +407,8 @@ function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy }) {
     </div>
 
     <div style=${{ borderTop: '1px solid var(--rule-soft)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
-      <${Btn} onClick=${onCancel}>Discard pin</${Btn}>
+      <${Btn} onClick=${onCancel}>${discardLabel}</${Btn}>
+      ${onSkip && html`<${Btn} disabled=${busy} onClick=${() => onSkip(name)}>Keep without a page</${Btn}>`}
       <span style=${{ flex: 1 }} />
       <${Btn} kind="primary" icon="check" disabled=${!name.trim() || busy} onClick=${() => onCreate(name, folder)}>
         ${busy ? 'Creating…' : 'Create page'}
@@ -589,6 +592,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const [measure, setMeasure] = useState(null);   // { pts: [{x,y}] } while the ruler is open
   const [measureHover, setMeasureHover] = useState(null);
   const [drawOpen, setDrawOpen] = useState(false);
+  const [newRegion, setNewRegion] = useState(null); // { region, existing } awaiting a name / page
   const [, setHistTick] = useState(0);        // re-render when undo/redo availability changes
   const histories = useRef({});               // map id -> history of that map's doc
   const pending = useRef({});                 // map id -> doc last written, until the store catches up
@@ -700,6 +704,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
       if (e.key !== 'Escape') return;
       setPlacing(null); setPaletteOpen(false); setGhost(null); setNewEntry(null); setMapForm(null); setSettings(false); setViewOpts(false); setMeasure(null);
       drawRef.current?.cancel();
+      setNewRegion(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -772,6 +777,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const onStageMove = (e) => {
     if (placing) { const r = stageRef.current.getBoundingClientRect(); setGhost({ x: e.clientX - r.left, y: e.clientY - r.top }); }
     else if (measure && view) setMeasureHover(screenToNorm(e.clientX, e.clientY));
+    else if (draw.tool === 'region' && view) draw.move(e);
   };
 
   const onStageClick = (e) => {
@@ -797,7 +803,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     if (t) { setMeasure(null); setPlacing(null); setGhost(null); setPaletteOpen(false); }
   };
 
-  useEffect(() => { setMeasure(null); setMeasureHover(null); drawRef.current?.setEdit(null); }, [mapId]);
+  useEffect(() => { setMeasure(null); setMeasureHover(null); drawRef.current?.setEdit(null); setNewRegion(null); }, [mapId]);
 
   const centerOn = useCallback((px, py, zMin) => {
     setView((v) => {
@@ -898,8 +904,69 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const draw = useDrawTools({ map, commit: persist, view, W, H, screenToNorm });
+  const draw = useDrawTools({ map, commit: persist, view, W, H, screenToNorm,
+    onRegion: (points) => { setNewRegion({ region: { id: `r${Date.now().toString(36)}`, name: '', points }, existing: false }); setPanel(null); setNewEntry(null); } });
   drawRef.current = draw;
+
+  // ── regions: polygons that own a place page ──
+  const saveRegion = (r) => {
+    const cur = map.regions || [];
+    persist({ ...map, regions: cur.some((x) => x.id === r.id) ? cur.map((x) => (x.id === r.id ? r : x)) : [...cur, r] });
+  };
+  const removeRegion = (id) => {
+    persist({ ...map, regions: (map.regions || []).filter((r) => r.id !== id) });
+    setPanel((p) => (p && p.regionId === id ? null : p));
+  };
+  const openRegion = (r) => {
+    if (r.page) {
+      const { path, heading } = splitPageRef(r.page);
+      setNewRegion(null);
+      setPanel({ pagePath: path, heading, regionId: r.id, kind: 'place', name: r.name });
+    } else { setPanel(null); setNewRegion({ region: r, existing: true }); }
+  };
+  const commitRegionNew = async (n, name, folder) => {
+    const nm = (name || '').trim() || n.region.name || 'Region';
+    setBusy(true);
+    try {
+      const page = await createVaultPage(nm, 'place', folder || null);
+      if (map.page) {
+        const parent = (store.vaultPages || []).find((p) => p.path === map.page);
+        const title = parent?.title || map.page.split('/').pop().replace(/\.md$/, '');
+        const content = setPartOf(page.content, title);
+        if (content !== page.content) await saveVaultPage(page.path, content);
+      }
+      saveRegion({ ...n.region, name: nm, page: page.path });
+      setNewRegion(null);
+      setPanel({ pagePath: page.path, regionId: n.region.id, kind: 'place', name: nm });
+    } catch (e) {
+      console.warn('create region page failed:', e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const commitRegionLink = (n, page) => {
+    saveRegion({ ...n.region, name: page.title, page: page.path });
+    setNewRegion(null);
+    setPanel({ pagePath: page.path, regionId: n.region.id, kind: 'place', name: page.title });
+  };
+  const commitRegionSkip = (n, name) => {
+    saveRegion({ ...n.region, name: (name || '').trim() || n.region.name || 'Region' });
+    setNewRegion(null);
+  };
+  const renameRegion = (r) => {
+    const name = window.prompt('Region name', r.name);
+    if (name && name.trim() && name.trim() !== r.name) saveRegion({ ...r, name: name.trim().slice(0, 200) });
+  };
+  const regionMenu = (e, r) => openContextMenu(e, [
+    r.page && { label: 'Open page', icon: 'book', onClick: () => navigate('page', { path: splitPageRef(r.page).path }) },
+    r.page && { label: 'Read here', icon: 'doc', onClick: () => openRegion(r) },
+    !r.page && { label: 'Create place page…', icon: 'plus', onClick: () => openRegion(r) },
+    { label: 'Rename…', icon: 'edit', onClick: () => renameRegion(r) },
+    { label: 'Colour', icon: 'tag', children: REGION_COLORS.map(([label, color]) => ({ label, onClick: () => saveRegion({ ...r, color }) })) },
+    '-',
+    { label: 'Remove region', icon: 'trash', danger: true, onClick: () => removeRegion(r.id) },
+  ]);
+  const regionsShown = [...(map.regions || []), ...(newRegion && !newRegion.existing ? [{ ...newRegion.region, name: newRegion.region.name || '' }] : [])];
   const drawings = draw.override?.drawings ?? map.drawings ?? [];
   const texts = draw.override?.texts ?? map.texts ?? [];
 
@@ -1010,6 +1077,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
 
   return html`<div style=${{ position: 'absolute', inset: 0, display: 'flex', minHeight: 0 }}>
     <div ref=${stageRef} onMouseDown=${onDown} onMouseMove=${onStageMove} onClick=${onStageClick}
+      onDblClick=${(e) => { if (draw.tool === 'region' && layerRef.current?.contains(e.target)) draw.finishPoly(); }}
       style=${{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden',
         background: 'radial-gradient(circle at 50% 40%, #ECE3CB, #DCCFB0)',
         cursor: placing || measure || draw.tool ? 'crosshair' : 'grab' }}>
@@ -1021,6 +1089,10 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         transition: anim ? 'transform .55s cubic-bezier(.4,0,.2,1)' : 'none' }}>
         <img src=${img.url} width=${W} height=${H} draggable=${false}
           style=${{ display: 'block', userSelect: 'none', boxShadow: '0 10px 40px rgba(60,40,10,.28)' }} />
+
+        <${RegionLayer} regions=${regionsShown} poly=${draw.poly} polyHover=${draw.polyHover} zoom=${view.zoom} W=${W} H=${H}
+          interactive=${!draw.tool && !measure && !placing} selectedId=${panel?.regionId || (newRegion && newRegion.region.id)}
+          onOpen=${(r) => { if (wasDrag.current) { wasDrag.current = false; return; } openRegion(r); }} onMenu=${regionMenu} />
 
         <${DrawLayer} drawings=${drawings} texts=${texts} draft=${draw.draft} brush=${draw.brush} zoom=${view.zoom} W=${W} H=${H}
           tool=${draw.tool} color=${draw.color} width=${draw.width} onTextDblClick=${(t) => draw.setEdit({ ...t })} />
@@ -1196,8 +1268,16 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
       onSetHeading=${panel.pinId ? setPinHeading : null} pinName=${panel.name} kind=${panel.kind}
       to=${panel.to} canChart=${!!panel.pinId && !busy}
       onEnterMap=${() => goToMap(panel.to)} onChartMap=${chartFromPin}
-      onRemovePin=${panel.pinId ? () => removePin(panel.pinId) : null}
+      onRemovePin=${panel.pinId ? () => removePin(panel.pinId) : panel.regionId ? () => removeRegion(panel.regionId) : null}
+      removeLabel=${panel.regionId ? 'Remove region' : 'Remove pin'}
       onClose=${() => setPanel(null)} />`}
+
+    ${newRegion && html`<${NewEntryPanel} kind="place" busy=${busy} title="New region" discardLabel=${newRegion.existing ? 'Close' : 'Discard region'}
+      initialName=${newRegion.region.name}
+      onCreate=${(name, folder) => commitRegionNew(newRegion, name, folder)}
+      onLink=${(page) => commitRegionLink(newRegion, page)}
+      onSkip=${(name) => commitRegionSkip(newRegion, name)}
+      onCancel=${() => setNewRegion(null)} />`}
 
     ${newEntry && html`<${NewEntryPanel} kind=${newEntry.pin.kind} busy=${busy}
       onCreate=${(name, folder) => commitNew(newEntry, name, folder)}

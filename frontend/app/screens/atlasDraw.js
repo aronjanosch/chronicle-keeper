@@ -3,17 +3,18 @@
 // constant on-screen size (scaled by 1/zoom inside the map layer), like pins.
 import { html, useState, useRef, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { Icon } from '../ui.js';
-import { thinPoint, eraseAt, finishDrawing, clamp01 } from './atlasGeom.js';
+import { thinPoint, eraseAt, finishDrawing, clamp01, dedupePoints } from './atlasGeom.js';
 
 export const STAMPS = ['castle', 'tower', 'house', 'mountain', 'tree', 'tent', 'anchor', 'cave', 'ruin', 'bridge', 'flag', 'flame'];
 const SWATCHES = ['#7A2E1F', '#1F1813', '#355370', '#4A5D3A', '#A87328', '#FBF6E9'];
 const WIDTHS = [2, 4, 8];
-const TOOLS = [['pen', 'Pen'], ['line', 'Line'], ['rect', 'Box'], ['circle', 'Circle'], ['stamp', 'Stamp'], ['text', 'Text'], ['eraser', 'Erase']];
+const TOOLS = [['pen', 'Pen'], ['line', 'Line'], ['rect', 'Box'], ['circle', 'Circle'], ['stamp', 'Stamp'], ['text', 'Text'], ['region', 'Region'], ['eraser', 'Erase']];
+const HINTS = { region: 'Click the corners · double-click or Enter to close · Esc cancels' };
 const SHAPES = new Set(['pen', 'line', 'rect', 'circle']);
 
 const newId = () => `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
-export function useDrawTools({ map, commit, view, W, H, screenToNorm }) {
+export function useDrawTools({ map, commit, view, W, H, screenToNorm, onRegion }) {
   const [tool, setTool] = useState(null);
   const [color, setColor] = useState('#7A2E1F');
   const [width, setWidth] = useState(4);
@@ -22,9 +23,13 @@ export function useDrawTools({ map, commit, view, W, H, screenToNorm }) {
   const [override, setOverride] = useState(null); // { drawings, texts } live while erasing / dragging text
   const [brush, setBrush] = useState(null);       // { x, y, r } eraser ring (normalised centre, image-px radius)
   const [edit, setEdit] = useState(null);         // text editor state
+  const [poly, setPolyState] = useState([]);     // region corners while the polygon tool is open
+  const [polyHover, setPolyHover] = useState(null);
+  const polyRef = useRef([]);
+  const setPoly = (v) => { polyRef.current = v; setPolyState(v); };
   const gesture = useRef(null);
   const live = useRef({});
-  live.current = { map, commit, view, W, H, screenToNorm, tool, color, width, stamp };
+  live.current = { map, commit, view, W, H, screenToNorm, tool, color, width, stamp, onRegion };
 
   // stable window listeners that always call the latest handlers
   const handlers = useRef({});
@@ -96,6 +101,7 @@ export function useDrawTools({ map, commit, view, W, H, screenToNorm }) {
       return true;
     }
     if (L.tool === 'eraser') { const g = { kind: 'erase', doc: docOf(), changed: false }; begin(g); erase(g, p); return true; }
+    if (L.tool === 'region') { setPoly([...polyRef.current, p]); return true; }
     if (L.tool === 'text') {
       const el = e.target.closest?.('[data-text-id]');
       const t = el && (L.map.texts || []).find((x) => x.id === el.getAttribute('data-text-id'));
@@ -105,6 +111,16 @@ export function useDrawTools({ map, commit, view, W, H, screenToNorm }) {
     }
     return false;
   };
+
+  // Close the polygon (double-click / Enter) and hand it to the caller.
+  const finishPoly = () => {
+    const L = live.current;
+    const pts = dedupePoints(polyRef.current, 3 / L.view.zoom, L.W, L.H);
+    setPoly([]); setPolyHover(null);
+    if (pts.length >= 3) L.onRegion(pts);
+  };
+
+  const move = (e) => { if (live.current.tool === 'region' && polyRef.current.length) setPolyHover(pointOf(e)); };
 
   const saveText = (t) => {
     const m = live.current.map;
@@ -124,6 +140,7 @@ export function useDrawTools({ map, commit, view, W, H, screenToNorm }) {
 
   // Esc: abandon the gesture / editor first, then put the tool down.
   const cancel = () => {
+    if (polyRef.current.length) { setPoly([]); setPolyHover(null); return; }
     if (gesture.current || edit) {
       window.removeEventListener('mousemove', mv);
       window.removeEventListener('mouseup', up);
@@ -134,7 +151,20 @@ export function useDrawTools({ map, commit, view, W, H, screenToNorm }) {
 
   useEffect(() => () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); }, []);
 
-  return { tool, setTool, color, setColor, width, setWidth, stamp, setStamp, draft, override, brush, edit, setEdit, saveText, deleteText, down, cancel };
+  useEffect(() => { if (tool !== 'region' && polyRef.current.length) { setPoly([]); setPolyHover(null); } }, [tool]);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Enter' || live.current.tool !== 'region' || !polyRef.current.length) return;
+      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      finishPolyRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  const finishPolyRef = useRef(null);
+  finishPolyRef.current = finishPoly;
+
+  return { tool, setTool, color, setColor, width, setWidth, stamp, setStamp, draft, override, brush, edit, setEdit, saveText, deleteText, down, cancel, poly, polyHover, finishPoly, move };
 }
 
 function Shape({ d, zoom, W, H }) {
@@ -205,7 +235,7 @@ export function DrawPalette({ draw, onPick, history }) {
         background: draw.stamp === s ? 'var(--burgundy-50)' : 'transparent', border: `1px solid ${draw.stamp === s ? 'var(--burgundy-300)' : 'var(--rule-soft)'}`, color: 'var(--ink-soft)' }}><${Icon} name=${s} size=${15} /></button>`)}
     </div>`}
     <div style=${{ fontSize: 11, color: 'var(--ink-faint)', fontStyle: 'italic', fontFamily: 'var(--font-display)' }}>
-      ${draw.tool ? 'Shift-drag pans · Esc puts the tool down' : 'Pick a tool, then draw on the map.'}</div>
+      ${draw.tool ? (HINTS[draw.tool] || 'Shift-drag pans · Esc puts the tool down') : 'Pick a tool, then draw on the map.'}</div>
   </div>`;
 }
 

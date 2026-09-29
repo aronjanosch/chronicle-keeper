@@ -85,3 +85,36 @@ export function finishDrawing(kind, points, minPx, W, H) {
 }
 
 export const clamp01 = (v) => Math.min(1, Math.max(0, v));
+
+// Area centroid of a polygon; the vertex mean when the shape is degenerate.
+export function centroid(points) {
+  let a = 0, cx = 0, cy = 0;
+  points.forEach((p, i) => {
+    const q = points[(i + 1) % points.length];
+    const cross = p[0] * q[1] - q[0] * p[1];
+    a += cross; cx += (p[0] + q[0]) * cross; cy += (p[1] + q[1]) * cross;
+  });
+  if (Math.abs(a) < 1e-12) {
+    return [points.reduce((s, p) => s + p[0], 0) / points.length, points.reduce((s, p) => s + p[1], 0) / points.length];
+  }
+  return [cx / (3 * a), cy / (3 * a)];
+}
+
+// Drop repeated points (a double-click closes a polygon after adding its last point twice).
+export function dedupePoints(points, minPx, W, H) {
+  return points.filter((p, i) => i === 0 || Math.hypot((p[0] - points[i - 1][0]) * W, (p[1] - points[i - 1][1]) * H) >= minPx);
+}
+
+// Point a new page at its parent: sets `part_of: "[[Title]]"` in the frontmatter
+// unless the page already names a parent. Content without frontmatter is returned as is.
+export function setPartOf(content, title) {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content || '');
+  if (!m) return content;
+  const line = `part_of: "[[${title}]]"`;
+  const fm = m[1];
+  const cur = /^part_of:[ \t]*(.*)$/m.exec(fm);
+  if (cur && !/^(""|''|\[\])?\s*$/.test(cur[1])) return content;
+  const nextFm = cur ? fm.replace(/^part_of:.*$/m, line) : `${fm}\n${line}`;
+  const start = m[0].indexOf('\n') + 1;
+  return content.slice(0, start) + nextFm + content.slice(start + fm.length);
+}

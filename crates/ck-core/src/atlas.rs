@@ -70,6 +70,19 @@ pub struct MapText {
     pub rotation: f64,
 }
 
+/// A drawn polygon that stands for a place (a kingdom, a forest). `page` is the
+/// Codex-relative page it owns, same reference form as a pin's.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Region {
+    pub id: String,
+    pub name: String,
+    pub points: Vec<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct MapDoc {
     pub id: String,
@@ -89,9 +102,13 @@ pub struct MapDoc {
     pub drawings: Vec<Drawing>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub texts: Vec<MapText>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<Region>,
 }
 
 const MAX_OBJECTS: usize = 2000;
+const MAX_REGIONS: usize = 500;
+const MAX_REGION_POINTS: usize = 1000;
 const MAX_STROKE_POINTS: usize = 5000;
 const DRAWING_KINDS: &[&str] = &["pen", "line", "rect", "circle", "stamp"];
 
@@ -148,6 +165,23 @@ fn validate_annotations(doc: &MapDoc) -> AppResult<()> {
             || !t.rotation.is_finite()
         {
             return Err(bad("A text label on this map is not valid"));
+        }
+    }
+    if doc.regions.len() > MAX_REGIONS {
+        return Err(bad("Too many regions on one map"));
+    }
+    for r in &doc.regions {
+        if !valid_obj_id(&r.id)
+            || r.name.trim().is_empty()
+            || r.name.chars().count() > 200
+            || !(3..=MAX_REGION_POINTS).contains(&r.points.len())
+            || r.points.iter().any(|p| !unit(p[0]) || !unit(p[1]))
+            || r.color.as_deref().is_some_and(|c| !valid_color(c))
+            || r.page
+                .as_deref()
+                .is_some_and(|p| p.is_empty() || p.len() > 500)
+        {
+            return Err(bad("A region on this map is not valid"));
         }
     }
     Ok(())
@@ -490,7 +524,8 @@ fn rewrite_refs(world_root: &Path, from: &str, to: &str, prefix: bool) {
         let refs = m
             .page
             .iter_mut()
-            .chain(m.pins.iter_mut().filter_map(|p| p.page.as_mut()));
+            .chain(m.pins.iter_mut().filter_map(|p| p.page.as_mut()))
+            .chain(m.regions.iter_mut().filter_map(|r| r.page.as_mut()));
         for r in refs {
             if let Some(updated) = rewritten(r, from, to, prefix) {
                 *r = updated;
@@ -840,6 +875,86 @@ mod tests {
         for b in bad_docs {
             assert!(write_map(&dir, &b).is_err());
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn region(id: &str, page: Option<&str>) -> Region {
+        Region {
+            id: id.into(),
+            name: "Ashen Reach".into(),
+            points: vec![[0.1, 0.1], [0.5, 0.1], [0.3, 0.6]],
+            page: page.map(Into::into),
+            color: None,
+        }
+    }
+
+    #[test]
+    fn regions_roundtrip_validate_and_follow_page_moves() {
+        let dir = temp_world("regions");
+        let src = fake_png(&dir, "a.png");
+        let doc = create_map(&dir, "Vale", &src, None, None).unwrap();
+        let mut m = read_map(&dir, &doc.id).unwrap();
+        m.regions = vec![
+            region("r1", Some("Places/Reach.md")),
+            region("r2", Some("Places/Reach.md#Lore")),
+            region("r3", None),
+            Region {
+                color: Some("#a87328".into()),
+                ..region("r4", Some("Other.md"))
+            },
+        ];
+        write_map(&dir, &m).unwrap();
+
+        rewrite_page_references(&dir, "Places/Reach.md", "Realms/Reach.md");
+        let m = read_map(&dir, &doc.id).unwrap();
+        let pages: Vec<_> = m.regions.iter().map(|r| r.page.clone()).collect();
+        assert_eq!(
+            pages,
+            [
+                Some("Realms/Reach.md".into()),
+                Some("Realms/Reach.md#Lore".into()),
+                None,
+                Some("Other.md".into())
+            ]
+        );
+        rewrite_page_references_prefix(&dir, "Realms", "World/Realms");
+        let m = read_map(&dir, &doc.id).unwrap();
+        assert_eq!(
+            m.regions[1].page.as_deref(),
+            Some("World/Realms/Reach.md#Lore")
+        );
+
+        let bad_regions = [
+            Region {
+                points: vec![[0.1, 0.1], [0.5, 0.1]],
+                ..region("x", None)
+            },
+            Region {
+                points: vec![[0.1, 0.1], [0.5, 0.1], [1.2, 0.6]],
+                ..region("x", None)
+            },
+            Region {
+                name: "  ".into(),
+                ..region("x", None)
+            },
+            Region {
+                color: Some("blue".into()),
+                ..region("x", None)
+            },
+            Region {
+                points: vec![[0.5, 0.5]; MAX_REGION_POINTS + 1],
+                ..region("x", None)
+            },
+            region("", None),
+        ];
+        for r in bad_regions {
+            let mut b = m.clone();
+            b.regions = vec![r];
+            assert!(write_map(&dir, &b).is_err());
+        }
+        let mut b = m.clone();
+        b.regions = vec![region("x", None); MAX_REGIONS + 1];
+        assert!(write_map(&dir, &b).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

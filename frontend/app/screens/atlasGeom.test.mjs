@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import { splitStrokeByBrush, brushHitsShape, eraseAt, finishDrawing, thinPoint } from './atlasGeom.js';
+const W = 1000, H = 500;
+const stroke = Array.from({ length: 11 }, (_, i) => [i / 10, 0.5]); // 100px apart
+assert.equal(splitStrokeByBrush(stroke, [0.5, 0.9], 20, W, H), null);
+const mid = splitStrokeByBrush(stroke, [0.5, 0.5], 20, W, H);
+assert.equal(mid.length, 2); assert.equal(mid[0].length, 5); assert.equal(mid[1].length, 5);
+assert.deepEqual(splitStrokeByBrush(stroke, [0.5, 0.5], 2000, W, H), []);
+const end = splitStrokeByBrush(stroke, [0, 0.5], 20, W, H); assert.equal(end.length, 1); assert.equal(end[0].length, 10);
+const tiny = splitStrokeByBrush([[0, 0], [0.01, 0], [0.5, 0]], [0.01, 0], 1, W, H); assert.deepEqual(tiny, []);
+const line = { kind: 'line', points: [[0.1, 0.1], [0.9, 0.1]], width: 2 };
+assert.ok(brushHitsShape(line, [0.5, 0.12], 15, W, H));
+assert.ok(!brushHitsShape(line, [0.5, 0.5], 15, W, H));
+const rect = { kind: 'rect', points: [[0.2, 0.2], [0.6, 0.6]], width: 2 };
+assert.ok(brushHitsShape(rect, [0.4, 0.2], 5, W, H)); assert.ok(!brushHitsShape(rect, [0.4, 0.4], 5, W, H));
+const circle = { kind: 'circle', points: [[0.5, 0.5], [0.6, 0.5]], width: 2 };
+assert.ok(brushHitsShape(circle, [0.6, 0.5], 5, W, H)); assert.ok(!brushHitsShape(circle, [0.5, 0.5], 5, W, H));
+const stamp = { kind: 'stamp', points: [[0.3, 0.3]], width: 40 };
+assert.ok(brushHitsShape(stamp, [0.31, 0.3], 5, W, H)); assert.ok(!brushHitsShape(stamp, [0.6, 0.3], 5, W, H));
+const doc = { drawings: [{ id: 'p', kind: 'pen', points: stroke, width: 3 }, line], texts: [{ id: 't', x: 0.5, y: 0.5, size: 10 }] };
+const r = eraseAt(doc, [0.5, 0.5], 20, W, H);
+assert.ok(r.changed); assert.deepEqual(r.drawings.map((d) => d.id), ['p', 'p.1', undefined]); assert.equal(r.texts.length, 0);
+assert.equal(eraseAt(doc, [0.95, 0.95], 5, W, H).changed, false);
+assert.equal(finishDrawing('line', [[0.1, 0.1], [0.1, 0.1]], 3, W, H), null);
+assert.equal(finishDrawing('line', [[0.1, 0.1], [0.2, 0.2]], 3, W, H).length, 2);
+assert.equal(finishDrawing('pen', [[0.1, 0.1]], 3, W, H), null);
+assert.ok(thinPoint([], [0, 0], 4, W, H)); assert.ok(!thinPoint([[0, 0]], [0.001, 0], 4, W, H)); assert.ok(thinPoint([[0, 0]], [0.01, 0], 4, W, H));
+console.log('geom ok');

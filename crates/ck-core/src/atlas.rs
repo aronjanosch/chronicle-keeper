@@ -12,7 +12,7 @@ use crate::error::{AppError, AppResult};
 
 pub const ATLAS_DIR: &str = "Atlas";
 
-const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
+pub(crate) const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Pin {
@@ -70,7 +70,7 @@ fn slugify(name: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 

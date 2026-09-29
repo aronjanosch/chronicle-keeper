@@ -34,6 +34,7 @@ pub mod transcription;
 pub mod trash;
 pub mod vault;
 pub mod world_config;
+pub mod worldpack;
 
 use std::net::SocketAddr;
 

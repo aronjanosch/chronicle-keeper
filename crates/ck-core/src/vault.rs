@@ -1198,7 +1198,7 @@ const ASSET_EXTS: &[&str] = &[
     "ogg", "flac", "mp4", "webm", "mov",
 ];
 
-fn is_asset(path: &Path) -> bool {
+pub(crate) fn is_asset(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| ASSET_EXTS.contains(&e.to_lowercase().as_str()))

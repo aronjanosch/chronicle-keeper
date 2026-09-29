@@ -11,6 +11,8 @@ import { navigate, apiFetch, apiBlob, store, setState, splitPageRef, fmtDateTime
 import { loadAtlasMaps, createAtlasMap, saveAtlasMap, replaceAtlasMapArt, deleteAtlasMap, loadAtlasMapHistory, restoreAtlasMapVersion, pickMapImage, loadVaultTree, loadVaultLinks, createVaultPage, saveVaultPage, openCampaign } from '../actions.js';
 import { Shell, Sidebar, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
 import { MeasureLayer, MeasureReadout, UNITS } from './atlasMeasure.js';
+import { wheelAction, shortcutAction, isTypingTarget, NAV_MODES } from './atlasNav.js';
+import { ModeChip, ShortcutSheet, TipBar } from './atlasModes.js';
 import { useDrawTools, DrawLayer, DrawPalette, TextEditor } from './atlasDraw.js';
 import { createHistory } from './atlasHistory.js';
 import { RegionLayer, REGION_COLORS } from './atlasRegions.js';
@@ -577,6 +579,11 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const [measure, setMeasure] = useState(null);   // { pts: [{x,y}] } while the ruler is open
   const [measureHover, setMeasureHover] = useState(null);
   const [drawOpen, setDrawOpen] = useState(false);
+  const [navMode, setNavModeRaw] = useState(() => (NAV_MODES.includes(readPref('ck_atlas_nav', 'auto')) ? readPref('ck_atlas_nav', 'auto') : 'auto'));
+  const [helpOpen, setHelpOpen] = useState(false);
+  const navRef = useRef(navMode);
+  navRef.current = navMode;
+  const setNavMode = (m) => { setNavModeRaw(m); writePref('ck_atlas_nav', m); };
   const [newRegion, setNewRegion] = useState(null); // { region, existing } awaiting a name / page
   const [, setHistTick] = useState(0);        // re-render when undo/redo availability changes
   const histories = useRef({});               // map id -> history of that map's doc
@@ -653,28 +660,42 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     return { zoom: z, tx: (s.w - w * z) / 2, ty: (s.h - h * z) / 2 };
   }, []);
 
+  // Until the user pans or zooms, a stage resize (sidebar settling, panel opening) re-fits the map.
+  const untouched = useRef(true);
+  const artSize = useRef(null);
   useEffect(() => {
     const el = stageRef.current; if (!el) return;
-    const ro = new ResizeObserver(() => { const r = el.getBoundingClientRect(); setStage({ w: r.width, h: r.height }); });
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect();
+      setStage({ w: r.width, h: r.height });
+      if (untouched.current && artSize.current && r.width > 1) setView(fitView({ w: r.width, h: r.height }, artSize.current.w, artSize.current.h));
+    });
     ro.observe(el);
     const r = el.getBoundingClientRect(); setStage({ w: r.width, h: r.height });
     return () => ro.disconnect();
   }, []);
 
   // re-fit whenever a new image arrives
-  useEffect(() => { if (img && stage.w > 1) setView(fitView(stage, img.w, img.h)); }, [img]);
+  useEffect(() => {
+    untouched.current = true;
+    artSize.current = img ? { w: img.w, h: img.h } : null;
+    const r = stageRef.current?.getBoundingClientRect();
+    if (img && r && r.width > 1) setView(fitView({ w: r.width, h: r.height }, img.w, img.h));
+  }, [img]);
 
   // native non-passive wheel zoom toward the cursor
   useEffect(() => {
     const el = stageRef.current; if (!el) return;
     const onWheel = (e) => {
-      e.preventDefault(); setAnim(false);
+      e.preventDefault(); setAnim(false); untouched.current = false;
+      const act = wheelAction(e, navRef.current);
       setView((v) => {
         if (!v) return v;
+        if (act.type === 'pan') return { ...v, tx: v.tx + act.dx, ty: v.ty + act.dy };
         const r = el.getBoundingClientRect();
         const mx = e.clientX - r.left, my = e.clientY - r.top;
         const fit = Math.min(stage.w / W, stage.h / H) * 0.95;
-        const z2 = clamp(v.zoom * Math.exp(-e.deltaY * 0.0014), fit * 0.8, 5.5);
+        const z2 = clamp(v.zoom * act.factor, fit * 0.8, 5.5);
         const wx = (mx - v.tx) / v.zoom, wy = (my - v.ty) / v.zoom;
         return { zoom: z2, tx: mx - wx * z2, ty: my - wy * z2 };
       });
@@ -688,6 +709,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
       setPlacing(null); setPaletteOpen(false); setGhost(null); setNewEntry(null); setMapForm(null); setSettings(false); setViewOpts(false); setMeasure(null);
+      setHelpOpen(false);
       drawRef.current?.cancel();
       setNewRegion(null);
     };
@@ -757,6 +779,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     if (drawRef.current?.tool && layerRef.current?.contains(e.target) && drawRef.current.down(e)) return;
     setAnim(false);
     drag.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty, moved: false };
+    untouched.current = false;
   };
 
   const onStageMove = (e) => {
@@ -801,7 +824,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   }, [stage, W, H]);
 
   const zoomBy = (factor) => {
-    setAnim(true);
+    setAnim(true); untouched.current = false;
     setView((v) => {
       const fit = Math.min(stage.w / W, stage.h / H) * 0.95;
       const z2 = clamp(v.zoom * factor, fit * 0.8, 5.5);
@@ -903,6 +926,34 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const draw = useDrawTools({ map, commit: persist, view, W, H, screenToNorm,
     onRegion: (points) => { setNewRegion({ region: { id: `r${Date.now().toString(36)}`, name: '', points }, existing: false }); setPanel(null); setNewEntry(null); } });
   drawRef.current = draw;
+
+  const leaveTools = () => {
+    setPlacing(null); setPaletteOpen(false); setGhost(null); setMeasure(null); setDrawOpen(false);
+    draw.setTool(null); draw.cancel();
+  };
+  const TOOL_LABEL = { pen: 'Pen', line: 'Line', rect: 'Box', circle: 'Circle', stamp: 'Stamp', text: 'Text', eraser: 'Eraser' };
+  // Placing and measuring already carry their own banner/readout; drawing tools had none.
+  const anyTool = !!(placing || measure || draw.tool);
+  const modeLabel = draw.tool === 'region' ? 'Drawing a region' : draw.tool ? `Drawing · ${TOOL_LABEL[draw.tool] || draw.tool}` : null;
+
+  const shortcutsRef = useRef(null);
+  shortcutsRef.current = (action) => {
+    if (action === 'help') { setHelpOpen((o) => !o); return; }
+    if (action === 'fit') { setAnim(true); if (img) setView(fitView(stage, img.w, img.h)); return; }
+    if (action === 'measure') { toggleMeasure(); return; }
+    if (action === 'draw') { toggleDraw(); return; }
+    if (action === 'region') { setDrawOpen(true); pickTool('region'); return; }
+    if (action === 'pin') { setPaletteOpen((o) => !o); setPlacing(null); setGhost(null); draw.setTool(null); setDrawOpen(false); setMeasure(null); }
+  };
+  useEffect(() => {
+    const onKey = (e) => {
+      if (isTypingTarget(e.target)) return;
+      const action = shortcutAction(e);
+      if (action) { e.preventDefault(); shortcutsRef.current(action); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // ── regions: polygons that own a place page ──
   const saveRegion = (r) => {
@@ -1199,8 +1250,24 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
             </span>
             <span style=${{ fontSize: 12.5, color: 'var(--ink)' }}>Pin labels</span>
           </button>
+          <div>
+            <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>Scroll wheel</div>
+            <div style=${{ display: 'flex', border: '1px solid var(--rule)', borderRadius: 6, overflow: 'hidden' }}>
+              ${[['auto', 'Auto'], ['mouse', 'Zoom'], ['trackpad', 'Pan']].map(([m, label], i) => html`<button key=${m} onClick=${() => setNavMode(m)} title=${m === 'auto' ? 'Guess mouse vs trackpad; pinch always zooms' : m === 'mouse' ? 'Scrolling zooms (mouse wheel)' : 'Scrolling pans, pinch zooms (trackpad)'} style=${{
+                flex: 1, padding: '5px 0', fontSize: 11.5, fontWeight: navMode === m ? 600 : 400, cursor: 'pointer',
+                background: navMode === m ? 'var(--burgundy)' : 'transparent', color: navMode === m ? '#FBF6E9' : 'var(--ink-soft)',
+                border: 'none', borderLeft: i ? '1px solid var(--rule-soft)' : 'none' }}>${label}</button>`)}
+            </div>
+          </div>
+          <button onClick=${() => { setViewOpts(false); setHelpOpen(true); }} style=${{ display: 'flex', alignItems: 'center', gap: 8, padding: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 12.5, color: 'var(--ink)' }}>
+            <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, padding: '0 5px', border: '1px solid var(--rule-strong)', borderRadius: 4 }}>?</span> Shortcuts &amp; tips
+          </button>
         </div>
       </div>`}
+
+      <${ModeChip} label=${modeLabel} onExit=${leaveTools} />
+      <${TipBar} show=${!!img && pins.length > 0 && !anyTool} />
+      ${helpOpen && html`<${ShortcutSheet} onClose=${() => setHelpOpen(false)} />`}
 
       ${placing && html`<div style=${{ position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 95,
         display: 'flex', alignItems: 'center', gap: 9, padding: '7px 14px', borderRadius: 999, whiteSpace: 'nowrap',

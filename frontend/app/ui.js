@@ -54,6 +54,15 @@ const PATHS = {
   flag:     'M3 14V2M3 3h8l-1.5 2.5L11 8H3',
   backlink: 'M9.5 6.5 6.5 9.5M10 4l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M6 12l-1 1A2.5 2.5 0 0 1 1.5 9.5l1-1M2 2v3h3',
   undo:     'M3.5 7.5a5 5 0 1 1-1 3M3.5 7.5V4M3.5 7.5H7',
+  // map place glyphs (Atlas pin icons)
+  house:    'M2.5 8 8 3l5.5 5M4 7v6.5h8V7M7 13.5V10h2v3.5',
+  tower:    'M5 14V6L4 5V2.5h2V4h1V2.5h2V4h1V2.5h2V5l-1 1v8M3.5 14h9',
+  mountain: 'M1.5 13.5 6.5 4l3.5 6 1.5-2 3 5.5Z',
+  tree:     'M8 14v-2.5M8 2 4.5 7.5h2l-3 4h9l-3-4h2L8 2Z',
+  tent:     'M2 13.5 8 3l6 10.5ZM8 3v10.5M6 13.5l2-4 2 4',
+  cave:     'M2 13.5c0-5 2.2-8.5 6-8.5s6 3.5 6 8.5M5.5 13.5c0-2.2.9-3.8 2.5-3.8s2.5 1.6 2.5 3.8M1.5 13.5h13',
+  ruin:     'M5 14V7M11 14V4.5M3.5 14h9M3.5 7h3M9.5 4.5h3',
+  bridge:   'M1.5 11h13M3 11V8M13 11V8M3 8c1.5-3.5 8.5-3.5 10 0M1.5 13.5h13',
 };
 // icons needing extra geometry (circles/rects)
 function customIcon(name, p) {
@@ -74,6 +83,7 @@ function customIcon(name, p) {
       <rect x="7.1" y="1.8" width="1.8" height="3" rx="0.3" fill="currentColor" stroke="none" transform="rotate(270 8 8)" />
       <rect x="7.1" y="1.8" width="1.8" height="3" rx="0.3" fill="currentColor" stroke="none" transform="rotate(315 8 8)" />
     </svg>`;
+    case 'anchor':  return html`<svg ...${p}><circle cx="8" cy="3.5" r="1.4"/><path d="M8 5v9M5 8h6M3 10.5c.5 2.2 2.5 3.5 5 3.5s4.5-1.3 5-3.5"/></svg>`;
     case 'search':  return html`<svg ...${p}><circle cx="7" cy="7" r="4.2"/><path d="m10.2 10.2 3 3"/></svg>`;
     case 'dots':    return html`<svg ...${p}><circle cx="3.5" cy="8" r=".9" fill="currentColor"/><circle cx="8" cy="8" r=".9" fill="currentColor"/><circle cx="12.5" cy="8" r=".9" fill="currentColor"/></svg>`;
     case 'time':    return html`<svg ...${p}><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 1.5"/></svg>`;

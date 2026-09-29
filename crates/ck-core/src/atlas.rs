@@ -25,6 +25,12 @@ pub struct Pin {
     pub page: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
+    /// Glyph override; unset = the kind's seal glyph.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Number/letter shown in the seal instead of a glyph ("1", "B").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -440,6 +446,8 @@ mod tests {
             y: 0.5,
             page: Some("Places/Neverwinter.md".into()),
             to: None,
+            icon: None,
+            label: None,
         });
         write_map(&dir, &read).unwrap();
         assert_eq!(read_map(&dir, &doc.id).unwrap().pins.len(), 1);
@@ -472,6 +480,8 @@ mod tests {
             y: 0.5,
             page: None,
             to: None,
+            icon: None,
+            label: None,
         });
         write_map(&dir, &with_pin).unwrap();
 
@@ -503,6 +513,8 @@ mod tests {
             y: 0.3,
             page: None,
             to: Some(mid.id.clone()),
+            icon: None,
+            label: None,
         });
         write_map(&dir, &r).unwrap();
 
@@ -530,6 +542,8 @@ mod tests {
             y: 0.5,
             page: Some(page.into()),
             to: None,
+            icon: None,
+            label: None,
         };
         m.pins = vec![
             pin("a", "Places/Vale.md"),

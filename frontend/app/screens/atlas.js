@@ -41,7 +41,7 @@ const SEAL = {
 const SURFACE = '#FBF6E9', RULE = '#DDD0AE', INK = '#1F1813';
 
 // ── pins: wax-seal medallions pressed onto the art ────────────────
-export function SealHead({ kind, size = 38, selected }) {
+export function SealHead({ kind, size = 38, selected, icon, label }) {
   const k = PIN_KINDS[kind] || PIN_KINDS.npc;
   const s = SEAL[k.tone] || SEAL.burgundy;
   return html`<div style=${{
@@ -56,9 +56,24 @@ export function SealHead({ kind, size = 38, selected }) {
   }}>
     <div style=${{ position: 'absolute', inset: size * 0.14, borderRadius: '50%', border: `1px solid ${s.eng}`, opacity: 0.4 }} />
     <span style=${{ color: s.eng, display: 'flex', filter: 'drop-shadow(0 1px 0 rgba(0,0,0,.3))' }}>
-      <${Icon} name=${k.ic} size=${Math.round(size * 0.46)} />
+      ${label
+        ? html`<span style=${{ fontFamily: 'var(--font-display)', fontWeight: 700, lineHeight: 1, fontSize: Math.round(size * (label.length > 2 ? 0.3 : 0.42)) }}>${label}</span>`
+        : html`<${Icon} name=${icon || k.ic} size=${Math.round(size * 0.46)} />`}
     </span>
   </div>`;
+}
+
+// Glyphs a pin can wear instead of its kind's seal glyph.
+const PLACE_ICONS = ['castle', 'tower', 'house', 'mountain', 'tree', 'tent', 'anchor', 'cave', 'ruin', 'bridge', 'flag', 'globe', 'compass', 'flame'];
+
+// Labels count up from the highest in use, so a deleted pin's number is never
+// reissued and "Room 3" written in a page stays valid.
+const toLetters = (n) => { let s = ''; for (; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s; return s; };
+const fromLetters = (s) => [...s].reduce((a, c) => a * 26 + c.charCodeAt(0) - 64, 0);
+function nextLabel(pins, letters) {
+  const re = letters ? /^[A-Z]+$/ : /^\d+$/;
+  const top = Math.max(0, ...pins.map((p) => p.label).filter((l) => l && re.test(l)).map((l) => (letters ? fromLetters(l) : +l)));
+  return letters ? toLetters(top + 1) : String(top + 1);
 }
 
 // full map marker: ground shadow + seal + tip + label.
@@ -77,7 +92,7 @@ function PinMarker({ pin, invZoom, scale = 1, showLabel = true, selected, hasMap
       }}>
       <div style=${{ position: 'relative', transition: 'transform .12s', transform: selected ? 'translateY(-2px)' : 'none' }}>
         ${hasMap && html`<span style=${{ position: 'absolute', inset: -5, borderRadius: '50%', border: `1.5px solid ${s.body}`, opacity: 0.5, animation: 'ck-ping 2.8s ease-out infinite', pointerEvents: 'none' }} />`}
-        <${SealHead} kind=${pin.kind} size=${size} selected=${selected} />
+        <${SealHead} kind=${pin.kind} icon=${pin.icon} label=${pin.label} size=${size} selected=${selected} />
         ${hasMap && html`<span style=${{ position: 'absolute', right: -5, bottom: -4, width: 17, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: SURFACE, borderRadius: 4, boxShadow: '0 1px 3px rgba(40,20,8,.35)' }}>
           <span style=${{ width: 13, height: 14, background: s.body, clipPath: 'polygon(50% 0,100% 27%,100% 73%,50% 100%,0 73%,0 27%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -802,6 +817,15 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     setPanel({ pagePath: pin.page, pinId: pin.id, kind: pin.kind, name: pin.name });
   };
 
+  const patchPin = (pinId, patch) => {
+    persist({ ...map, pins: (map.pins || []).map((p) => {
+      if (p.id !== pinId) return p;
+      const next = { ...p, ...patch };
+      for (const k of ['icon', 'label']) if (!next[k]) delete next[k];
+      return next;
+    }) });
+  };
+
   const setPinHeading = (heading) => {
     if (!panel?.pinId) return;
     const page = heading ? `${panel.pagePath}#${heading}` : panel.pagePath;
@@ -892,6 +916,16 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
             pin.page && { label: 'Open page', icon: 'book', onClick: () => navigate('page', { path: splitPageRef(pin.page).path }) },
             pin.page && { label: 'Read here', icon: 'doc', onClick: () => openPin(pin) },
             pin.to && { label: 'Enter the map', icon: 'map', onClick: () => goToMap(pin.to) },
+            '-',
+            { label: 'Icon', icon: 'pin', children: [
+              { label: 'Default', onClick: () => patchPin(pin.id, { icon: '' }) },
+              ...PLACE_ICONS.map((ic) => ({ label: ic[0].toUpperCase() + ic.slice(1), icon: ic, onClick: () => patchPin(pin.id, { icon: ic, label: '' }) })),
+            ] },
+            { label: 'Number', icon: 'tag', children: [
+              { label: 'Next number', onClick: () => patchPin(pin.id, { label: nextLabel(map.pins || [], false) }) },
+              { label: 'Next letter', onClick: () => patchPin(pin.id, { label: nextLabel(map.pins || [], true) }) },
+              pin.label && { label: 'Remove number', onClick: () => patchPin(pin.id, { label: '' }) },
+            ].filter(Boolean) },
             '-',
             { label: 'Remove pin', icon: 'trash', danger: true, onClick: () => removePin(pin.id) },
           ])} />`)}

@@ -15,6 +15,8 @@ import { useDrawTools, DrawLayer, DrawPalette, TextEditor } from './atlasDraw.js
 import { createHistory } from './atlasHistory.js';
 import { RegionLayer, REGION_COLORS } from './atlasRegions.js';
 import { setPartOf } from './atlasGeom.js';
+import { PreviewLayer, useModifier } from './atlasPreview.js';
+import { pageHeadings, flashHeading } from './atlasPage.js';
 import { Icon, Btn, Empty, Spinner, PageBody, Input, Select, splitDoc, parseProps, openContextMenu } from '../ui.js';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -124,6 +126,8 @@ function PinMarker({ pin, invZoom, scale = 1, showLabel = true, inert, selected,
   </div>`;
 }
 
+const PinSeal = ({ pin, size }) => html`<${SealHead} kind=${pin.kind} icon=${pin.icon} label=${pin.label} size=${size} />`;
+
 // floating preview shown on hover, attached to the pin in image space
 function HoverCard({ pin, invZoom, scale = 1, summary }) {
   const k = PIN_KINDS[pin.kind] || {};
@@ -160,20 +164,6 @@ const RESERVED_FM = new Set(['kind', 'summary', 'aliases', 'tags', 'cssclasses',
 // drag-resizable width shared by the codex + new-entry side panels
 const usePanelWidth = () => useSidebarWidth('ck_atlas_panel_w', 380, { min: 320, max: 640, fromRight: true });
 
-// H1–H3 of a page body, fenced code skipped — the anchors a pin can point at.
-function pageHeadings(md) {
-  const out = [];
-  let fence = false;
-  for (const raw of (md || '').split('\n')) {
-    const line = raw.trimEnd();
-    if (/^(```|~~~)/.test(line.trim())) { fence = !fence; continue; }
-    if (fence) continue;
-    const m = /^(#{1,3})\s+(.+?)\s*#*$/.exec(line);
-    if (m) out.push(m[2].trim());
-  }
-  return out;
-}
-
 function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canChart, onEnterMap, onChartMap, onRemovePin, removeLabel = 'Remove pin', onClose }) {
   const bodyRef = useRef(null);
   const [page, setPage] = useState(null);
@@ -195,13 +185,7 @@ function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canCha
 
   useEffect(() => {
     if (!page || !heading) return undefined;
-    const t = setTimeout(() => {
-      const el = [...(bodyRef.current?.querySelectorAll('h1,h2,h3') || [])]
-        .find((h) => h.textContent.trim() === heading);
-      if (!el) return;
-      el.scrollIntoView({ block: 'start', behavior: 'smooth' });
-      el.animate([{ background: 'var(--burgundy-50)' }, { background: 'transparent' }], { duration: 1600 });
-    }, 60);
+    const t = setTimeout(() => flashHeading(bodyRef.current, heading), 60);
     return () => clearTimeout(t);
   }, [page, heading]);
 
@@ -575,6 +559,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const [view, setView] = useState(null);
   const [stage, setStage] = useState({ w: 1000, h: 700 });
   const [hover, setHover] = useState(null);
+  const [pkeys, pdispatch] = useModifier();
   const [panel, setPanel] = useState(null);     // { pagePath, pinId?, kind?, name?, to? }
   const [veil, setVeil] = useState(0);
   const [anim, setAnim] = useState(false);
@@ -874,6 +859,14 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   live.current.commit = persist;
   useEffect(() => { pending.current[map.id] = null; }, [map]);
 
+  // Pinned preview layout is saved straight to the file, outside undo history.
+  const savePreviews = (pinned_previews) => {
+    const next = { ...(pending.current[map.id] || map), pinned_previews };
+    if (!pinned_previews.length) delete next.pinned_previews;
+    pending.current[map.id] = next;
+    saveAtlasMap(next).catch((e) => console.warn('saveAtlasMap failed:', e));
+  };
+
   const runTransaction = async (fn) => {
     const h = historyOf(map.id);
     h.begin(pending.current[map.id] || map);
@@ -883,8 +876,11 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const stepHistory = (redo) => {
     const h = historyOf(map.id);
     const cur = pending.current[map.id] || map;
-    const doc = redo ? h.redo(cur) : h.undo(cur);
-    if (!doc) return;
+    const stepped = redo ? h.redo(cur) : h.undo(cur);
+    if (!stepped) return;
+    // pinned cards are layout, not content: undo must not move or drop them
+    const doc = { ...stepped };
+    if (cur.pinned_previews?.length) doc.pinned_previews = cur.pinned_previews; else delete doc.pinned_previews;
     pending.current[map.id] = doc;
     setHistTick((n) => n + 1);
     saveAtlasMap(doc).catch((e) => console.warn('saveAtlasMap failed:', e));
@@ -1124,12 +1120,16 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
             { label: 'Remove pin', icon: 'trash', danger: true, onClick: () => removePin(pin.id) },
           ])} />`)}
 
-        ${hoverPin && hoverPin.page && html`<${HoverCard} pin=${hoverPin} invZoom=${invZoom} scale=${pinScale} summary=${summaryOf(splitPageRef(hoverPin.page).path)} />`}
+        ${hoverPin && hoverPin.page && !pkeys.mod && html`<${HoverCard} pin=${hoverPin} invZoom=${invZoom} scale=${pinScale} summary=${summaryOf(splitPageRef(hoverPin.page).path)} />`}
       </div>`}
 
       ${placing && ghost && html`<div style=${{ position: 'absolute', left: ghost.x, top: ghost.y, transform: 'translate(-50%,-100%)', pointerEvents: 'none', opacity: 0.7, zIndex: 75 }}>
         <${SealHead} kind=${placing} size=${Math.round(38 * pinScale)} />
       </div>`}
+
+      ${img && view && html`<${PreviewLayer} keys=${pkeys} dispatch=${pdispatch} hover=${hover} pins=${map.pins || []}
+        view=${view} W=${W} H=${H} stage=${stage} pinned=${map.pinned_previews || []} Seal=${PinSeal}
+        onSave=${savePreviews} enabled=${!placing && !measure && !draw.tool && !pinPos} />`}
 
       ${''/* descend / ascend dissolve veil */}
       <div style=${{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'radial-gradient(circle, rgba(242,235,217,.5), rgba(220,207,176,.96))', opacity: veil, transition: 'opacity .3s ease', zIndex: 80 }} />

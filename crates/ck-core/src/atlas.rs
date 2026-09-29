@@ -83,6 +83,16 @@ pub struct Region {
     pub color: Option<String>,
 }
 
+/// A preview card pinned open over the map: screen-space px inside the stage.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct PinnedPreview {
+    pub pin_id: String,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct MapDoc {
     pub id: String,
@@ -104,12 +114,15 @@ pub struct MapDoc {
     pub texts: Vec<MapText>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub regions: Vec<Region>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_previews: Vec<PinnedPreview>,
 }
 
 const MAX_OBJECTS: usize = 2000;
 const MAX_REGIONS: usize = 500;
 const MAX_REGION_POINTS: usize = 1000;
 const MAX_STROKE_POINTS: usize = 5000;
+const MAX_PINNED_PREVIEWS: usize = 8;
 const DRAWING_KINDS: &[&str] = &["pen", "line", "rect", "circle", "stamp"];
 
 fn bad(msg: &str) -> AppError {
@@ -182,6 +195,22 @@ fn validate_annotations(doc: &MapDoc) -> AppResult<()> {
                 .is_some_and(|p| p.is_empty() || p.len() > 500)
         {
             return Err(bad("A region on this map is not valid"));
+        }
+    }
+    if doc.pinned_previews.len() > MAX_PINNED_PREVIEWS {
+        return Err(bad("Too many pinned previews on one map"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for v in &doc.pinned_previews {
+        let px = |n: f64, lo: f64| n.is_finite() && (lo..=20000.0).contains(&n);
+        if !valid_obj_id(&v.pin_id)
+            || !seen.insert(v.pin_id.as_str())
+            || !px(v.x, -20000.0)
+            || !px(v.y, -20000.0)
+            || !px(v.w, 100.0)
+            || !px(v.h, 100.0)
+        {
+            return Err(bad("A pinned preview on this map is not valid"));
         }
     }
     Ok(())
@@ -871,6 +900,68 @@ mod tests {
         bad_docs.push(b);
         let mut b = back.clone();
         b.drawings = vec![drawing("line", &[[0.1, 0.1], [0.2, 0.2]]); MAX_OBJECTS + 1];
+        bad_docs.push(b);
+        for b in bad_docs {
+            assert!(write_map(&dir, &b).is_err());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pinned_previews_roundtrip_and_validate() {
+        let dir = temp_world("previews");
+        let src = fake_png(&dir, "a.png");
+        let doc = create_map(&dir, "Vale", &src, None, None).unwrap();
+        let card = |id: &str| PinnedPreview {
+            pin_id: id.into(),
+            x: 40.0,
+            y: 60.0,
+            w: 320.0,
+            h: 340.0,
+        };
+        let mut m = read_map(&dir, &doc.id).unwrap();
+        m.pinned_previews = vec![card("p1"), card("p2")];
+        write_map(&dir, &m).unwrap();
+        assert_eq!(
+            read_map(&dir, &doc.id).unwrap().pinned_previews,
+            m.pinned_previews
+        );
+        // an empty list is omitted from the file
+        m.pinned_previews.clear();
+        write_map(&dir, &m).unwrap();
+        let text = std::fs::read_to_string(dir.join(ATLAS_DIR).join("vale.json")).unwrap();
+        assert!(!text.contains("pinned_previews"));
+
+        let mut bad_docs = Vec::new();
+        for c in [
+            PinnedPreview {
+                x: f64::NAN,
+                ..card("p")
+            },
+            PinnedPreview {
+                w: 10.0,
+                ..card("p")
+            },
+            PinnedPreview {
+                h: 1e9,
+                ..card("p")
+            },
+            PinnedPreview {
+                pin_id: String::new(),
+                ..card("p")
+            },
+        ] {
+            let mut b = m.clone();
+            b.pinned_previews = vec![c];
+            bad_docs.push(b);
+        }
+        let mut b = m.clone();
+        b.pinned_previews = vec![card("p1"), card("p1")];
+        bad_docs.push(b);
+        let mut b = m.clone();
+        b.pinned_previews = (0..=MAX_PINNED_PREVIEWS)
+            .map(|i| card(&format!("p{i}")))
+            .collect();
         bad_docs.push(b);
         for b in bad_docs {
             assert!(write_map(&dir, &b).is_err());

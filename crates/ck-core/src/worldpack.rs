@@ -1343,6 +1343,7 @@ mod tests {
                 drawings: vec![],
                 texts: vec![],
                 regions: vec![],
+                pinned_previews: vec![],
                 pins: vec![Pin {
                     id: "p".into(),
                     name: "Vale".into(),

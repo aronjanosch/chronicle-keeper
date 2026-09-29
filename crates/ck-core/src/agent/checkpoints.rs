@@ -18,6 +18,10 @@ struct Checkpoint {
     path: String,
     /// File content before the write; `None` = file did not exist (a create).
     content: Option<String>,
+    /// Set for an Atlas map file (`path` is then `Atlas/<id>.json` and
+    /// `content` the map's JSON); restored through the Atlas writer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    map: Option<String>,
 }
 
 pub fn dir_for(world_root: &Path, chat_id: &str) -> PathBuf {
@@ -39,6 +43,34 @@ fn entries_sorted(dir: &Path) -> Vec<PathBuf> {
 
 /// Snapshot `rel` before a write. Must run before the file is touched.
 pub fn record(world_root: &Path, chat_id: &str, vault_root: &Path, rel: &str) -> AppResult<()> {
+    let content = vault::read_page(vault_root, rel).ok().map(|p| p.content);
+    push(
+        world_root,
+        chat_id,
+        Checkpoint {
+            path: rel.to_string(),
+            content,
+            map: None,
+        },
+    )
+}
+
+/// Snapshot an Atlas map file before the Keeper edits it.
+pub fn record_map(world_root: &Path, chat_id: &str, map_id: &str) -> AppResult<()> {
+    let content = crate::atlas::read_map_text(world_root, map_id)
+        .ok_or_else(|| AppError::NotFound(format!("Map not found: {map_id}")))?;
+    push(
+        world_root,
+        chat_id,
+        Checkpoint {
+            path: format!("{}/{map_id}.json", crate::atlas::ATLAS_DIR),
+            content: Some(content),
+            map: Some(map_id.to_string()),
+        },
+    )
+}
+
+fn push(world_root: &Path, chat_id: &str, cp: Checkpoint) -> AppResult<()> {
     let dir = dir_for(world_root, chat_id);
     std::fs::create_dir_all(&dir)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("create checkpoints dir: {e}")))?;
@@ -53,11 +85,6 @@ pub fn record(world_root: &Path, chat_id: &str, vault_root: &Path, rel: &str) ->
         .last()
         .and_then(|p| p.file_stem()?.to_str()?.parse::<u64>().ok())
         .map_or(1, |n| n + 1);
-    let content = vault::read_page(vault_root, rel).ok().map(|p| p.content);
-    let cp = Checkpoint {
-        path: rel.to_string(),
-        content,
-    };
     let json = serde_json::to_string(&cp)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("serialize checkpoint: {e}")))?;
     std::fs::write(dir.join(format!("{seq:05}.json")), json)
@@ -88,11 +115,15 @@ pub fn undo(
             .map_err(|e| AppError::Internal(anyhow::anyhow!("read checkpoint: {e}")))?;
         let cp: Checkpoint = serde_json::from_str(&raw)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("parse checkpoint: {e}")))?;
-        match &cp.content {
-            Some(content) => {
+        match (&cp.map, &cp.content) {
+            (Some(map_id), Some(content)) => {
+                crate::atlas::restore_map_text(world_root, map_id, content)?;
+            }
+            (_, Some(content)) => {
                 vault::write_page(vault_root, &cp.path, content)?;
             }
-            None => match vault::delete_page(vault_root, &cp.path) {
+            (Some(_), None) => {}
+            (None, None) => match vault::delete_page(vault_root, &cp.path) {
                 Ok(()) | Err(AppError::NotFound(_)) => {}
                 Err(e) => return Err(e),
             },

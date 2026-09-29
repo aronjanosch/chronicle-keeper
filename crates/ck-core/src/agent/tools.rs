@@ -39,9 +39,8 @@ pub fn tier_of(name: &str) -> Tier {
         // Memory + save_skill: app-global Keeper state, not world content.
         // Ungated like the notebook — the skill-creator flow confirms in chat.
         "read_memory" | "write_memory" | "delete_memory" | "save_skill" => Tier::Memory,
-        "create_page" | "edit_page" | "multi_edit_page" | "insert_into_page" | "write_page" => {
-            Tier::Write
-        }
+        "create_page" | "edit_page" | "multi_edit_page" | "insert_into_page" | "write_page"
+        | "place_pin" => Tier::Write,
         "rename_page" | "move_page" | "delete_page" | "create_folder" => Tier::Structural,
         "run_command" => Tier::Shell,
         // Network reads of external content — gated ask-first (a query / page
@@ -110,6 +109,24 @@ pub fn read_tools() -> Vec<ToolDef> {
             name: "read_prep".into(),
             description: "Read what the GM prepared for one session: the opening situation, possible scenes, reminders, any linked thread/Codex pages, and — after play — how each card turned out (happened, changed, unused). This is intent, not record: a scene here may never have happened. Read it when preparing or reviewing a session, or when asked what was planned or what went unused.".into(),
             schema: obj(json!({ "session": { "type": "integer" } }), &["session"]),
+        },
+        ToolDef {
+            name: "read_map".into(),
+            description: "Atlas maps. With no `map`, list every map (id, name, pin count, scale). With a map id or name: its own page, scale, parent/child maps, every pin (name, kind, linked page, position as % from the top-left) and every region (name, page, centre). Read it before placing pins or answering where something is on a map.".into(),
+            schema: obj(json!({ "map": { "type": "string", "description": "map id or name; omit to list" } }), &[]),
+        },
+        ToolDef {
+            name: "map_distance".into(),
+            description: "Straight-line distance between two pins or regions on one map, in the map's own unit, with travel time on foot, mounted, by wagon and by ship. Needs the map's scale to be set. Use this — not your own arithmetic — for any 'how far / how long' question.".into(),
+            schema: obj(
+                json!({
+                    "map": { "type": "string", "description": "map id or name" },
+                    "from": { "type": "string", "description": "pin or region name" },
+                    "to": { "type": "string", "description": "pin or region name" },
+                    "pace": { "type": "string", "description": "foot, mounted, wagon or ship; default all four" }
+                }),
+                &["map", "from", "to"],
+            ),
         },
         ToolDef {
             name: "search_summaries".into(),
@@ -220,6 +237,22 @@ pub fn write_tools() -> Vec<ToolDef> {
         json!({ "type": "object", "properties": props, "required": required })
     }
     vec![
+        ToolDef {
+            name: "place_pin".into(),
+            description: "Add a pin to an Atlas map. Give x and y (0–1 from the top-left; check read_map for where things are) or `near` an existing pin/region. `page` optionally links an existing Codex page — create the page first. Errors if the name is already pinned on that map.".into(),
+            schema: obj(
+                json!({
+                    "map": { "type": "string", "description": "map id or name" },
+                    "name": { "type": "string" },
+                    "kind": { "type": "string", "description": "place (default), npc, faction, item, lore or pc" },
+                    "x": { "type": "number" },
+                    "y": { "type": "number" },
+                    "near": { "type": "string", "description": "existing pin or region name to place beside" },
+                    "page": { "type": "string", "description": "vault-relative page path to link" }
+                }),
+                &["map", "name"],
+            ),
+        },
         ToolDef {
             name: "create_page".into(),
             description: "Create a new Codex page. Full file content including `---` frontmatter (kind, summary). Timeline event pages (kind: event) go in Events/. Errors if the page already exists.".into(),
@@ -1159,6 +1192,15 @@ pub async fn run_web_tool(name: &str, args: &Value) -> Result<String, String> {
 }
 
 fn write_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, String> {
+    if name == "place_pin" {
+        let plan = plan_pin(ctx, args)?;
+        return Ok(json!({
+            "path": format!("Atlas/{}.json", plan.doc.id),
+            "action": "place_pin",
+            "summary": plan.summary,
+            "map": plan.doc.id,
+        }));
+    }
     let str_arg = |k: &str| {
         args.get(k)
             .and_then(Value::as_str)
@@ -1448,6 +1490,19 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
                 .map(|(src, text)| format!("- {src} (as [[{text}]])"))
                 .collect::<Vec<_>>()
                 .join("\n"))
+        }
+        "read_map" => read_map_tool(ctx, &str_arg("map")),
+        "map_distance" => map_distance_tool(
+            ctx,
+            &str_arg("map"),
+            &str_arg("from"),
+            &str_arg("to"),
+            &str_arg("pace"),
+        ),
+        "place_pin" => {
+            let plan = plan_pin(ctx, args)?;
+            crate::atlas::write_map_as(ctx.world_root, &plan.doc, "keeper").map_err(app_err)?;
+            Ok(format!("{}.", plan.summary))
         }
         "list_sessions" => {
             let mut entries = super::context::session_entries(ctx.world_root);
@@ -2078,6 +2133,253 @@ fn app_err(e: AppError) -> String {
     e.to_string()
 }
 
+// ── Atlas maps ────────────────────────────────────────────────────
+
+const PIN_KINDS: &[&str] = &["place", "npc", "faction", "item", "lore", "pc"];
+const MAX_MAP_LINES: usize = 150;
+
+fn pct(v: f64) -> String {
+    format!("{}%", (v * 100.0).round())
+}
+
+fn resolve_map(ctx: &ToolCtx<'_>, key: &str) -> Result<crate::atlas::MapDoc, String> {
+    let maps = crate::atlas::list_maps(ctx.world_root).map_err(app_err)?;
+    let k = key.trim().to_lowercase();
+    if let Some(m) = maps
+        .iter()
+        .find(|m| m.id.to_lowercase() == k || m.name.to_lowercase() == k)
+    {
+        return Ok(m.clone());
+    }
+    let names: Vec<String> = maps
+        .iter()
+        .map(|m| format!("{} ({})", m.name, m.id))
+        .collect();
+    Err(if names.is_empty() {
+        "This world has no maps yet.".into()
+    } else {
+        format!("No map “{key}”. Maps: {}", names.join(", "))
+    })
+}
+
+fn read_map_tool(ctx: &ToolCtx<'_>, key: &str) -> Result<String, String> {
+    if key.trim().is_empty() {
+        let maps = crate::atlas::list_maps(ctx.world_root).map_err(app_err)?;
+        if maps.is_empty() {
+            return Ok("No maps.".into());
+        }
+        return Ok(maps
+            .iter()
+            .map(|m| {
+                let scale = m
+                    .scale
+                    .as_ref()
+                    .map(|s| format!(", scale {}", crate::atlas::fmt_distance(s.width, &s.unit)))
+                    .unwrap_or_default();
+                format!("- {} (id: {}) — {} pins{scale}", m.name, m.id, m.pins.len())
+            })
+            .collect::<Vec<_>>()
+            .join("\n"));
+    }
+    let doc = resolve_map(ctx, key)?;
+    let all = crate::atlas::list_maps(ctx.world_root).map_err(app_err)?;
+    let mut out = format!("Map “{}” (id: {})", doc.name, doc.id);
+    if let Some(p) = &doc.page {
+        out.push_str(&format!(" — page: {p}"));
+    }
+    out.push('\n');
+    match &doc.scale {
+        Some(s) => out.push_str(&format!(
+            "Scale: the full map width is {}. Positions are % from the top-left.\n",
+            crate::atlas::fmt_distance(s.width, &s.unit)
+        )),
+        None => out.push_str(
+            "Scale: not set (map_distance unavailable). Positions are % from the top-left.\n",
+        ),
+    }
+    if let Some(parent) = doc
+        .parent
+        .as_deref()
+        .and_then(|p| all.iter().find(|m| m.id == p))
+    {
+        out.push_str(&format!(
+            "Parent map: {} (id: {})\n",
+            parent.name, parent.id
+        ));
+    }
+    let children: Vec<String> = all
+        .iter()
+        .filter(|m| m.parent.as_deref() == Some(doc.id.as_str()))
+        .map(|m| format!("{} (id: {})", m.name, m.id))
+        .collect();
+    if !children.is_empty() {
+        out.push_str(&format!("Child maps: {}\n", children.join(", ")));
+    }
+    out.push_str(&format!("Pins ({}):\n", doc.pins.len()));
+    for p in doc.pins.iter().take(MAX_MAP_LINES) {
+        out.push_str(&format!("- {} [{}]", p.name, p.kind));
+        if let Some(l) = &p.label {
+            out.push_str(&format!(" #{l}"));
+        }
+        if let Some(page) = &p.page {
+            out.push_str(&format!(" → {page}"));
+        }
+        if let Some(to) = &p.to {
+            out.push_str(&format!(" ⇒ map {to}"));
+        }
+        out.push_str(&format!(" · {}, {}\n", pct(p.x), pct(p.y)));
+    }
+    if doc.pins.len() > MAX_MAP_LINES {
+        out.push_str(&format!("(+{} more)\n", doc.pins.len() - MAX_MAP_LINES));
+    }
+    if !doc.regions.is_empty() {
+        out.push_str(&format!("Regions ({}):\n", doc.regions.len()));
+        for r in doc.regions.iter().take(MAX_MAP_LINES) {
+            let (_, cx, cy) = crate::atlas::find_endpoint(&doc, &r.id).unwrap_or_default();
+            out.push_str(&format!("- {}", r.name));
+            if let Some(page) = &r.page {
+                out.push_str(&format!(" → {page}"));
+            }
+            out.push_str(&format!(" · centre {}, {}\n", pct(cx), pct(cy)));
+        }
+    }
+    Ok(out.trim_end().to_string())
+}
+
+fn map_distance_tool(
+    ctx: &ToolCtx<'_>,
+    map: &str,
+    from: &str,
+    to: &str,
+    pace: &str,
+) -> Result<String, String> {
+    let doc = resolve_map(ctx, map)?;
+    let scale = doc.scale.clone().ok_or_else(|| {
+        format!(
+            "“{}” has no scale set — the GM sets one in Map settings or with the ruler's “Set scale”.",
+            doc.name
+        )
+    })?;
+    let end = |k: &str| {
+        crate::atlas::find_endpoint(&doc, k)
+            .ok_or_else(|| format!("No pin or region “{k}” on “{}” — check read_map.", doc.name))
+    };
+    let (a, b) = (end(from)?, end(to)?);
+    let size = crate::atlas::image_size(ctx.world_root, &doc).map_err(app_err)?;
+    let dist = crate::atlas::distance_between(&doc, size, (a.1, a.2), (b.1, b.2))
+        .ok_or("distance unavailable")?;
+    let want = pace.trim().to_lowercase();
+    let paces: Vec<_> = crate::atlas::PACES
+        .iter()
+        .filter(|(label, _)| {
+            want.is_empty()
+                || label.to_lowercase().contains(&want)
+                || (want == "foot" && *label == "On foot")
+                || (want == "ship" && label.contains("ship"))
+        })
+        .collect();
+    if paces.is_empty() {
+        return Err("pace must be foot, mounted, wagon or ship".into());
+    }
+    let mut out = format!(
+        "{} → {}: {} (straight line on “{}”)",
+        a.0,
+        b.0,
+        crate::atlas::fmt_distance(dist, &scale.unit),
+        doc.name
+    );
+    for (label, km_day) in paces {
+        match crate::atlas::travel_days(dist, &scale.unit, *km_day) {
+            Some(d) => out.push_str(&format!("\n- {label}: {}", crate::atlas::fmt_days(d))),
+            None => {
+                out.push_str(&format!(
+                    "\n(no travel times: unit “{}” has no km conversion)",
+                    scale.unit
+                ));
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
+struct PinPlan {
+    doc: crate::atlas::MapDoc,
+    summary: String,
+}
+
+/// Validate a `place_pin` call and build the map as it would be after it.
+fn plan_pin(ctx: &ToolCtx<'_>, args: &Value) -> Result<PinPlan, String> {
+    let s = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").trim();
+    let num = |k: &str| args.get(k).and_then(Value::as_f64);
+    let mut doc = resolve_map(ctx, s("map"))?;
+    let name = s("name");
+    if name.is_empty() || name.chars().count() > 120 {
+        return Err("`name` must be 1–120 characters".into());
+    }
+    if doc.pins.iter().any(|p| p.name.eq_ignore_ascii_case(name)) {
+        return Err(format!(
+            "“{name}” is already pinned on “{}” — pick another name or read_map.",
+            doc.name
+        ));
+    }
+    let kind = if s("kind").is_empty() {
+        "place"
+    } else {
+        s("kind")
+    };
+    if !PIN_KINDS.contains(&kind) {
+        return Err(format!("`kind` must be one of: {}", PIN_KINDS.join(", ")));
+    }
+    let (x, y) = match (num("x"), num("y"), s("near")) {
+        (Some(x), Some(y), _) => (x, y),
+        (_, _, near) if !near.is_empty() => {
+            let (_, nx, ny) = crate::atlas::find_endpoint(&doc, near).ok_or_else(|| {
+                format!("No pin or region “{near}” to place beside — check read_map.")
+            })?;
+            ((nx + 0.03).min(1.0), (ny + 0.03).min(1.0))
+        }
+        _ => return Err("give both `x` and `y` (0–1 from the top-left) or `near`".into()),
+    };
+    if !(x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)) {
+        return Err("`x` and `y` must be between 0 and 1".into());
+    }
+    let page = match s("page") {
+        "" => None,
+        raw => {
+            let path = norm_md_path(raw);
+            let vault_root = ctx.cfg.codex_dir(ctx.world_root);
+            vault::read_page(&vault_root, &path)
+                .map_err(|_| format!("Page not found: {path} — create it first."))?;
+            Some(path)
+        }
+    };
+    let mut id = format!("p{:x}", chrono::Utc::now().timestamp_millis());
+    while doc.pins.iter().any(|p| p.id == id) {
+        id.push('x');
+    }
+    let at = format!("{}, {}", pct(x), pct(y));
+    let summary = match &page {
+        Some(p) => format!(
+            "place pin “{name}” [{kind}] on “{}” at {at}, linked to {p}",
+            doc.name
+        ),
+        None => format!("place pin “{name}” [{kind}] on “{}” at {at}", doc.name),
+    };
+    doc.pins.push(crate::atlas::Pin {
+        id,
+        name: name.to_string(),
+        kind: kind.to_string(),
+        x,
+        y,
+        page,
+        to: None,
+        icon: None,
+        label: None,
+    });
+    Ok(PinPlan { doc, summary })
+}
+
 fn strip_b(s: &str) -> String {
     s.replace("<b>", "").replace("</b>", "")
 }
@@ -2271,6 +2573,204 @@ mod tests {
 
     fn call(ctx: &ToolCtx<'_>, name: &str, args: Value) -> Result<String, String> {
         dispatch(ctx, name, &args)
+    }
+
+    /// A world with a 1600×1000 map (real PNG header) scaled to 240 mi wide.
+    fn map_fixture(tag: &str) -> (AppState, PathBuf, WorldConfig) {
+        let (state, root, cfg) = fixture_world(tag);
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend(1600u32.to_be_bytes());
+        png.extend(1000u32.to_be_bytes());
+        let src = root.join("art.png");
+        std::fs::write(&src, png).unwrap();
+        let doc = crate::atlas::create_map(&root, "Reach", &src, None, Some("Thornhold.md".into()))
+            .unwrap();
+        let mut doc = crate::atlas::read_map(&root, &doc.id).unwrap();
+        doc.scale = Some(crate::atlas::MapScale {
+            width: 240.0,
+            unit: "mi".into(),
+        });
+        let pin = |id: &str, name: &str, x: f64, y: f64| crate::atlas::Pin {
+            id: id.into(),
+            name: name.into(),
+            kind: "place".into(),
+            x,
+            y,
+            page: None,
+            to: None,
+            icon: None,
+            label: None,
+        };
+        doc.pins = vec![
+            pin("a", "Thornhold", 0.25, 0.5),
+            pin("b", "Ashford", 0.75, 0.5),
+        ];
+        doc.regions = vec![crate::atlas::Region {
+            id: "r1".into(),
+            name: "Marsh".into(),
+            points: vec![[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]],
+            page: None,
+            color: None,
+        }];
+        crate::atlas::write_map(&root, &doc).unwrap();
+        (state, root, cfg)
+    }
+
+    #[test]
+    fn map_tools_read_and_measure() {
+        let (state, root, cfg) = map_fixture("maps-read");
+        let ctx = ToolCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+        };
+        let list = call(&ctx, "read_map", json!({})).unwrap();
+        assert!(
+            list.contains("Reach (id: reach) — 2 pins, scale 240 mi"),
+            "{list}"
+        );
+        let detail = call(&ctx, "read_map", json!({ "map": "reach" })).unwrap();
+        assert!(detail.contains("Thornhold [place] · 25%, 50%"), "{detail}");
+        assert!(detail.contains("Marsh · centre 25%, 25%"), "{detail}");
+        assert!(detail.contains("page: Thornhold.md"), "{detail}");
+        assert!(call(&ctx, "read_map", json!({ "map": "nope" }))
+            .unwrap_err()
+            .contains("Maps: Reach (reach)"));
+
+        // half the width apart on the same row = 120 mi; foot: 120 mi × 1.609344 / 30
+        let d = call(
+            &ctx,
+            "map_distance",
+            json!({ "map": "Reach", "from": "thornhold", "to": "ASHFORD" }),
+        )
+        .unwrap();
+        assert!(d.contains("Thornhold → Ashford: 120 mi"), "{d}");
+        assert!(d.contains("On foot: 6.4 days"), "{d}");
+        assert!(
+            d.contains("Sailing ship: 46 hours") || d.contains("Sailing ship: 1.9 days"),
+            "{d}"
+        );
+        // a region resolves to its centre
+        let r = call(
+            &ctx,
+            "map_distance",
+            json!({ "map": "reach", "from": "Marsh", "to": "Ashford", "pace": "mounted" }),
+        )
+        .unwrap();
+        assert!(r.contains("Mounted") && !r.contains("On foot"), "{r}");
+
+        assert!(call(
+            &ctx,
+            "map_distance",
+            json!({ "map": "reach", "from": "Nowhere", "to": "Ashford" })
+        )
+        .unwrap_err()
+        .contains("No pin or region"));
+        assert!(call(
+            &ctx,
+            "map_distance",
+            json!({ "map": "reach", "from": "Marsh", "to": "Ashford", "pace": "teleport" })
+        )
+        .unwrap_err()
+        .contains("pace must be"));
+
+        // no scale → a clear error, not a guess
+        let mut doc = crate::atlas::read_map(&root, "reach").unwrap();
+        doc.scale = None;
+        crate::atlas::write_map(&root, &doc).unwrap();
+        assert!(call(
+            &ctx,
+            "map_distance",
+            json!({ "map": "reach", "from": "Marsh", "to": "Ashford" })
+        )
+        .unwrap_err()
+        .contains("no scale"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn map_tool_tiers() {
+        assert_eq!(tier_of("read_map"), Tier::Read);
+        assert_eq!(tier_of("map_distance"), Tier::Read);
+        assert_eq!(tier_of("place_pin"), Tier::Write);
+        let has = |tools: Vec<ToolDef>, n: &str| tools.iter().any(|t| t.name == n);
+        assert!(has(read_tools(), "read_map") && has(read_tools(), "map_distance"));
+        assert!(has(write_tools(), "place_pin") && !has(read_tools(), "place_pin"));
+    }
+
+    #[test]
+    fn place_pin_validates_writes_keeper_history_and_undoes() {
+        let (state, root, cfg) = map_fixture("maps-pin");
+        let ctx = ToolCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+        };
+        let bad = |args: Value| call(&ctx, "place_pin", args).unwrap_err();
+        assert!(bad(json!({ "map": "reach", "name": "X" })).contains("`x` and `y`"));
+        assert!(
+            bad(json!({ "map": "reach", "name": "X", "x": 1.5, "y": 0.5 }))
+                .contains("between 0 and 1")
+        );
+        assert!(
+            bad(json!({ "map": "reach", "name": "thornhold", "x": 0.1, "y": 0.1 }))
+                .contains("already pinned")
+        );
+        assert!(
+            bad(json!({ "map": "reach", "name": "X", "kind": "dragon", "x": 0.1, "y": 0.1 }))
+                .contains("`kind`")
+        );
+        assert!(bad(json!({ "map": "reach", "name": "X", "near": "Ghost" }))
+            .contains("No pin or region"));
+        assert!(
+            bad(json!({ "map": "reach", "name": "X", "x": 0.1, "y": 0.1, "page": "Missing" }))
+                .contains("Page not found")
+        );
+        assert!(
+            bad(json!({ "map": "atlantis", "name": "X", "x": 0.1, "y": 0.1 })).contains("No map")
+        );
+        assert_eq!(
+            crate::atlas::read_map(&root, "reach").unwrap().pins.len(),
+            2
+        );
+
+        // the gate card is a sentence carrying the map id, not a page diff
+        let args = json!({ "map": "Reach", "name": "Vale", "kind": "npc", "near": "Ashford", "page": "NPCs/Baron Aldric" });
+        let card = gate_preview(&ctx, "place_pin", &args).unwrap();
+        assert_eq!(card["action"], "place_pin");
+        assert_eq!(card["map"], "reach");
+        assert_eq!(card["path"], "Atlas/reach.json");
+        assert!(card["summary"]
+            .as_str()
+            .unwrap()
+            .contains("NPCs/Baron Aldric.md"));
+        assert!(card.get("new").is_none());
+
+        // gated flow: checkpoint first, then dispatch
+        super::super::checkpoints::record_map(&root, "chat1", "reach").unwrap();
+        let ok = call(&ctx, "place_pin", args).unwrap();
+        assert!(ok.contains("Vale"), "{ok}");
+        let doc = crate::atlas::read_map(&root, "reach").unwrap();
+        let pin = doc.pins.iter().find(|p| p.name == "Vale").unwrap();
+        assert_eq!(
+            (pin.kind.as_str(), pin.page.as_deref()),
+            ("npc", Some("NPCs/Baron Aldric.md"))
+        );
+        assert!((pin.x - 0.78).abs() < 1e-9 && (pin.y - 0.53).abs() < 1e-9);
+
+        // map history recorded the keeper as the origin of the pre-edit state
+        let versions = crate::atlas::list_history(&root, "reach").unwrap();
+        assert_eq!(versions.first().map(|v| v.origin.as_str()), Some("keeper"));
+
+        // /undo brings the map back and is itself a history step
+        let vault = cfg.codex_dir(&root);
+        let restored = super::super::checkpoints::undo(&root, "chat1", &vault, false).unwrap();
+        assert_eq!(restored, ["Atlas/reach.json"]);
+        assert_eq!(
+            crate::atlas::read_map(&root, "reach").unwrap().pins.len(),
+            2
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 
     /// Prep is written as the app writes it, through `session_prep`, so the test

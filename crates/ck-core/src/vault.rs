@@ -492,7 +492,7 @@ pub fn default_headings(kind: &str) -> &'static [&'static str] {
 
 // Frontmatter + H1 only — the pre-Phase-16 default, kept so untouched seeded
 // templates can be recognized and upgraded.
-fn template_base(kind: &str, fields: &[crate::world_config::KindField]) -> String {
+pub(crate) fn template_base(kind: &str, fields: &[crate::world_config::KindField]) -> String {
     let mut out = format!("---\nkind: {kind}\nsummary:\n");
     for f in fields {
         match f.ftype.as_str() {
@@ -1007,85 +1007,163 @@ pub(crate) fn safe_page_filename(name: &str) -> String {
     }
 }
 
-/// Set (or add) `kind` and `summary` frontmatter fields without touching other fields.
-/// Existing values take priority — only blank/absent fields are filled from the arguments.
-/// Non-`kind`/`summary` fields are preserved (reformatted to scalar or block-list YAML).
+// ── Line-preserving frontmatter edits ────────────────────────────────
+// Only the touched key's line(s) change; comments, nested maps, quoting,
+// numbers, booleans, wikilinks and untouched lists stay byte-identical. The
+// flat `split_frontmatter` model is for reading — it cannot round-trip these.
+
+// Byte range of the frontmatter's inner text; `content[end..]` starts at the
+// closing fence's newline.
+fn fm_span(content: &str) -> Option<(usize, usize)> {
+    let start = if content.starts_with("---\n") {
+        4
+    } else if content.starts_with("---\r\n") {
+        5
+    } else {
+        return None;
+    };
+    let end = start + content[start..].find("\n---")?;
+    Some((start, end))
+}
+
+// Index of the top-level `key:` line.
+fn fm_key_line(lines: &[String], key: &str) -> Option<usize> {
+    lines.iter().position(|l| {
+        !l.starts_with([' ', '\t']) && l.split_once(':').is_some_and(|(k, _)| k.trim() == key)
+    })
+}
+
+fn fm_line_value(line: &str) -> &str {
+    line.split_once(':').map_or("", |(_, v)| v.trim())
+}
+
+fn unquote(s: &str) -> &str {
+    s.trim().trim_matches(['"', '\''])
+}
+
+// A list item that is safe inside `[a, b]` and as a `- item`.
+fn list_item(v: &str) -> String {
+    if yaml_scalar(v) != v || v.contains([',', '[', ']', '{', '}']) {
+        yaml_quoted(v)
+    } else {
+        v.to_string()
+    }
+}
+
+// Rebuild the file with the frontmatter block swapped for `lines`.
+fn with_fm_lines(content: &str, span: (usize, usize), lines: &[String]) -> String {
+    let (start, end) = span;
+    let crlf = content.starts_with("---\r\n");
+    let trail = if content[start..end].ends_with('\r') {
+        "\r"
+    } else {
+        ""
+    };
+    format!(
+        "{}{}{trail}{}",
+        &content[..start],
+        lines.join(if crlf { "\r\n" } else { "\n" }),
+        &content[end..]
+    )
+}
+
+fn fm_lines(content: &str, span: (usize, usize)) -> Vec<String> {
+    content[span.0..span.1]
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Set (or add) `kind` and `summary` frontmatter fields without touching other lines.
+/// Existing non-empty values take priority — only blank/absent fields are filled.
 pub(crate) fn set_frontmatter_fields(content: &str, kind: &str, summary: &str) -> String {
-    let (fm, body) = split_frontmatter(content);
-    let k = fm_get(&fm, "kind")
-        .filter(|s| !s.is_empty())
-        .unwrap_or(kind);
-    let s = fm_get(&fm, "summary")
-        .filter(|s| !s.is_empty())
-        .unwrap_or(summary);
-    let mut out = String::from("---\n");
-    out.push_str(&format!("kind: {k}\n"));
-    let sq = yaml_quoted(s);
-    if sq.is_empty() {
-        out.push_str("summary:\n");
+    let sq = yaml_quoted(summary);
+    let summary_line = if sq.is_empty() {
+        "summary:".to_string()
     } else {
-        out.push_str(&format!("summary: {sq}\n"));
-    }
-    for (key, vals) in &fm {
-        if key == "kind" || key == "summary" {
-            continue;
+        format!("summary: {sq}")
+    };
+    let Some(span) = fm_span(content) else {
+        let mut out = format!("---\nkind: {kind}\n{summary_line}\n---\n\n{content}");
+        if !content.is_empty() && !content.ends_with('\n') {
+            out.push('\n');
         }
-        push_fm_field(&mut out, key, vals);
+        return out;
+    };
+    let mut lines = fm_lines(content, span);
+    match fm_key_line(&lines, "kind") {
+        Some(i) if unquote(fm_line_value(&lines[i])).is_empty() => {
+            lines[i] = format!("kind: {kind}");
+        }
+        Some(_) => {}
+        None => lines.insert(0, format!("kind: {kind}")),
     }
-    out.push_str("---\n\n");
-    out.push_str(body);
-    if !body.is_empty() && !body.ends_with('\n') {
-        out.push('\n');
-    }
-    out
-}
-
-fn push_fm_field(out: &mut String, key: &str, vals: &[String]) {
-    if vals.is_empty() {
-        out.push_str(&format!("{key}:\n"));
-    } else if vals.len() == 1 {
-        let v = if key == "summary" {
-            yaml_quoted(&vals[0])
-        } else {
-            yaml_scalar(&vals[0])
-        };
-        out.push_str(&format!("{key}: {v}\n"));
-    } else {
-        out.push_str(&format!("{key}:\n"));
-        for v in vals {
-            out.push_str(&format!("  - {v}\n"));
+    match fm_key_line(&lines, "summary") {
+        Some(i) if unquote(fm_line_value(&lines[i])).is_empty() => lines[i] = summary_line,
+        Some(_) => {}
+        None => {
+            let at = fm_key_line(&lines, "kind").map_or(0, |i| i + 1);
+            lines.insert(at, summary_line);
         }
     }
-}
-
-fn rebuild_with_fm(fm: &[(String, Vec<String>)], body: &str) -> String {
-    let mut out = String::from("---\n");
-    for (key, vals) in fm {
-        push_fm_field(&mut out, key, vals);
-    }
-    out.push_str("---\n\n");
-    out.push_str(body);
-    if !body.is_empty() && !body.ends_with('\n') {
-        out.push('\n');
-    }
-    out
+    with_fm_lines(content, span, &lines)
 }
 
 /// Append a value to a frontmatter list field, creating the field if absent.
-/// No-op when the value is already present (case-insensitive).
+/// No-op when the value is already present (case-insensitive) or the field is
+/// something other than a list/scalar (e.g. a nested map).
 pub(crate) fn fm_append_list_value(content: &str, field: &str, value: &str) -> String {
-    let (mut fm, body) = split_frontmatter(content);
     let value = value.trim();
-    match fm.iter_mut().find(|(k, _)| k == field) {
-        Some((_, vals)) => {
-            if vals.iter().any(|v| v.eq_ignore_ascii_case(value)) {
-                return content.to_string();
-            }
-            vals.push(value.to_string());
+    let item = list_item(value);
+    let Some(span) = fm_span(content) else {
+        return format!("---\n{field}: [{item}]\n---\n\n{content}");
+    };
+    let mut lines = fm_lines(content, span);
+    let same = |s: &str| unquote(s).eq_ignore_ascii_case(value);
+    let Some(i) = fm_key_line(&lines, field) else {
+        lines.push(format!("{field}: [{item}]"));
+        return with_fm_lines(content, span, &lines);
+    };
+    let rest = fm_line_value(&lines[i]).to_string();
+    if let Some(inner) = rest.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+        if inner.split(',').any(same) {
+            return content.to_string();
         }
-        None => fm.push((field.to_string(), vec![value.to_string()])),
+        let close = lines[i].rfind(']').unwrap_or(lines[i].len());
+        let head = lines[i][..close].trim_end().to_string();
+        let sep = if inner.trim().is_empty() { "" } else { ", " };
+        lines[i] = format!("{head}{sep}{item}]");
+    } else if rest.is_empty() {
+        let mut last = i;
+        let mut indent = "  ".to_string();
+        for (j, l) in lines.iter().enumerate().skip(i + 1) {
+            let t = l.trim_start();
+            if let Some(v) = t
+                .strip_prefix('-')
+                .filter(|v| v.is_empty() || v.starts_with(' '))
+            {
+                if same(v) {
+                    return content.to_string();
+                }
+                last = j;
+                indent = l[..l.len() - t.len()].to_string();
+            } else if l.starts_with([' ', '\t']) && !t.is_empty() {
+                return content.to_string(); // nested mapping under the key
+            } else {
+                break;
+            }
+        }
+        if last == i {
+            lines[i] = format!("{field}: [{item}]");
+        } else {
+            lines.insert(last + 1, format!("{indent}- {item}"));
+        }
+    } else if rest.starts_with(['|', '>']) || same(&rest) {
+        return content.to_string();
+    } else {
+        lines[i] = format!("{field}: [{rest}, {item}]");
     }
-    rebuild_with_fm(&fm, body)
+    with_fm_lines(content, span, &lines)
 }
 
 /// Append `text` at the end of the `anchor` heading's section (before the next
@@ -1831,5 +1909,76 @@ mod tests {
         assert!(create_folder(&dir, ".ck").is_err());
         assert!(move_entry(&dir, "a.md", "../b.md").is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+    const RICH: &str = "---\nkind: npc\n# GM note: keep\nsummary: \"A ranger.\"\ncode: \"007\"\nborn: 1374\nalive: true\nflag: \"true\"\naliases: [Strider]\nenemies: []\nfaction: \"[[Silver Court]]\"\nallies:\n  - \"[[Ada]]\"\n  - \"[[Bram]]\"\nstats:\n  str: 10\n  dex: 12\ntags: [a, b]\n---\n\n# Body\n\nText.\n";
+
+    #[test]
+    fn appending_a_tag_edits_only_the_tags_line() {
+        let out = fm_append_list_value(RICH, "tags", "c");
+        assert_eq!(out, RICH.replace("tags: [a, b]", "tags: [a, b, c]"));
+    }
+
+    #[test]
+    fn appending_to_block_scalar_absent_and_empty_tag_lists() {
+        let block = "---\nkind: npc\ntags:\n  - a\n  - \"b\"\nrace: elf\n---\n\nBody\n";
+        assert_eq!(
+            fm_append_list_value(block, "tags", "c"),
+            "---\nkind: npc\ntags:\n  - a\n  - \"b\"\n  - c\nrace: elf\n---\n\nBody\n"
+        );
+        let scalar = "---\nkind: npc\ntags: solo\n---\n\nBody\n";
+        assert_eq!(
+            fm_append_list_value(scalar, "tags", "c"),
+            "---\nkind: npc\ntags: [solo, c]\n---\n\nBody\n"
+        );
+        let absent = "---\nkind: npc\nborn: 1374\n---\n\nBody\n";
+        assert_eq!(
+            fm_append_list_value(absent, "tags", "c"),
+            "---\nkind: npc\nborn: 1374\ntags: [c]\n---\n\nBody\n"
+        );
+        let empty = "---\nkind: npc\ntags: []\n---\n\nBody\n";
+        assert_eq!(
+            fm_append_list_value(empty, "tags", "c"),
+            "---\nkind: npc\ntags: [c]\n---\n\nBody\n"
+        );
+        let none = "Just prose.\n";
+        assert_eq!(
+            fm_append_list_value(none, "tags", "c"),
+            "---\ntags: [c]\n---\n\nJust prose.\n"
+        );
+    }
+
+    #[test]
+    fn appending_an_existing_tag_or_to_a_nested_field_is_a_no_op() {
+        assert_eq!(fm_append_list_value(RICH, "tags", "A"), RICH);
+        assert_eq!(fm_append_list_value(RICH, "allies", "[[Ada]]"), RICH);
+        assert_eq!(fm_append_list_value(RICH, "stats", "x"), RICH);
+        let crlf = "---\r\nkind: npc\r\ntags: [a]\r\n---\r\n\r\nBody\r\n";
+        assert_eq!(
+            fm_append_list_value(crlf, "tags", "b"),
+            "---\r\nkind: npc\r\ntags: [a, b]\r\n---\r\n\r\nBody\r\n"
+        );
+    }
+
+    #[test]
+    fn a_tag_needing_quotes_is_quoted() {
+        let doc = "---\nkind: npc\ntags: [a]\n---\n\nBody\n";
+        assert!(fm_append_list_value(doc, "tags", "x, y").contains("tags: [a, \"x, y\"]"));
+    }
+
+    #[test]
+    fn enhancing_foreign_frontmatter_keeps_every_other_line() {
+        let foreign = "---\ncssclasses: wide\n# mine\ntags: [a]\nstats:\n  x: 1\naliases: [Solo]\nborn: \"1374\"\nsummary:\n---\nBody line\n";
+        let out = set_frontmatter_fields(foreign, "npc", "A scholar.");
+        assert_eq!(
+            out,
+            "---\nkind: npc\ncssclasses: wide\n# mine\ntags: [a]\nstats:\n  x: 1\naliases: [Solo]\nborn: \"1374\"\nsummary: \"A scholar.\"\n---\nBody line\n"
+        );
+        // existing values win; unrelated lines stay byte-identical
+        assert_eq!(set_frontmatter_fields(RICH, "lore", "other"), RICH);
+        // no frontmatter at all: the classic shape
+        assert_eq!(
+            set_frontmatter_fields("Prose", "lore", "Sum"),
+            "---\nkind: lore\nsummary: \"Sum\"\n---\n\nProse\n"
+        );
     }
 }

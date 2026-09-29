@@ -17,6 +17,7 @@ import {
   createVaultPage, saveVaultPage, promoteVaultPage,
   loadPageHistory, readPageVersion, restorePageVersion, loadWorldHistory,
   loadTrash, restoreTrash, emptyTrash,
+  loadGenrePacks, applyGenrePack,
 } from './actions.js';
 
 const PRONOUNS = ['she/her', 'he/him', 'they/them'];
@@ -1219,6 +1220,52 @@ function VaultDiagnosticsModal() {
   </${ModalShell}>`;
 }
 
+// ── Genre pack picker (Phase 38) ─────────────────────────────────
+const TEMPLATE_WORDS = { created: 'new template', upgraded: 'template upgraded', unchanged: 'template already current', kept: 'your edited template kept' };
+
+function GenrePackModal() {
+  const cid = store.campaign?.campaign_id;
+  const [packs, setPacks] = useState(null);
+  const [sel, setSel] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [done, setDone] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  useEffect(() => { loadGenrePacks().then((p) => { setPacks(p); if (p[0]) setSel(p[0].id); }); }, []);
+  useEffect(() => {
+    setPreview(null); setDone(null);
+    if (!sel || !cid) return;
+    applyGenrePack(cid, sel, 'preview').then(setPreview).catch((e) => setErr(e.message));
+  }, [sel]);
+  async function go() {
+    setBusy(true); setErr(null);
+    try { setDone(await applyGenrePack(cid, sel)); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+  const pack = (packs || []).find((p) => p.id === sel);
+  const report = done || preview;
+  const changed = report && (report.kinds.length || report.templates.some((t) => t.status === 'created' || t.status === 'upgraded') || report.calendar === 'set');
+  return html`<${ModalShell} title="Apply a genre pack" footer=${done
+    ? html`<${Btn} kind="primary" onClick=${closeModal}>Done</${Btn}>`
+    : html`<${Btn} kind="ghost" disabled=${busy} onClick=${closeModal}>Cancel</${Btn}>
+        <${Btn} kind="primary" disabled=${busy || !pack || !changed} onClick=${go}>${busy ? 'Applying…' : 'Apply'}</${Btn}>`}>
+    ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
+    <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', lineHeight: 1.5 }}>
+      Adds kinds, infobox fields and template headings. Nothing you wrote or edited is overwritten.
+    </div>
+    ${!packs ? html`<${Spinner} />` : html`<${Select} value=${sel} onChange=${setSel} options=${packs.map((p) => ({ value: p.id, label: p.name }))} />`}
+    ${pack && html`<div style=${{ fontSize: 13, color: 'var(--ink-soft)' }}>${pack.description}</div>`}
+    ${report && html`<div style=${{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
+      <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 4 }}>${done ? 'Applied' : 'Would change'}</div>
+      ${report.kinds.map((k) => html`<div key=${k.kind}>${k.created ? 'New kind ' : ''}<b>${k.kind}</b>${k.fields_added.length ? ` + ${k.fields_added.join(', ')}` : ''}</div>`)}
+      ${report.templates.map((t) => html`<div key=${t.name} style=${{ color: 'var(--ink-muted)' }}>${t.name}: ${TEMPLATE_WORDS[t.status]}</div>`)}
+      ${report.calendar !== 'none' && html`<div>Calendar: ${{ set: 'added', unchanged: 'already set', kept: 'yours kept' }[report.calendar]}</div>`}
+      ${report.tags.length > 0 && html`<div style=${{ marginTop: 4, color: 'var(--ink-muted)' }}>Suggested tags: ${report.tags.map((t) => '#' + t).join(' ')}</div>`}
+    </div>`}
+  </${ModalShell}>`;
+}
+
 // ── Host ──────────────────────────────────────────────────────────
 export function ModalHost({ modal }) {
   if (!modal) return null;
@@ -1248,6 +1295,7 @@ export function ModalHost({ modal }) {
     case 'exportWorld': return html`<${ExportWorldModal} />`;
     case 'exportPack': return html`<${ExportPackModal} />`;
     case 'importPack': return html`<${ImportPackModal} />`;
+    case 'genrePack': return html`<${GenrePackModal} />`;
     default: return null;
   }
 }

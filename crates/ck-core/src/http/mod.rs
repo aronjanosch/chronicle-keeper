@@ -4,6 +4,7 @@ mod atlas;
 mod campaigns;
 mod codex;
 mod foundry;
+mod genre;
 mod index;
 mod llm;
 mod packs;
@@ -115,6 +116,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/campaigns/:id/foundry/sync", post(foundry::sync))
         .route("/campaigns/:id/vault/kinds", get(vault::kind_schemas))
+        .route("/genre-packs", get(genre::list))
+        .route("/campaigns/:id/genre-pack/apply", post(genre::apply))
         .route("/campaigns/:id/vault/snippets", get(vault::list_snippets))
         .route("/campaigns/:id/vault/templates", get(vault::list_templates))
         .route(

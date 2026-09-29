@@ -155,6 +155,7 @@ export function CampaignScreen({ store }) {
         <${Btn} kind="primary" icon="mic" onClick=${() => navigate('newSession', { id: c.campaign_id })}>New session</${Btn}>
         <${Menu} items=${[
           { label: 'Edit world', icon: 'edit', onClick: () => openModal('campaign', { edit: c }) },
+          { label: 'Apply a genre pack…', icon: 'book', hidden: !c.vault_path, onClick: () => openModal('genrePack') },
           { label: 'Reveal folder', icon: 'folder', hidden: !(window.__TAURI__ && c.vault_path), onClick: () => revealPath(c.vault_path) },
           { label: 'Export world…', icon: 'download', hidden: !c.vault_path, onClick: () => openModal('exportWorld') },
           { label: 'Export world pack…', icon: 'download', hidden: !c.vault_path, onClick: () => openModal('exportPack') },

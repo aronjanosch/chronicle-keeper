@@ -1,9 +1,9 @@
 // Screen — New World (Phase 1.7-C). Recreates design/project/screens/new-world.jsx.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, slugify, initials } from '../core.js';
-import { addExampleWorld, createCampaign, pickVaultFolder, sniffVault } from '../actions.js';
+import { addExampleWorld, createCampaign, loadGenrePacks, pickVaultFolder, sniffVault } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
-import { Icon, Btn, Field, Input, Textarea } from '../ui.js';
+import { Icon, Btn, Field, Input, Select, Textarea } from '../ui.js';
 
 const PRONOUNS = ['she/her', 'he/him', 'they/them'];
 const SCAFFOLD_FOLDERS = ['NPCs', 'Places', 'Factions', 'Items', 'Lore'];
@@ -155,6 +155,8 @@ export function NewWorldScreen() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [sniff, setSniff] = useState(null);
+  const [packs, setPacks] = useState([]);
+  useEffect(() => { loadGenrePacks().then(setPacks); }, []);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
 
   // Layout sniff for the adoption preview (debounced; typed paths too).
@@ -261,6 +263,12 @@ export function NewWorldScreen() {
                 <${Input} value=${f.setting} onInput=${(v) => set('setting', v)} placeholder="Homebrew, Forgotten Realms…" />
               </div>
             </div>
+
+            ${packs.length > 0 && f.mode !== 'existing' && html`<div style=${{ marginBottom: 16 }}>
+              <div style=${fieldLabel}>Genre <span style=${{ fontWeight: 400, color: 'var(--ink-faint)' }}>optional</span></div>
+              <${Select} value=${f.genre || ''} onChange=${(v) => set('genre', v)}
+                options=${[{ value: '', label: 'None — the plain defaults' }, ...packs.map((p) => ({ value: p.id, label: `${p.name} — ${p.description}` }))]} />
+            </div>`}
 
             <button type="button" onClick=${() => set('detailsOpen', !f.detailsOpen)}
               style=${{

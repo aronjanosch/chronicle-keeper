@@ -1340,6 +1340,9 @@ mod tests {
                 parent: parent.map(str::to_string),
                 page: Some(page.into()),
                 scale: None,
+                drawings: vec![],
+                texts: vec![],
+                regions: vec![],
                 pins: vec![Pin {
                     id: "p".into(),
                     name: "Vale".into(),

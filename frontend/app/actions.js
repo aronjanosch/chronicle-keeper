@@ -80,9 +80,26 @@ export async function createCampaign(form) {
     default_language: form.default_language, gm: form.gm, gm_pronouns: form.gm_pronouns,
     players: form.players, extra_info: form.extra_info,
   });
+  if (form.genre) await applyGenrePack(id, form.genre);
   await loadCampaigns();
   await openCampaign(id);
   return id;
+}
+
+// ── Genre packs (Phase 38): starting kinds, fields, templates, calendar ──
+export async function loadGenrePacks() {
+  const r = await apiFetch('/genre-packs').catch(() => null);
+  return (r && r.packs) || [];
+}
+
+// mode 'preview' reports what would change without writing.
+export async function applyGenrePack(campaignId, packId, mode) {
+  const r = await apiJson(`/campaigns/${campaignId}/genre-pack/apply`, 'POST', { id: packId, mode: mode || 'apply' });
+  if (mode !== 'preview' && store.campaign?.campaign_id === campaignId) {
+    loadKindSchemas(campaignId);
+    loadTemplates(campaignId);
+  }
+  return r;
 }
 
 // Re-add the demo world (New-World screen). 409 when it already exists.

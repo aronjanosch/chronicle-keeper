@@ -41,7 +41,36 @@ pub struct MapScale {
     pub unit: String,
 }
 
+/// One annotation shape in normalised (0..1) map coordinates. `points` holds
+/// the freehand path (pen), two endpoints (line), two corners (rect), centre +
+/// edge (circle) or a single anchor (stamp).
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Drawing {
+    pub id: String,
+    /// pen | line | rect | circle | stamp
+    pub kind: String,
+    pub points: Vec<[f64; 2]>,
+    pub color: String,
+    /// Screen px at zoom 1 (stroke width; stamp size).
+    pub width: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
+/// A free-placed label; `x`/`y` is its centre, `rotation` in degrees.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MapText {
+    pub id: String,
+    pub x: f64,
+    pub y: f64,
+    pub text: String,
+    pub size: f64,
+    pub color: String,
+    #[serde(default)]
+    pub rotation: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct MapDoc {
     pub id: String,
     pub name: String,
@@ -56,6 +85,72 @@ pub struct MapDoc {
     pub scale: Option<MapScale>,
     #[serde(default)]
     pub pins: Vec<Pin>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drawings: Vec<Drawing>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub texts: Vec<MapText>,
+}
+
+const MAX_OBJECTS: usize = 2000;
+const MAX_STROKE_POINTS: usize = 5000;
+const DRAWING_KINDS: &[&str] = &["pen", "line", "rect", "circle", "stamp"];
+
+fn bad(msg: &str) -> AppError {
+    AppError::BadRequest(msg.into())
+}
+
+fn valid_color(c: &str) -> bool {
+    let hex = c.strip_prefix('#').unwrap_or("");
+    matches!(hex.len(), 3 | 6 | 8) && hex.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn unit(v: f64) -> bool {
+    v.is_finite() && (0.0..=1.0).contains(&v)
+}
+
+fn valid_obj_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64
+}
+
+/// Reject annotations a client bug could otherwise persist forever: non-finite
+/// numbers, out-of-frame points, unbounded lists.
+fn validate_annotations(doc: &MapDoc) -> AppResult<()> {
+    if doc.drawings.len() > MAX_OBJECTS || doc.texts.len() > MAX_OBJECTS {
+        return Err(bad("Too many annotations on one map"));
+    }
+    for d in &doc.drawings {
+        let ok_shape = match d.kind.as_str() {
+            "pen" => (1..=MAX_STROKE_POINTS).contains(&d.points.len()),
+            "line" | "rect" | "circle" => d.points.len() == 2,
+            "stamp" => d.points.len() == 1,
+            _ => false,
+        };
+        if !DRAWING_KINDS.contains(&d.kind.as_str())
+            || !ok_shape
+            || !valid_obj_id(&d.id)
+            || !valid_color(&d.color)
+            || !(d.width.is_finite() && d.width > 0.0 && d.width <= 200.0)
+            || d.points.iter().any(|p| !unit(p[0]) || !unit(p[1]))
+            || d.icon
+                .as_deref()
+                .is_some_and(|i| i.is_empty() || i.len() > 32)
+        {
+            return Err(bad("A drawing on this map is not valid"));
+        }
+    }
+    for t in &doc.texts {
+        if !valid_obj_id(&t.id)
+            || t.text.chars().count() > 500
+            || !unit(t.x)
+            || !unit(t.y)
+            || !valid_color(&t.color)
+            || !(t.size.is_finite() && (4.0..=400.0).contains(&t.size))
+            || !t.rotation.is_finite()
+        {
+            return Err(bad("A text label on this map is not valid"));
+        }
+    }
+    Ok(())
 }
 
 fn slugify(name: &str) -> String {
@@ -153,6 +248,7 @@ pub fn write_map_as(world_root: &Path, doc: &MapDoc, origin: &str) -> AppResult<
             ));
         }
     }
+    validate_annotations(doc)?;
     std::fs::create_dir_all(path.parent().unwrap()).map_err(anyhow::Error::from)?;
     if let Ok(before) = std::fs::read_to_string(&path) {
         snapshot(world_root, &doc.id, &before, origin);
@@ -312,8 +408,7 @@ pub fn create_map(
         image,
         parent,
         page,
-        scale: None,
-        pins: Vec::new(),
+        ..Default::default()
     };
     write_map(world_root, &doc)?;
     Ok(doc)
@@ -669,6 +764,85 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn drawing(kind: &str, pts: &[[f64; 2]]) -> Drawing {
+        Drawing {
+            id: "d1".into(),
+            kind: kind.into(),
+            points: pts.to_vec(),
+            color: "#7a2e1f".into(),
+            width: 3.0,
+            icon: None,
+        }
+    }
+
+    #[test]
+    fn annotations_roundtrip_and_validate() {
+        let dir = temp_world("annot");
+        let src = fake_png(&dir, "a.png");
+        let doc = create_map(&dir, "Vale", &src, None, None).unwrap();
+        let raw = std::fs::read_to_string(dir.join(ATLAS_DIR).join("vale.json")).unwrap();
+        assert!(!raw.contains("drawings") && !raw.contains("texts"));
+
+        let mut m = read_map(&dir, &doc.id).unwrap();
+        m.drawings = vec![
+            drawing("pen", &[[0.1, 0.1], [0.2, 0.2], [0.3, 0.1]]),
+            drawing("rect", &[[0.1, 0.1], [0.4, 0.5]]),
+            Drawing {
+                icon: Some("tower".into()),
+                ..drawing("stamp", &[[0.5, 0.5]])
+            },
+        ];
+        m.texts = vec![MapText {
+            id: "t1".into(),
+            x: 0.5,
+            y: 0.4,
+            text: "Old road".into(),
+            size: 18.0,
+            color: "#222".into(),
+            rotation: -20.0,
+        }];
+        write_map(&dir, &m).unwrap();
+        let back = read_map(&dir, &doc.id).unwrap();
+        assert_eq!(back.drawings.len(), 3);
+        assert_eq!(back.texts[0].rotation, -20.0);
+        assert_eq!(back.drawings[2].icon.as_deref(), Some("tower"));
+
+        let mut bad_docs = Vec::new();
+        for d in [
+            drawing("wave", &[[0.1, 0.1], [0.2, 0.2]]),
+            drawing("line", &[[0.1, 0.1]]),
+            drawing("pen", &[]),
+            drawing("line", &[[0.1, 0.1], [1.5, 0.2]]),
+            drawing("line", &[[0.1, f64::NAN], [0.2, 0.2]]),
+            Drawing {
+                color: "red".into(),
+                ..drawing("line", &[[0.1, 0.1], [0.2, 0.2]])
+            },
+            Drawing {
+                width: 0.0,
+                ..drawing("line", &[[0.1, 0.1], [0.2, 0.2]])
+            },
+            drawing("pen", &vec![[0.5, 0.5]; MAX_STROKE_POINTS + 1]),
+        ] {
+            let mut b = back.clone();
+            b.drawings = vec![d];
+            bad_docs.push(b);
+        }
+        let mut b = back.clone();
+        b.texts[0].size = f64::INFINITY;
+        bad_docs.push(b);
+        let mut b = back.clone();
+        b.texts[0].x = -0.1;
+        bad_docs.push(b);
+        let mut b = back.clone();
+        b.drawings = vec![drawing("line", &[[0.1, 0.1], [0.2, 0.2]]); MAX_OBJECTS + 1];
+        bad_docs.push(b);
+        for b in bad_docs {
+            assert!(write_map(&dir, &b).is_err());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn rejects_bad_input() {
         let dir = temp_world("bad");
@@ -683,9 +857,7 @@ mod tests {
             name: "X".into(),
             image: "../../etc/passwd".into(),
             parent: None,
-            page: None,
-            scale: None,
-            pins: vec![],
+            ..Default::default()
         };
         assert!(image_path(&dir, &doc).is_err());
         let _ = std::fs::remove_dir_all(&dir);

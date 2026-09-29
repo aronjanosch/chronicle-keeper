@@ -11,6 +11,7 @@ import { navigate, apiFetch, apiBlob, store, setState, splitPageRef, fmtDateTime
 import { loadAtlasMaps, createAtlasMap, saveAtlasMap, replaceAtlasMapArt, deleteAtlasMap, loadAtlasMapHistory, restoreAtlasMapVersion, pickMapImage, loadVaultTree, loadVaultLinks, createVaultPage, openCampaign } from '../actions.js';
 import { Shell, Sidebar, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
 import { MeasureLayer, MeasureReadout, UNITS } from './atlasMeasure.js';
+import { useDrawTools, DrawLayer, DrawPalette, TextEditor } from './atlasDraw.js';
 import { Icon, Btn, Empty, Spinner, PageBody, Input, Select, splitDoc, parseProps, openContextMenu } from '../ui.js';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -79,14 +80,14 @@ function nextLabel(pins, letters) {
 
 // full map marker: ground shadow + seal + tip + label.
 // Counter-scales by 1/zoom so pins stay legible at any zoom.
-function PinMarker({ pin, invZoom, scale = 1, showLabel = true, selected, hasMap, onHover, onLeave, onClick, onDoubleClick, onMouseDown, onMenu }) {
+function PinMarker({ pin, invZoom, scale = 1, showLabel = true, inert, selected, hasMap, onHover, onLeave, onClick, onDoubleClick, onMouseDown, onMenu }) {
   const size = pin.kind === 'pc' ? 32 : 38;
   const k = PIN_KINDS[pin.kind] || PIN_KINDS.npc;
   const s = SEAL[k.tone] || SEAL.burgundy;
   return html`<div style=${{ position: 'absolute', left: `${pin.x * 100}%`, top: `${pin.y * 100}%`, zIndex: selected ? 40 : (hasMap ? 30 : 20) }}>
     <div class="ck-pin" onMouseEnter=${onHover} onMouseLeave=${onLeave} onClick=${onClick} onDblClick=${onDoubleClick} onMouseDown=${onMouseDown} onContextMenu=${onMenu}
       style=${{
-        position: 'absolute', left: 0, bottom: 0,
+        position: 'absolute', left: 0, bottom: 0, pointerEvents: inert ? 'none' : undefined,
         transform: `translateX(-50%) scale(${invZoom * scale})`, transformOrigin: 'bottom center',
         cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center',
         willChange: 'transform',
@@ -586,6 +587,8 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const [pinPos, setPinPos] = useState(null);   // { id, x, y } live override while dragging a pin
   const [measure, setMeasure] = useState(null);   // { pts: [{x,y}] } while the ruler is open
   const [measureHover, setMeasureHover] = useState(null);
+  const [drawOpen, setDrawOpen] = useState(false);
+  const drawRef = useRef(null);
   const layerRef = useRef(null);
   const wasDrag = useRef(false); // a pan drag ends in a click we must not read as a ruler point
 
@@ -692,6 +695,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
       setPlacing(null); setPaletteOpen(false); setGhost(null); setNewEntry(null); setMapForm(null); setSettings(false); setViewOpts(false); setMeasure(null);
+      drawRef.current?.cancel();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -757,6 +761,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
       setPlacing(null); setGhost(null);
       return;
     }
+    if (drawRef.current?.tool && layerRef.current?.contains(e.target) && drawRef.current.down(e)) return;
     setAnim(false);
     drag.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty, moved: false };
   };
@@ -775,9 +780,21 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const toggleMeasure = () => {
     setMeasure((m) => (m ? null : { pts: [] })); setMeasureHover(null);
     setPlacing(null); setGhost(null); setPaletteOpen(false);
+    draw.setTool(null); setDrawOpen(false);
   };
 
-  useEffect(() => { setMeasure(null); setMeasureHover(null); }, [mapId]);
+  const toggleDraw = () => {
+    setDrawOpen((o) => !o);
+    if (drawOpen) draw.setTool(null);
+    setMeasure(null); setPlacing(null); setGhost(null); setPaletteOpen(false);
+  };
+
+  const pickTool = (t) => {
+    draw.setTool(t);
+    if (t) { setMeasure(null); setPlacing(null); setGhost(null); setPaletteOpen(false); }
+  };
+
+  useEffect(() => { setMeasure(null); setMeasureHover(null); drawRef.current?.setEdit(null); }, [mapId]);
 
   const centerOn = useCallback((px, py, zMin) => {
     setView((v) => {
@@ -835,6 +852,11 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const mapEntryOpen = !!(panel && !panel.pinId && map.page && panel.pagePath === map.page);
 
   const persist = (next) => saveAtlasMap(next).catch((e) => console.warn('saveAtlasMap failed:', e));
+
+  const draw = useDrawTools({ map, commit: persist, view, W, H, screenToNorm });
+  drawRef.current = draw;
+  const drawings = draw.override?.drawings ?? map.drawings ?? [];
+  const texts = draw.override?.texts ?? map.texts ?? [];
 
   const commitNew = async (n, name, folder) => {
     const nm = (name || '').trim() || n.pin.name;
@@ -945,7 +967,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     <div ref=${stageRef} onMouseDown=${onDown} onMouseMove=${onStageMove} onClick=${onStageClick}
       style=${{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden',
         background: 'radial-gradient(circle at 50% 40%, #ECE3CB, #DCCFB0)',
-        cursor: placing || measure ? 'crosshair' : 'grab' }}>
+        cursor: placing || measure || draw.tool ? 'crosshair' : 'grab' }}>
 
       ${!img && html`<div style=${{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><${Spinner} size=${22} /></div>`}
 
@@ -955,10 +977,13 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         <img src=${img.url} width=${W} height=${H} draggable=${false}
           style=${{ display: 'block', userSelect: 'none', boxShadow: '0 10px 40px rgba(60,40,10,.28)' }} />
 
+        <${DrawLayer} drawings=${drawings} texts=${texts} draft=${draw.draft} brush=${draw.brush} zoom=${view.zoom} W=${W} H=${H}
+          tool=${draw.tool} color=${draw.color} width=${draw.width} onTextDblClick=${(t) => draw.setEdit({ ...t })} />
+
         ${measure && html`<${MeasureLayer} pts=${measure.pts} hover=${measureHover} W=${W} H=${H} zoom=${view.zoom} active />`}
 
         ${pins.map((pin) => html`<${PinMarker} key=${pin.id} pin=${pin} invZoom=${invZoom}
-          scale=${pinScale} showLabel=${showLabels}
+          scale=${pinScale} showLabel=${showLabels} inert=${!!draw.tool}
           selected=${panel?.pinId === pin.id || newEntry?.pin.id === pin.id}
           hasMap=${!!pin.to}
           onHover=${() => !placing && setHover(pin.id)} onLeave=${() => setHover(null)}
@@ -1074,10 +1099,14 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         onUndo=${() => setMeasure((m) => ({ pts: m.pts.slice(0, -1) }))}
         onClear=${() => setMeasure({ pts: [] })} onClose=${() => setMeasure(null)} />`}
 
+      ${drawOpen && html`<${DrawPalette} draw=${draw} onPick=${pickTool} />`}
+      <${TextEditor} edit=${draw.edit} setEdit=${draw.setEdit} view=${view} W=${W} H=${H}
+        onSave=${draw.saveText} onDelete=${draw.deleteText} onClose=${() => draw.setEdit(null)} />
+
       ${''/* zoom controls — pinned LEFT so the panel never shoves them */}
       <div style=${{ position: 'absolute', bottom: 16, left: 14, zIndex: 88, display: 'flex', flexDirection: 'column', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 8, boxShadow: 'var(--shadow-card)', overflow: 'hidden' }}>
-        ${[['plus', () => zoomBy(1.4), ''], ['compass', () => { setAnim(true); if (img) setView(fitView(stage, img.w, img.h)); }, 'Fit map'], ['x', () => zoomBy(1 / 1.4), ''], ['ruler', toggleMeasure, 'Measure distance']].map((b, i) => html`
-          <button key=${i} onClick=${b[1]} title=${b[2]} style=${{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', color: i === 3 && measure ? 'var(--burgundy)' : 'var(--ink-soft)', borderBottom: i < 3 ? '1px solid var(--rule-soft)' : 'none', background: i === 3 && measure ? 'var(--paper-deep)' : 'transparent', borderLeft: 'none', borderRight: 'none', borderTop: 'none', cursor: 'pointer' }}>
+        ${[['plus', () => zoomBy(1.4), ''], ['compass', () => { setAnim(true); if (img) setView(fitView(stage, img.w, img.h)); }, 'Fit map'], ['x', () => zoomBy(1 / 1.4), ''], ['ruler', toggleMeasure, 'Measure distance'], ['edit', toggleDraw, 'Draw on the map']].map((b, i) => html`
+          <button key=${i} onClick=${b[1]} title=${b[2]} style=${{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', color: (i === 3 && measure) || (i === 4 && drawOpen) ? 'var(--burgundy)' : 'var(--ink-soft)', borderBottom: i < 4 ? '1px solid var(--rule-soft)' : 'none', background: (i === 3 && measure) || (i === 4 && drawOpen) ? 'var(--paper-deep)' : 'transparent', borderLeft: 'none', borderRight: 'none', borderTop: 'none', cursor: 'pointer' }}>
             <${Icon} name=${b[0]} size=${i === 1 ? 15 : 14} />
           </button>`)}
       </div>
@@ -1087,7 +1116,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         ${paletteOpen && html`<div style=${{ width: 184, background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', borderRadius: 10, boxShadow: 'var(--shadow-raised)', overflow: 'hidden' }}>
           <div style=${{ padding: '9px 12px 7px', borderBottom: '1px solid var(--rule-soft)', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>New pin · pick a kind</div>
           <div style=${{ padding: 5 }}>
-            ${PALETTE.map((k) => html`<div key=${k} onClick=${() => { setPlacing(k); setPaletteOpen(false); }}
+            ${PALETTE.map((k) => html`<div key=${k} onClick=${() => { setPlacing(k); setPaletteOpen(false); draw.setTool(null); }}
               style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderRadius: 6, cursor: 'pointer' }}
               onMouseEnter=${(e) => { e.currentTarget.style.background = 'rgba(120,90,40,.08)'; }}
               onMouseLeave=${(e) => { e.currentTarget.style.background = 'transparent'; }}>
@@ -1099,7 +1128,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
             Creates a codex page of that kind.
           </div>
         </div>`}
-        <button onClick=${() => { setPaletteOpen((o) => !o); setPlacing(null); setGhost(null); }} style=${{
+        <button onClick=${() => { setPaletteOpen((o) => !o); setPlacing(null); setGhost(null); draw.setTool(null); setDrawOpen(false); }} style=${{
           display: 'inline-flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderRadius: 999,
           background: paletteOpen ? 'var(--burgundy-700)' : 'var(--burgundy)', color: '#F7E8E2', border: '1px solid var(--burgundy-700)',
           boxShadow: '0 6px 16px rgba(92,35,23,.26)', fontFamily: 'var(--font-display)', fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap', cursor: 'pointer' }}>

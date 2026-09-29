@@ -1477,3 +1477,107 @@ fn wrap_result_caps_and_delimits() {
     let fenced = wrap_result("normal ```evil``` text");
     assert!(!fenced[40..].contains("```\nevil")); // inner fences neutralized
 }
+
+fn map_world(tag: &str) -> (AppState, PathBuf, WorldConfig) {
+    let (state, root, cfg) = fixture_world(tag);
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+    png.extend(1600u32.to_be_bytes());
+    png.extend(1000u32.to_be_bytes());
+    let art = root.join("art.png");
+    std::fs::write(&art, png).unwrap();
+    crate::atlas::create_map(&root, "Reach", &art, None, None).unwrap();
+    (state, root, cfg)
+}
+
+#[tokio::test]
+async fn place_pin_asks_checkpoints_and_undoes() {
+    let (state, root, cfg) = map_world("pin-gate");
+    let chat = chats::create_chat(&root).unwrap();
+    let llm = MockLlm::new(vec![
+        tool_turn(
+            "place_pin",
+            json!({ "map": "Reach", "name": "Vale", "x": 0.4, "y": 0.6, "page": "Thornhold.md" }),
+        ),
+        final_turn("Pinned."),
+    ]);
+    let gate = ScriptGate::new(vec![Decision::AllowOnce]);
+    let cancel = Arc::new(AtomicBool::new(false));
+    run_turn(
+        &TurnCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+            chat_id: &chat.id,
+            mode: Mode::Ask,
+            focus: None,
+        },
+        "Pin Vale on the map.",
+        &[],
+        &llm,
+        &gate,
+        &cancel,
+        |_| {},
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(gate.asked.lock().unwrap().as_slice(), ["place_pin"]);
+    assert_eq!(checkpoints::count(&root, &chat.id), 1);
+    let map = crate::atlas::read_map(&root, "reach").unwrap();
+    assert_eq!(map.pins.len(), 1);
+    assert_eq!(map.pins[0].page.as_deref(), Some("Thornhold.md"));
+    let history = crate::atlas::list_history(&root, "reach").unwrap();
+    assert_eq!(history.first().map(|v| v.origin.as_str()), Some("keeper"));
+
+    let restored = checkpoints::undo(&root, &chat.id, &root.join("Codex"), false).unwrap();
+    assert_eq!(restored, ["Atlas/reach.json"]);
+    assert!(crate::atlas::read_map(&root, "reach")
+        .unwrap()
+        .pins
+        .is_empty());
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn place_pin_denied_or_readonly_leaves_map_untouched() {
+    for (tag, mode, decisions) in [
+        ("pin-deny", Mode::Ask, vec![Decision::Deny]),
+        ("pin-ro", Mode::ReadOnly, vec![]),
+    ] {
+        let (state, root, cfg) = map_world(tag);
+        let chat = chats::create_chat(&root).unwrap();
+        let llm = MockLlm::new(vec![
+            tool_turn(
+                "place_pin",
+                json!({ "map": "Reach", "name": "Vale", "x": 0.4, "y": 0.6 }),
+            ),
+            final_turn("Could not."),
+        ]);
+        let gate = ScriptGate::new(decisions);
+        let cancel = Arc::new(AtomicBool::new(false));
+        run_turn(
+            &TurnCtx {
+                state: &state,
+                world_root: &root,
+                cfg: &cfg,
+                chat_id: &chat.id,
+                mode,
+                focus: None,
+            },
+            "Pin Vale.",
+            &[],
+            &llm,
+            &gate,
+            &cancel,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(crate::atlas::read_map(&root, "reach")
+            .unwrap()
+            .pins
+            .is_empty());
+        assert_eq!(checkpoints::count(&root, &chat.id), 0);
+        std::fs::remove_dir_all(&root).ok();
+    }
+}

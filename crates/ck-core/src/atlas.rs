@@ -559,6 +559,175 @@ fn rewritten(reference: &str, from: &str, to: &str, prefix: bool) -> Option<Stri
     })
 }
 
+// ── Measuring: shared by the Keeper's map_distance ────────────────────
+// Constants mirror frontend/app/screens/atlasMeasure.js; change both together.
+
+/// (label, km per day) — overland/sea rules of thumb.
+pub const PACES: &[(&str, f64)] = &[
+    ("On foot", 30.0),
+    ("Mounted", 50.0),
+    ("Wagon", 25.0),
+    ("Sailing ship", 100.0),
+];
+
+pub fn unit_km(unit: &str) -> Option<f64> {
+    match unit {
+        "km" => Some(1.0),
+        "mi" => Some(1.609344),
+        "league" => Some(4.828032),
+        "m" => Some(0.001),
+        _ => None,
+    }
+}
+
+/// Pixel size from an image header (PNG, GIF, JPEG, WebP); no decoder needed.
+pub fn parse_image_size(b: &[u8]) -> Option<(u32, u32)> {
+    let be16 = |i: usize| {
+        b.get(i..i + 2)
+            .map(|v| u32::from(u16::from_be_bytes([v[0], v[1]])))
+    };
+    let le16 = |i: usize| {
+        b.get(i..i + 2)
+            .map(|v| u32::from(u16::from_le_bytes([v[0], v[1]])))
+    };
+    if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        let w = u32::from_be_bytes(b.get(16..20)?.try_into().ok()?);
+        let h = u32::from_be_bytes(b.get(20..24)?.try_into().ok()?);
+        return Some((w, h));
+    }
+    if b.starts_with(b"GIF8") {
+        return Some((le16(6)?, le16(8)?));
+    }
+    if b.starts_with(&[0xFF, 0xD8]) {
+        let mut i = 2;
+        while i + 4 <= b.len() {
+            if b[i] != 0xFF {
+                i += 1;
+                continue;
+            }
+            let m = b[i + 1];
+            if m == 0xFF {
+                i += 1;
+                continue;
+            }
+            if m == 0x01 || (0xD0..=0xD9).contains(&m) {
+                i += 2;
+                continue;
+            }
+            if (0xC0..=0xCF).contains(&m) && !matches!(m, 0xC4 | 0xC8 | 0xCC) {
+                return Some((be16(i + 7)?, be16(i + 5)?));
+            }
+            i += 2 + be16(i + 2)? as usize;
+        }
+        return None;
+    }
+    if b.len() >= 30 && &b[..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        return match &b[12..16] {
+            b"VP8 " if b[23..26] == [0x9d, 0x01, 0x2a] => {
+                Some((le16(26)? & 0x3fff, le16(28)? & 0x3fff))
+            }
+            b"VP8L" if b[20] == 0x2f => {
+                let (b0, b1, b2, b3) = (
+                    u32::from(b[21]),
+                    u32::from(b[22]),
+                    u32::from(b[23]),
+                    u32::from(b[24]),
+                );
+                let w = 1 + (b0 | ((b1 & 0x3f) << 8));
+                let h = 1 + ((b1 >> 6) | (b2 << 2) | ((b3 & 0x0f) << 10));
+                Some((w, h))
+            }
+            b"VP8X" => {
+                let w = 1 + u32::from(b[24]) + (u32::from(b[25]) << 8) + (u32::from(b[26]) << 16);
+                let h = 1 + u32::from(b[27]) + (u32::from(b[28]) << 8) + (u32::from(b[29]) << 16);
+                Some((w, h))
+            }
+            _ => None,
+        };
+    }
+    None
+}
+
+/// Image dimensions of a map's art, read from the file header.
+pub fn image_size(world_root: &Path, doc: &MapDoc) -> AppResult<(u32, u32)> {
+    use std::io::Read;
+    let path = image_path(world_root, doc)?;
+    let mut head = Vec::new();
+    std::fs::File::open(&path)
+        .and_then(|f| f.take(1 << 20).read_to_end(&mut head))
+        .map_err(|_| AppError::NotFound(format!("Map art missing: {}", doc.image)))?;
+    parse_image_size(&head)
+        .filter(|(w, h)| *w > 0 && *h > 0)
+        .ok_or_else(|| bad("Cannot read the map art's size"))
+}
+
+/// A pin or region a tool can name: (display name, normalised x, y).
+pub fn find_endpoint(doc: &MapDoc, name: &str) -> Option<(String, f64, f64)> {
+    let key = name.trim().to_lowercase();
+    let hit = |id: &str, n: &str| id.to_lowercase() == key || n.to_lowercase() == key;
+    if let Some(p) = doc.pins.iter().find(|p| hit(&p.id, &p.name)) {
+        return Some((p.name.clone(), p.x, p.y));
+    }
+    let r = doc.regions.iter().find(|r| hit(&r.id, &r.name))?;
+    let n = r.points.len().max(1) as f64;
+    let (sx, sy) = r
+        .points
+        .iter()
+        .fold((0.0, 0.0), |(x, y), p| (x + p[0], y + p[1]));
+    Some((r.name.clone(), sx / n, sy / n))
+}
+
+/// Straight-line distance in the map's own unit; `None` without a scale.
+pub fn distance_between(
+    doc: &MapDoc,
+    size: (u32, u32),
+    a: (f64, f64),
+    b: (f64, f64),
+) -> Option<f64> {
+    let scale = doc.scale.as_ref()?;
+    let (w, h) = (f64::from(size.0), f64::from(size.1));
+    let px = ((b.0 - a.0) * w).hypot((b.1 - a.1) * h);
+    Some(px / w * scale.width)
+}
+
+pub fn travel_days(distance: f64, unit: &str, km_per_day: f64) -> Option<f64> {
+    Some(distance * unit_km(unit)? / km_per_day)
+}
+
+pub fn fmt_days(days: f64) -> String {
+    if days < 0.1 {
+        "< 1 hour".into()
+    } else if days < 1.0 {
+        format!("{} hours", (days * 24.0).round())
+    } else {
+        let d = (days * 10.0).round() / 10.0;
+        format!("{d} day{}", if (d - 1.0).abs() < 0.05 { "" } else { "s" })
+    }
+}
+
+pub fn fmt_distance(d: f64, unit: &str) -> String {
+    let v = if d >= 100.0 {
+        d.round()
+    } else {
+        (d * 10.0).round() / 10.0
+    };
+    format!("{v} {unit}")
+}
+
+/// Raw file text of a map, for undo snapshots.
+pub fn read_map_text(world_root: &Path, id: &str) -> Option<String> {
+    std::fs::read_to_string(map_path(world_root, id).ok()?).ok()
+}
+
+/// Put a snapshotted map file back (Keeper undo). Goes through `write_map_as`
+/// so validation and map history still apply.
+pub fn restore_map_text(world_root: &Path, id: &str, text: &str) -> AppResult<()> {
+    let mut doc: MapDoc =
+        serde_json::from_str(text).map_err(|e| bad(&format!("Saved map is not valid: {e}")))?;
+    doc.id = id.to_string();
+    write_map_as(world_root, &doc, "user")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -956,6 +1125,117 @@ mod tests {
         b.regions = vec![region("x", None); MAX_REGIONS + 1];
         assert!(write_map(&dir, &b).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn image_headers_parse() {
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend(1600u32.to_be_bytes());
+        png.extend(1000u32.to_be_bytes());
+        assert_eq!(parse_image_size(&png), Some((1600, 1000)));
+
+        let mut gif = b"GIF89a".to_vec();
+        gif.extend(320u16.to_le_bytes());
+        gif.extend(200u16.to_le_bytes());
+        assert_eq!(parse_image_size(&gif), Some((320, 200)));
+
+        // JPEG: SOI, an APP0 segment to skip, then SOF0 (height 480, width 640)
+        let mut jpg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00];
+        jpg.extend([0xFF, 0xC0, 0x00, 0x0B, 0x08]);
+        jpg.extend(480u16.to_be_bytes());
+        jpg.extend(640u16.to_be_bytes());
+        jpg.extend([0x03, 0x01, 0x11, 0x00]);
+        assert_eq!(parse_image_size(&jpg), Some((640, 480)));
+
+        // WebP lossy (VP8 ), lossless (VP8L) and extended (VP8X)
+        let riff = |fourcc: &[u8; 4]| {
+            let mut v = b"RIFF\0\0\0\0WEBP".to_vec();
+            v.extend(fourcc);
+            v.extend([0u8; 4]);
+            v
+        };
+        let mut lossy = riff(b"VP8 ");
+        lossy.extend([0, 0, 0, 0x9d, 0x01, 0x2a]);
+        lossy.extend(800u16.to_le_bytes());
+        lossy.extend(600u16.to_le_bytes());
+        assert_eq!(parse_image_size(&lossy), Some((800, 600)));
+        let mut ll = riff(b"VP8L");
+        let (w, h) = (1234u32 - 1, 777u32 - 1);
+        ll.push(0x2f);
+        ll.extend([
+            (w & 0xff) as u8,
+            (((w >> 8) & 0x3f) | ((h & 0x3) << 6)) as u8,
+            ((h >> 2) & 0xff) as u8,
+            ((h >> 10) & 0x0f) as u8,
+        ]);
+        ll.extend([0u8; 6]);
+        assert_eq!(parse_image_size(&ll), Some((1234, 777)));
+        let mut ext = riff(b"VP8X");
+        ext.extend([0, 0, 0, 0]);
+        ext.extend([0x3f, 0x01, 0x00, 0xe7, 0x00, 0x00]);
+        assert_eq!(parse_image_size(&ext), Some((320, 232)));
+
+        assert_eq!(parse_image_size(b"not an image at all, sorry"), None);
+        assert_eq!(parse_image_size(&png[..12]), None);
+    }
+
+    #[test]
+    fn distance_and_travel_follow_scale_and_aspect() {
+        let mut doc = MapDoc::default();
+        assert!(distance_between(&doc, (1600, 1000), (0.0, 0.0), (1.0, 0.0)).is_none());
+        doc.scale = Some(MapScale {
+            width: 240.0,
+            unit: "mi".into(),
+        });
+        // full width edge to edge = the scale width
+        let d = distance_between(&doc, (1600, 1000), (0.0, 0.5), (1.0, 0.5)).unwrap();
+        assert!((d - 240.0).abs() < 1e-9);
+        // the vertical axis is scaled by the image aspect (1000/1600)
+        let v = distance_between(&doc, (1600, 1000), (0.5, 0.0), (0.5, 1.0)).unwrap();
+        assert!((v - 150.0).abs() < 1e-9);
+        // 240 mi on foot at 30 km/day
+        let days = travel_days(240.0, "mi", 30.0).unwrap();
+        assert!((days - 240.0 * 1.609344 / 30.0).abs() < 1e-9);
+        assert!(travel_days(1.0, "parsec", 30.0).is_none());
+        assert_eq!(fmt_days(0.05), "< 1 hour");
+        assert_eq!(fmt_days(0.5), "12 hours");
+        assert_eq!(fmt_days(1.0), "1 day");
+        assert_eq!(fmt_days(12.87), "12.9 days");
+        assert_eq!(fmt_distance(272.4, "mi"), "272 mi");
+        assert_eq!(fmt_distance(12.34, "km"), "12.3 km");
+    }
+
+    #[test]
+    fn endpoints_resolve_pins_then_regions() {
+        let mut doc = MapDoc::default();
+        doc.pins.push(Pin {
+            id: "p1".into(),
+            name: "Keep".into(),
+            kind: "place".into(),
+            x: 0.25,
+            y: 0.5,
+            page: None,
+            to: None,
+            icon: None,
+            label: None,
+        });
+        doc.regions.push(Region {
+            id: "r1".into(),
+            name: "Marsh".into(),
+            points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+            page: None,
+            color: None,
+        });
+        assert_eq!(
+            find_endpoint(&doc, "keep"),
+            Some(("Keep".into(), 0.25, 0.5))
+        );
+        assert_eq!(find_endpoint(&doc, "P1").unwrap().0, "Keep");
+        assert_eq!(
+            find_endpoint(&doc, " marsh "),
+            Some(("Marsh".into(), 0.5, 0.5))
+        );
+        assert!(find_endpoint(&doc, "nowhere").is_none());
     }
 
     #[test]

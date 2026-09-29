@@ -110,7 +110,7 @@ const DEFAULT_KINDS: &[(&str, &[&str])] = &[
     ("prep", &["session"]),
 ];
 
-fn parse_field(spec: &str) -> Option<KindField> {
+pub(crate) fn parse_field(spec: &str) -> Option<KindField> {
     let (name, ftype) = match spec.split_once(':') {
         Some((n, t)) => (n.trim(), t.trim()),
         None => (spec.trim(), "text"),
@@ -127,6 +127,17 @@ fn parse_field(spec: &str) -> Option<KindField> {
         name: name.to_string(),
         ftype: ftype.to_string(),
     })
+}
+
+impl KindField {
+    /// `name` for text, `name:type` otherwise — the config.toml spelling.
+    pub fn spec(&self) -> String {
+        if self.ftype == "text" {
+            self.name.clone()
+        } else {
+            format!("{}:{}", self.name, self.ftype)
+        }
+    }
 }
 
 impl WorldConfig {

@@ -9,6 +9,7 @@ pub mod error;
 pub mod export;
 pub mod folder_kinds;
 pub mod foundry;
+pub mod genre_packs;
 pub mod history;
 pub mod http;
 pub mod index_watch;

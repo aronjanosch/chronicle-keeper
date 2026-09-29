@@ -492,7 +492,7 @@ pub fn default_headings(kind: &str) -> &'static [&'static str] {
 
 // Frontmatter + H1 only — the pre-Phase-16 default, kept so untouched seeded
 // templates can be recognized and upgraded.
-fn template_base(kind: &str, fields: &[crate::world_config::KindField]) -> String {
+pub(crate) fn template_base(kind: &str, fields: &[crate::world_config::KindField]) -> String {
     let mut out = format!("---\nkind: {kind}\nsummary:\n");
     for f in fields {
         match f.ftype.as_str() {

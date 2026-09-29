@@ -4,7 +4,7 @@ import { store, closeModal, navigate, setOp, openModal, apiFetch, fmtDateTime } 
 import { Icon, Btn, Field, Input, Textarea, Select, Spinner } from './ui.js';
 import { CommandPalette } from './screens/palette.js';
 import { kindForFolder } from './folderKinds.js';
-import { loadPrep, savePrep } from './prep.js';
+import { loadPrep, prepOps } from './prep.js';
 import {
   createCampaign, updateCampaign, saveSessionMetadata, loadSession,
   runExport,
@@ -25,6 +25,7 @@ const CODEX_KINDS = [
   { value: 'faction', label: 'Faction' }, { value: 'item', label: 'Item' },
   { value: 'event', label: 'Event' },
   { value: 'thread', label: 'Thread' },
+  { value: 'prep', label: 'Session prep' },
   { value: 'lore', label: 'Lore' },
 ];
 
@@ -537,15 +538,14 @@ function NewPageModal({ folder = '', kind: presetKind = 'npc', title: initialTit
 }
 
 // ── Link a page to a session's prep (SC-03) ───────────────────────
-// The only page-side write to prep.md. Lists the current world's sessions,
-// loads the chosen session's prep, appends this page's vault-relative path to
-// selected_threads (or a chosen card's links). A stale base_revision (409) is
-// never overwritten: the modal reloads and tells the user.
+// Adds this page to a session's prep page: as a thread in focus, or as a
+// wikilink in one card. A stale revision (409) is never overwritten: the modal
+// reloads and tells the user.
 function LinkPrepModal({ path }) {
   const sessions = store.campaignSessions || [];
   const [sessionId, setSessionId] = useState('');
   const [prep, setPrep] = useState(null);       // { revision, cards, selected_threads }
-  const [cardUid, setCardUid] = useState('');   // '' = selected_threads, else card uid
+  const [cardId, setCardId] = useState('');     // '' = threads in focus, else card id
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [done, setDone] = useState(false);
@@ -554,41 +554,24 @@ function LinkPrepModal({ path }) {
     if (!sid) return;
     setBusy(true); if (!quiet) setErr(null);
     try {
-      const loaded = await loadPrep(sid);
-      setPrep(loaded);
-      setCardUid('');
+      setPrep(await loadPrep(sid));
+      setCardId('');
     } catch (e) { setErr(e.message); setPrep(null); }
     setBusy(false);
   }
-  useEffect(() => { setPrep(null); setCardUid(''); setDone(false); load(sessionId); }, [sessionId]);
-  useEffect(() => { setDone(false); }, [cardUid]);
+  useEffect(() => { setPrep(null); setCardId(''); setDone(false); load(sessionId); }, [sessionId]);
+  useEffect(() => { setDone(false); }, [cardId]);
 
   async function save() {
     if (!prep || !sessionId) return;
     setBusy(true); setErr(null);
     try {
-      const cards = (prep.cards || []).map((c) => {
-        if (c.uid !== cardUid) return c;
-        const links = c.links || [];
-        return links.includes(path) ? c : { ...c, links: [...links, path] };
-      });
-      const selected = cardUid
-        ? prep.selected_threads
-        : (prep.selected_threads || []).includes(path) ? prep.selected_threads : [...(prep.selected_threads || []), path];
-      const res = await savePrep(sessionId, {
-        base_revision: prep.revision,
-        cards,
-        selected_threads: selected,
-        notes: prep.notes,
-      });
-      // Adopt the server's saved document (fresh revision + ids), keeping the
-      // client uids positional so the "Add to" select stays meaningful.
-      const savedCards = (res.cards || []).map((c, i) => ({ ...c, uid: (prep.cards || [])[i]?.uid || c.uid }));
-      setPrep({ revision: res.revision, cards: savedCards, selected_threads: res.selected_threads, notes: prep.notes });
+      const op = cardId ? { op: 'link', id: cardId, page: path } : { op: 'add_thread', page: path };
+      setPrep(await prepOps(sessionId, prep.revision, [op]));
       setDone(true);
     } catch (e) {
       if (e.status === 409) {
-        setErr('That preparation changed elsewhere. Reloaded the saved version — choose again (your draft here was not applied).');
+        setErr('That preparation changed elsewhere. Reloaded the saved version — choose again.');
         await load(sessionId, true);
       } else {
         setErr(e.message);
@@ -597,14 +580,14 @@ function LinkPrepModal({ path }) {
     setBusy(false);
   }
 
-  const cardOptions = [{ value: '', label: 'Selected threads (document)' }]
-    .concat((prep?.cards || []).map((c) => ({ value: c.uid, label: `${c.section}: ${c.title || c.text || 'card'}`.slice(0, 70) })));
+  const cardOptions = [{ value: '', label: 'Threads in focus (whole session)' }]
+    .concat((prep?.cards || []).map((c) => ({ value: c.id, label: `${c.section}: ${c.title || c.text || 'card'}`.slice(0, 70) })));
 
   return html`<${ModalShell} title="Link to preparation" footer=${html`
     <${Btn} kind="ghost" disabled=${busy} onClick=${closeModal}>Close</${Btn}>
     <${Btn} kind="primary" disabled=${busy || !prep || done} onClick=${save}>${busy ? 'Saving…' : done ? 'Linked' : 'Add link'}</${Btn}>`}>
     <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', lineHeight: 1.5 }}>
-      Adds <span style=${{ fontFamily: 'var(--font-mono)' }}>${path}</span> to a session's prep. Linking never creates a page.
+      Adds <span style=${{ fontFamily: 'var(--font-mono)' }}>${path}</span> to a session's prep page${prep && !prep.page ? ' (starting one)' : ''}. Linking never creates this page.
     </div>
     ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
     ${done && html`<div style=${{ color: 'var(--moss)', fontSize: 13 }}>Linked to the preparation.</div>`}
@@ -615,7 +598,7 @@ function LinkPrepModal({ path }) {
       ]} />
     </${Field}>
     ${prep && html`<${Field} label="Add to">
-      <${Select} value=${cardUid} onChange=${setCardUid} options=${cardOptions} />
+      <${Select} value=${cardId} onChange=${setCardId} options=${cardOptions} />
     </${Field}>`}
   </${ModalShell}>`;
 }

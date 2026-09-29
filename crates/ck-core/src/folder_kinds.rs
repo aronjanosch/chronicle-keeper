@@ -177,6 +177,10 @@ const KEYWORDS: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "prep",
+        &["prep", "preparation", "vorbereitung", "sessionprep"],
+    ),
+    (
         "lore",
         &[
             "lore",

@@ -19,11 +19,12 @@ export const KINDS = [
   { value: 'item',    label: 'Item',    plural: 'Items',    tone: 'ochre' },
   { value: 'event',   label: 'Event',   plural: 'Events',   tone: 'ochre' },
   { value: 'thread',  label: 'Thread',  plural: 'Threads',  tone: 'ink-blue' },
+  { value: 'prep',    label: 'Prep',    plural: 'Prep',     tone: 'ochre' },
   { value: 'lore',    label: 'Lore',    plural: 'Lore',     tone: 'gilt' },
 ];
 
 export function iconForKind(k) {
-  return { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', thread: 'feather', lore: 'scroll' }[k] || 'doc';
+  return { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', thread: 'feather', prep: 'edit', lore: 'scroll' }[k] || 'doc';
 }
 export function toneForKind(k) {
   return (KINDS.find((x) => x.value === k) || {}).tone || 'burgundy';

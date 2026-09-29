@@ -1,5 +1,4 @@
 use std::convert::Infallible;
-use std::path::PathBuf;
 use tracing::Instrument;
 
 use axum::extract::rejection::JsonRejection;
@@ -11,7 +10,7 @@ use serde_json::{json, Value};
 
 use crate::error::{AppError, AppResult};
 use crate::prep_suggest::{self, SuggestProgress, SuggestRequest};
-use crate::session_prep::{self, CarryRequest, PrepResponse, PutPrepRequest};
+use crate::session_prep::{self, CarryRequest, OpsRequest, PrepCtx, PrepResponse};
 use crate::state::AppState;
 use crate::store::sessions;
 
@@ -19,49 +18,43 @@ pub async fn get(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> AppResult<Json<PrepResponse>> {
-    state.with_db(|conn| {
-        let loc = sessions::locate(conn, &session_id)?
-            .ok_or_else(|| AppError::NotFound(format!("Session not found: {session_id}")))?;
-        if loc.world.is_none() {
-            return Err(AppError::Unprocessable(
-                "Session preparation requires a world session".into(),
-            ));
-        }
-        Ok(Json(session_prep::read(&loc.dir)?))
-    })
+    let ctx = prep_ctx(&state, &session_id)?;
+    let response = session_prep::read(&ctx)?;
+    reindex(&state, &ctx, &response);
+    Ok(Json(response))
 }
 
-pub async fn put(
+pub async fn ops(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
-    payload: Result<Json<PutPrepRequest>, JsonRejection>,
+    payload: Result<Json<OpsRequest>, JsonRejection>,
 ) -> AppResult<Json<PrepResponse>> {
     let Json(request) = payload.map_err(|error| AppError::Unprocessable(error.body_text()))?;
-    state.with_db(|conn| {
-        let loc = sessions::locate(conn, &session_id)?
-            .ok_or_else(|| AppError::NotFound(format!("Session not found: {session_id}")))?;
-        if loc.world.is_none() {
-            return Err(AppError::Unprocessable(
-                "Session preparation requires a world session".into(),
-            ));
-        }
-        Ok(Json(session_prep::put(&loc.dir, request)?))
-    })
+    let ctx = prep_ctx(&state, &session_id)?;
+    let lock = state.world_write_lock(&ctx.world_root).await;
+    let _guard = lock.lock().await;
+    let response = session_prep::apply(&ctx, &request)?;
+    reindex(&state, &ctx, &response);
+    Ok(Json(response))
 }
 
-/// Session directory and owning world root of a world session.
-fn world_session(state: &AppState, session_id: &str) -> AppResult<(PathBuf, PathBuf)> {
+pub(crate) fn prep_ctx(state: &AppState, session_id: &str) -> AppResult<PrepCtx> {
     let sid = session_id.to_string();
     state.with_db(move |conn| {
         let loc = sessions::locate(conn, &sid)?
             .ok_or_else(|| AppError::NotFound(format!("Session not found: {sid}")))?;
-        let Some((root, _)) = loc.world else {
-            return Err(AppError::Unprocessable(
-                "Session preparation requires a world session".into(),
-            ));
-        };
-        Ok((loc.dir, root))
+        PrepCtx::of(conn, &loc)
     })
+}
+
+/// The prep page is an ordinary Codex page: keep the index current and tell
+/// the watcher the write was ours. Reads can write too (legacy migration).
+fn reindex(state: &AppState, ctx: &PrepCtx, response: &PrepResponse) {
+    let Some(rel) = &response.page else { return };
+    state.note_vault_write(&ctx.vault, rel);
+    let _ = state.with_index(&ctx.vault, |conn| {
+        let _ = crate::store::index::upsert_path(conn, &ctx.vault, rel);
+    });
 }
 
 /// Keeper prep suggestions. SSE like review generation: it calls the provider,
@@ -136,17 +129,16 @@ pub async fn carry(
     payload: Result<Json<CarryRequest>, JsonRejection>,
 ) -> AppResult<Json<PrepResponse>> {
     let Json(request) = payload.map_err(|error| AppError::Unprocessable(error.body_text()))?;
-    let (dest_dir, dest_world) = world_session(&state, &session_id)?;
-    let (source_dir, source_world) = world_session(&state, &request.source_session_id)?;
-    if dest_world != source_world {
+    let dest = prep_ctx(&state, &session_id)?;
+    let source = prep_ctx(&state, &request.source_session_id)?;
+    if dest.world_root != source.world_root {
         return Err(AppError::Unprocessable(
             "Both sessions must belong to the same world".into(),
         ));
     }
-    Ok(Json(session_prep::carry(
-        &dest_dir,
-        &session_id,
-        &source_dir,
-        &request,
-    )?))
+    let lock = state.world_write_lock(&dest.world_root).await;
+    let _guard = lock.lock().await;
+    let response = session_prep::carry(&dest, &source, &request)?;
+    reindex(&state, &dest, &response);
+    Ok(Json(response))
 }

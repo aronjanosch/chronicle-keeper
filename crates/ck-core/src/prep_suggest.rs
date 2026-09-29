@@ -172,8 +172,7 @@ fn recent_summaries(world_root: &Path, current_number: Option<i64>) -> Vec<Sourc
         .collect()
 }
 
-fn prep_source(session_dir: &Path) -> Option<Source> {
-    let prep = crate::session_prep::read(session_dir).ok()?;
+fn prep_source(prep: &crate::session_prep::PrepResponse) -> Option<Source> {
     if prep.cards.is_empty() && prep.notes.trim().is_empty() {
         return None;
     }
@@ -353,7 +352,7 @@ pub async fn suggest_streamed<F: FnMut(SuggestProgress) + Send>(
     let (prompt, resolved, cited) = state.with_db(move |conn| -> AppResult<_> {
         let loc = sessions::locate(conn, &sid)?
             .ok_or_else(|| AppError::NotFound(format!("Session not found: {sid}")))?;
-        let Some((root, world_cfg)) = loc.world else {
+        let Some((root, world_cfg)) = loc.world.clone() else {
             return Err(AppError::BadRequest(
                 "This session has no world — assign it to a world first.".into(),
             ));
@@ -366,19 +365,13 @@ pub async fn suggest_streamed<F: FnMut(SuggestProgress) + Send>(
             model.as_deref(),
             base.as_deref(),
         )?;
-        let language = crate::store::campaigns::get_campaign(conn, &world_cfg.id)
-            .ok()
-            .flatten()
-            .map(|c| c.default_language)
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| cfg.get("default_language").cloned())
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "en".into());
+        let ctx = crate::session_prep::PrepCtx::of(conn, &loc)?;
+        let language = ctx.lang.clone();
         let vault_root = world_cfg.codex_dir(&root);
 
         // Priority ladder: what the GM pointed at, then their own preparation,
         // then recent play, then the world brief.
-        let prep = crate::session_prep::read(&loc.dir)?;
+        let prep = crate::session_prep::read(&ctx)?;
         let mut wanted: Vec<String> = Vec::new();
         for path in prep
             .selected_threads
@@ -395,7 +388,7 @@ pub async fn suggest_streamed<F: FnMut(SuggestProgress) + Send>(
             .take(MAX_LINKED_PAGES)
             .filter_map(|rel| page_source(&vault_root, rel))
             .collect();
-        sources.extend(prep_source(&loc.dir));
+        sources.extend(prep_source(&prep));
         sources.extend(recent_summaries(&root, loc.st.number));
         if let Some(brief) = crate::agent::brief::read(&root) {
             sources.push(Source {

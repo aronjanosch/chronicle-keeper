@@ -132,7 +132,7 @@ fn truncate_noted(s: &str, cap: usize) -> String {
 /// else tree only) + recent sessions. Computed per call from files.
 pub fn digest(world_root: &Path, cfg: &WorldConfig) -> String {
     let vault_root = cfg.codex_dir(world_root);
-    let pages = vault::list_pages(&vault_root).unwrap_or_default();
+    let pages = vault::list_canon_pages(&vault_root).unwrap_or_default();
 
     let mut out = String::from("## Codex digest\n\n");
     out.push_str(&format!("{} pages.\n", pages.len()));

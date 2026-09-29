@@ -179,7 +179,7 @@ fn truncate(s: &str, cap: usize) -> String {
 
 fn counts(world_root: &std::path::Path, cfg: &WorldConfig) -> (usize, usize) {
     let sessions = crate::agent::context::session_entries(world_root).len();
-    let pages = crate::vault::list_pages(&cfg.codex_dir(world_root))
+    let pages = crate::vault::list_canon_pages(&cfg.codex_dir(world_root))
         .map(|p| p.len())
         .unwrap_or(0);
     (sessions, pages)

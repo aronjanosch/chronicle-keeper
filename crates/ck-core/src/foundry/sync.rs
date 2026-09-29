@@ -35,7 +35,7 @@ pub async fn sync_world(
     vault_root: &Path,
     root_name: &str,
 ) -> AppResult<SyncReport> {
-    let pages = vault::list_pages(vault_root)?;
+    let pages = vault::list_canon_pages(vault_root)?;
     let mut map = read_map(world_root);
     let mut report = SyncReport::default();
 

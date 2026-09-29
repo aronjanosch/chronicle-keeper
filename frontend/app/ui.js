@@ -832,7 +832,7 @@ function fillAssetImgs(scope, campaignId, urls, isDead) {
   }
 }
 
-const KIND_ICONS = { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', thread: 'feather', lore: 'scroll' };
+const KIND_ICONS = { pc: 'sparkle', npc: 'users', place: 'map', faction: 'shield', item: 'gem', event: 'cal', thread: 'feather', prep: 'edit', lore: 'scroll' };
 
 // Asset name (from `image:` frontmatter) → authenticated blob URL, revoked on unmount.
 export function useAsset(cid, name) {

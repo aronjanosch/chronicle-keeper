@@ -106,6 +106,8 @@ const DEFAULT_KINDS: &[(&str, &[&str])] = &[
     // Threads are ordinary pages; `status` is open | resolved | dormant, with
     // missing treated as open in code (FIELD_TYPES has no enum type).
     ("thread", &["status", "summary", "involves:list"]),
+    // Session prep (non-canon, see `vault::NON_CANON_KINDS`); `session` = number.
+    ("prep", &["session"]),
 ];
 
 fn parse_field(spec: &str) -> Option<KindField> {

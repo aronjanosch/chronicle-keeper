@@ -776,7 +776,7 @@ pub async fn generate_streamed<F: FnMut(GenProgress) + Send>(
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "en".into());
         let vault_root = world_cfg.codex_dir(&root);
-        let pages = vault::list_pages(&vault_root)?;
+        let pages = vault::list_canon_pages(&vault_root)?;
         let rel_fields: HashMap<String, Vec<String>> = world_cfg
             .kind_schemas()
             .into_iter()
@@ -994,7 +994,7 @@ pub async fn clarify(
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| "en".into());
             let vault_root = world_cfg.codex_dir(&root);
-            let pages = vault::list_pages(&vault_root)?;
+            let pages = vault::list_canon_pages(&vault_root)?;
             Ok((
                 loc.dir,
                 vault_root,

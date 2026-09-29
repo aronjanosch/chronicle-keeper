@@ -42,6 +42,7 @@ const KEYWORDS = {
     'thread', 'threads', 'plot', 'plots', 'quest', 'quests', 'storyline', 'storylines',
     'faden', 'faeden', 'handlung', 'handlungsstraenge',
   ],
+  prep: ['prep', 'preparation', 'vorbereitung', 'sessionprep'],
   lore: [
     'lore', 'history', 'myth', 'myths', 'legend', 'legends', 'religion', 'religions',
     'god', 'gods', 'deities', 'cosmology', 'calendar',

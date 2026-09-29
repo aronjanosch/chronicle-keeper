@@ -1471,7 +1471,7 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
                     // Marked so the model knows read_prep is worth a call here,
                     // without spending a call per session to find out.
                     let prep = match session_dir(ctx, *n) {
-                        Ok(dir) if has_prep(&dir) => " · has prep",
+                        Ok(dir) if has_prep(ctx, &dir) => " · has prep",
                         _ => "",
                     };
                     format!("- Session {n}{title}{date}{prep}")
@@ -1488,7 +1488,7 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
         "read_prep" => {
             let n = int_arg("session").ok_or("missing 'session'")?;
             let dir = session_dir(ctx, n)?;
-            let prep = crate::session_prep::read(&dir).map_err(app_err)?;
+            let prep = crate::session_prep::read(&prep_ctx(ctx, &dir)).map_err(app_err)?;
             Ok(render_prep(n, &prep))
         }
         "search_summaries" => {
@@ -2102,12 +2102,20 @@ fn snippet_around(text: &str, at: usize, window: usize) -> String {
 }
 
 /// Whether a session has preparation worth reading — present, parseable, and
-/// not empty. A malformed `prep.md` is not advertised, because the tool would
-/// only fail on it.
-fn has_prep(dir: &std::path::Path) -> bool {
-    crate::session_prep::read(dir)
-        .map(|p| !p.cards.is_empty() || !p.notes.trim().is_empty())
-        .unwrap_or(false)
+/// not empty. Checks the pointer first so listing sessions stays cheap.
+fn has_prep(ctx: &ToolCtx<'_>, dir: &std::path::Path) -> bool {
+    let prep = prep_ctx(ctx, dir);
+    crate::session_prep::exists(&prep)
+        && crate::session_prep::read(&prep)
+            .map(|p| !p.cards.is_empty() || !p.notes.trim().is_empty())
+            .unwrap_or(false)
+}
+
+fn prep_ctx(ctx: &ToolCtx<'_>, dir: &std::path::Path) -> crate::session_prep::PrepCtx {
+    let lang = ctx
+        .state
+        .with_db(|conn| crate::session_prep::world_language(conn, ctx.cfg));
+    crate::session_prep::PrepCtx::for_dir(ctx.world_root, ctx.cfg, dir, &lang)
 }
 
 /// Preparation as prose. The stored shape is YAML meant for the Prepare screen;
@@ -2116,13 +2124,16 @@ fn has_prep(dir: &std::path::Path) -> bool {
 /// prep doesn't read as if everything were still open.
 fn render_prep(number: i64, prep: &crate::session_prep::PrepResponse) -> String {
     use crate::session_prep::{PrepOutcome, PrepSection};
-    let mut out = format!(
-        "Session {number} preparation
-"
-    );
     if prep.cards.is_empty() && prep.notes.trim().is_empty() {
-        return format!("Session {number} has no preparation.");
+        return match &prep.page {
+            Some(page) => format!("Session {number} has an empty prep page: {page}"),
+            None => format!("Session {number} has no preparation."),
+        };
     }
+    let mut out = match &prep.page {
+        Some(page) => format!("Session {number} preparation (page: {page})\n"),
+        None => format!("Session {number} preparation\n"),
+    };
     for (section, label) in [
         (PrepSection::Opening, "Opening situation"),
         (PrepSection::Scene, "Possible scenes"),
@@ -2263,21 +2274,50 @@ mod tests {
 
     /// Prep is written as the app writes it, through `session_prep`, so the test
     /// breaks if the on-disk shape changes underneath the tool.
-    fn write_prep(sess: &std::path::Path) {
-        use crate::session_prep::{PrepCard, PrepOutcome, PrepSection, PutPrepRequest};
-        let mut opening = PrepCard::new(PrepSection::Opening, "The gates of Thornhold are shut.");
-        opening.outcome = PrepOutcome::Happened;
-        let mut scene = PrepCard::new(PrepSection::Scene, "A bargain with the Baron.");
-        scene.outcome = PrepOutcome::Unused;
-        scene.links = vec!["NPCs/Baron Aldric.md".into()];
-        crate::session_prep::put(
-            sess,
-            PutPrepRequest {
+    fn write_prep(root: &std::path::Path, cfg: &WorldConfig) {
+        use crate::session_prep::{OpsRequest, PrepCtx, PrepOp, PrepOutcome, PrepSection};
+        let prep = PrepCtx::for_dir(root, cfg, &root.join("Sessions/001"), "en");
+        let add = |section, text: &str| PrepOp::AddCard {
+            section,
+            title: None,
+            text: text.into(),
+            links: Vec::new(),
+        };
+        let r = crate::session_prep::apply(
+            &prep,
+            &OpsRequest {
                 base_revision: "absent".into(),
-                cards: vec![opening, scene],
-                selected_threads: vec![],
-                notes: "start at dusk".into(),
+                ops: vec![
+                    add(PrepSection::Opening, "The gates of Thornhold are shut."),
+                    add(
+                        PrepSection::Scene,
+                        "A bargain with the Baron. [[Baron Aldric]]",
+                    ),
+                ],
             },
+        )
+        .unwrap();
+        let outcome = |id: &Option<String>, outcome| PrepOp::SetOutcome {
+            id: id.clone().unwrap(),
+            outcome,
+            note: String::new(),
+        };
+        let r = crate::session_prep::apply(
+            &prep,
+            &OpsRequest {
+                base_revision: r.revision,
+                ops: vec![
+                    outcome(&r.cards[0].id, PrepOutcome::Happened),
+                    outcome(&r.cards[1].id, PrepOutcome::Unused),
+                ],
+            },
+        )
+        .unwrap();
+        let page = root.join("Codex").join(r.page.unwrap());
+        let text = std::fs::read_to_string(&page).unwrap();
+        std::fs::write(
+            page,
+            text.replace("## Notes\n", "## Notes\nstart at dusk\n"),
         )
         .unwrap();
     }
@@ -2285,7 +2325,7 @@ mod tests {
     #[test]
     fn read_prep_reports_intent_and_outcomes_not_raw_yaml() {
         let (state, root, cfg) = fixture_world("prep");
-        write_prep(&root.join("Sessions/001"));
+        write_prep(&root, &cfg);
         let ctx = ToolCtx {
             state: &state,
             world_root: &root,
@@ -2296,7 +2336,7 @@ mod tests {
         assert!(out.contains("## Opening situation"));
         assert!(out.contains("The gates of Thornhold are shut. [happened]"));
         assert!(out.contains("## Possible scenes"));
-        assert!(out.contains("A bargain with the Baron. [unused]"));
+        assert!(out.contains("A bargain with the Baron. [[Baron Aldric]] [unused]"));
         assert!(out.contains("linked pages: NPCs/Baron Aldric.md"));
         assert!(out.contains("start at dusk"));
         // Storage detail the model cannot act on must not reach it.

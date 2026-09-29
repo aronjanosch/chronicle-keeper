@@ -966,7 +966,7 @@ pub fn current_source_revisions(session_dir: &Path) -> Vec<SourceRevision> {
             "transcript",
             crate::session_files::transcript_md_path(session_dir),
         ),
-        ("prep", crate::session_prep::prep_path(session_dir)),
+        ("prep", crate::session_prep::source_file(session_dir)),
     ];
     sources
         .into_iter()

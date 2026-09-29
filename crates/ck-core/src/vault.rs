@@ -384,6 +384,24 @@ pub fn list_pages(vault: &Path) -> AppResult<Vec<PageInfo>> {
     Ok(pages)
 }
 
+/// Page kinds that record intent rather than world fact (session prep). They
+/// stay browsable and searchable, but nothing that treats pages as canon —
+/// summarizer glossary, Update-the-Codex, review, the Keeper digest, Foundry
+/// sync — may read them.
+pub const NON_CANON_KINDS: &[&str] = &[crate::prep_page::KIND];
+
+pub fn is_canon_kind(kind: Option<&str>) -> bool {
+    !kind.is_some_and(|k| NON_CANON_KINDS.contains(&k))
+}
+
+/// [`list_pages`] without non-canon pages.
+pub fn list_canon_pages(vault: &Path) -> AppResult<Vec<PageInfo>> {
+    Ok(list_pages(vault)?
+        .into_iter()
+        .filter(|p| is_canon_kind(p.kind.as_deref()))
+        .collect())
+}
+
 pub fn read_page(vault: &Path, rel: &str) -> AppResult<Page> {
     let abs = resolve(vault, rel)?;
     let content = std::fs::read_to_string(&abs)
@@ -461,6 +479,7 @@ pub const DEFAULT_HEADINGS: &[(&str, &[&str])] = &[
     ("item", &["Description", "Properties", "History"]),
     ("event", &["What happened", "Consequences"]),
     ("thread", &["Current situation", "Developments"]),
+    ("prep", &["Opening", "Scenes", "Reminders", "Notes"]),
 ];
 
 pub fn default_headings(kind: &str) -> &'static [&'static str] {

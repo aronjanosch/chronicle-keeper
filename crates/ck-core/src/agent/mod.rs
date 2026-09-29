@@ -173,7 +173,9 @@ pub fn system_prompt(
          played. read_summary is what *happened*. Never state prep as world fact. Read prep when \
          preparing a session, when asked what was planned or what went unused, or before \
          suggesting what to carry into the next session; list_sessions marks which sessions have \
-         any.\n\
+         any. Prep is an ordinary Codex page (`kind: prep`, path shown by read_prep): when the GM \
+         asks you to help prepare, edit that page like any other, keeping its `## Opening`, \
+         `## Scenes` (one `###` per scene) and `## Reminders` (`- [ ]` items) layout.\n\
          - The Codex digest above is your map of every page. Use it to pick what to read \
          directly — don't rely on search alone. For a simple factual question, one lookup is \
          enough; for open-ended work (session prep, design, brainstorming, \"how should I…\"), \
@@ -725,6 +727,9 @@ async fn grounded_fallback<L: AgentLlm, F: FnMut(TurnEvent) + Send>(
         let Ok(page) = crate::vault::read_page(&vault_root, &h.path) else {
             continue;
         };
+        if !crate::vault::is_canon_kind(page.kind.as_deref()) {
+            continue;
+        }
         let mut content = page.content;
         if content.len() > 4000 {
             let mut end = 4000;

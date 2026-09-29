@@ -87,6 +87,9 @@ pub struct SessionToml {
     pub language: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub notes: String,
+    /// Codex-relative path of this session's prep page (`kind: prep`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prep: Option<String>,
     #[serde(default, skip_serializing_if = "SessionMetadata::is_empty")]
     pub metadata: SessionMetadata,
     #[serde(default, skip_serializing_if = "ArtifactMeta::is_empty")]
@@ -223,6 +226,7 @@ pub fn write_session_toml(
         st.transcript = existing.transcript;
         st.world_date = existing.world_date;
         st.world_date_end = existing.world_date_end;
+        st.prep = existing.prep;
     }
     write_session_toml_file(session_path, &st)
 }
@@ -329,6 +333,7 @@ mod tests {
             title: Some("Tomb of \"Aldric\"".into()),
             language: "de".into(),
             notes: "line one\nline two\n".into(),
+            prep: Some("Prep/Session 007.md".into()),
             metadata: SessionMetadata {
                 characters: vec!["Lyra".into()],
                 tags: vec!["Kampf".into(), "Mysterium".into()],

@@ -87,7 +87,7 @@ async fn run_summarize(
             .as_ref()
             .and_then(|c| c.vault_path.as_deref())
             .map(|vp| {
-                crate::vault::list_pages(std::path::Path::new(vp))
+                crate::vault::list_canon_pages(std::path::Path::new(vp))
                     .unwrap_or_default()
                     .into_iter()
                     .map(|p| crate::models::CodexEntry {

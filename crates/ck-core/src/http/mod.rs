@@ -208,11 +208,10 @@ pub fn router(state: AppState) -> Router {
         .route("/session/:id/metadata", get(sessions::metadata))
         .route("/session-metadata", post(sessions::set_metadata))
         .route("/sessions/:id", delete(sessions::delete))
+        .route("/sessions/:id/prep", get(session_prep::get))
         .route(
-            "/sessions/:id/prep",
-            get(session_prep::get)
-                .put(session_prep::put)
-                .layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+            "/sessions/:id/prep/ops",
+            post(session_prep::ops).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
         )
         .route("/sessions/:id/prep/suggest", post(session_prep::suggest))
         .route("/sessions/:id/prep/carry", post(session_prep::carry))

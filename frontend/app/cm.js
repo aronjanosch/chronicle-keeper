@@ -646,11 +646,11 @@ function createSingleton(cm) {
   s.flush = () => {
     if (s.saveTimer) { clearTimeout(s.saveTimer); s.saveTimer = null; }
     const { pending, opts } = s;
-    if (!pending.dirty) return;
+    if (!pending.dirty) return Promise.resolve(true);
     if (opts.onState) opts.onState('saving');
-    Promise.resolve(opts.onSave(pending.doc))
-      .then(() => { pending.dirty = false; if (opts.onState) opts.onState('saved'); })
-      .catch(() => { if (opts.onState) opts.onState('dirty'); });
+    return Promise.resolve(opts.onSave(pending.doc))
+      .then(() => { pending.dirty = false; if (opts.onState) opts.onState('saved'); return true; })
+      .catch(() => { if (opts.onState) opts.onState('dirty'); return false; });
   };
   const onDoc = EditorView.updateListener.of((u) => {
     if (!u.docChanged) return;
@@ -759,6 +759,8 @@ export async function mountEditor(host, opts) {
   let dead = false;
   return {
     view: ed.view,
+    // Resolves once pending edits are saved (false if the save failed).
+    flush: () => (dead ? Promise.resolve(true) : ed.flush()),
     destroy() {
       if (dead) return;
       dead = true;

@@ -182,12 +182,15 @@ const chip = (active) => ({ fontSize: 12, padding: '4px 10px', borderRadius: 999
   background: active ? 'var(--burgundy)' : 'var(--surface)', color: active ? '#FBF6E9' : 'var(--ink-soft)',
   border: `1px solid ${active ? 'var(--burgundy-700)' : 'var(--rule)'}` });
 
-export function DrawPalette({ draw, onPick }) {
+export function DrawPalette({ draw, onPick, history }) {
   return html`<div onMouseDown=${(e) => e.stopPropagation()} style=${{ position: 'absolute', bottom: 16, left: 56, zIndex: 89, maxWidth: 'calc(100% - 320px)',
     display: 'flex', flexDirection: 'column', gap: 8, padding: '9px 11px', background: 'var(--surface-raised)', border: '1px solid var(--rule)',
     borderRadius: 10, boxShadow: 'var(--shadow-card)' }}>
     <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
       ${TOOLS.map(([id, label]) => html`<button key=${id} onClick=${() => onPick(draw.tool === id ? null : id)} style=${chip(draw.tool === id)}>${label}</button>`)}
+      <span style=${{ flex: 1 }} />
+      <button onClick=${() => history.step(false)} disabled=${!history.canUndo} title="Undo (⌘Z)" style=${{ ...chip(false), opacity: history.canUndo ? 1 : 0.4 }}><${Icon} name="undo" size=${11} /></button>
+      <button onClick=${() => history.step(true)} disabled=${!history.canRedo} title="Redo (⇧⌘Z)" style=${{ ...chip(false), opacity: history.canRedo ? 1 : 0.4, transform: 'scaleX(-1)' }}><${Icon} name="undo" size=${11} /></button>
     </div>
     <div style=${{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
       ${SWATCHES.map((c) => html`<button key=${c} onClick=${() => draw.setColor(c)} title=${c} style=${{ width: 18, height: 18, borderRadius: '50%', cursor: 'pointer', background: c,

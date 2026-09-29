@@ -12,6 +12,7 @@ import { loadAtlasMaps, createAtlasMap, saveAtlasMap, replaceAtlasMapArt, delete
 import { Shell, Sidebar, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
 import { MeasureLayer, MeasureReadout, UNITS } from './atlasMeasure.js';
 import { useDrawTools, DrawLayer, DrawPalette, TextEditor } from './atlasDraw.js';
+import { createHistory } from './atlasHistory.js';
 import { Icon, Btn, Empty, Spinner, PageBody, Input, Select, splitDoc, parseProps, openContextMenu } from '../ui.js';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -588,6 +589,9 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const [measure, setMeasure] = useState(null);   // { pts: [{x,y}] } while the ruler is open
   const [measureHover, setMeasureHover] = useState(null);
   const [drawOpen, setDrawOpen] = useState(false);
+  const [, setHistTick] = useState(0);        // re-render when undo/redo availability changes
+  const histories = useRef({});               // map id -> history of that map's doc
+  const pending = useRef({});                 // map id -> doc last written, until the store catches up
   const drawRef = useRef(null);
   const layerRef = useRef(null);
   const wasDrag = useRef(false); // a pan drag ends in a click we must not read as a ruler point
@@ -725,8 +729,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         if (d.moved && d.x != null) {
           pinMoved.current = true;
           const m = live.current.map;
-          saveAtlasMap({ ...m, pins: (m.pins || []).map((p) => (p.id === d.id ? { ...p, x: d.x, y: d.y } : p)) })
-            .catch((e) => console.warn('saveAtlasMap failed:', e))
+          live.current.commit({ ...m, pins: (m.pins || []).map((p) => (p.id === d.id ? { ...p, x: d.x, y: d.y } : p)) })
             .finally(() => setPinPos(null)); // keep the override until the store has the new spot
         } else {
           setPinPos(null);
@@ -851,7 +854,49 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   };
   const mapEntryOpen = !!(panel && !panel.pinId && map.page && panel.pagePath === map.page);
 
-  const persist = (next) => saveAtlasMap(next).catch((e) => console.warn('saveAtlasMap failed:', e));
+  // Every edit to the map doc goes through commitDoc: it records an undo step
+  // (inside a transaction only the outermost records) and writes the file.
+  const historyOf = (id) => (histories.current[id] ||= createHistory(50));
+  const commitDoc = (next) => {
+    const before = pending.current[next.id] || live.current.map;
+    pending.current[next.id] = next;
+    historyOf(next.id).commit(before, next);
+    setHistTick((n) => n + 1);
+    return saveAtlasMap(next);
+  };
+  const persist = (next) => commitDoc(next).catch((e) => console.warn('saveAtlasMap failed:', e));
+  live.current.commit = persist;
+  useEffect(() => { pending.current[map.id] = null; }, [map]);
+
+  const runTransaction = async (fn) => {
+    const h = historyOf(map.id);
+    h.begin(pending.current[map.id] || map);
+    try { return await fn(); } finally { h.end(); setHistTick((n) => n + 1); }
+  };
+
+  const stepHistory = (redo) => {
+    const h = historyOf(map.id);
+    const cur = pending.current[map.id] || map;
+    const doc = redo ? h.redo(cur) : h.undo(cur);
+    if (!doc) return;
+    pending.current[map.id] = doc;
+    setHistTick((n) => n + 1);
+    saveAtlasMap(doc).catch((e) => console.warn('saveAtlasMap failed:', e));
+  };
+  const historyRef = useRef(null);
+  historyRef.current = stepHistory;
+  useEffect(() => {
+    const onKey = (e) => {
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z') { e.preventDefault(); historyRef.current(e.shiftKey); }
+      else if (k === 'y' && e.ctrlKey) { e.preventDefault(); historyRef.current(true); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const draw = useDrawTools({ map, commit: persist, view, W, H, screenToNorm });
   drawRef.current = draw;
@@ -932,7 +977,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
       if (renamed || rescaled) {
         const next = { ...map, ...(renamed ? { name } : {}) };
         if (rescaled) { if (scale) next.scale = scale; else delete next.scale; }
-        await saveAtlasMap(next);
+        await commitDoc(next);
       }
       setSettings(false);
     } finally {
@@ -1099,7 +1144,8 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         onUndo=${() => setMeasure((m) => ({ pts: m.pts.slice(0, -1) }))}
         onClear=${() => setMeasure({ pts: [] })} onClose=${() => setMeasure(null)} />`}
 
-      ${drawOpen && html`<${DrawPalette} draw=${draw} onPick=${pickTool} />`}
+      ${drawOpen && html`<${DrawPalette} draw=${draw} onPick=${pickTool}
+        history=${{ canUndo: historyOf(map.id).canUndo(), canRedo: historyOf(map.id).canRedo(), step: stepHistory }} />`}
       <${TextEditor} edit=${draw.edit} setEdit=${draw.setEdit} view=${view} W=${W} H=${H}
         onSave=${draw.saveText} onDelete=${draw.deleteText} onClose=${() => draw.setEdit(null)} />
 

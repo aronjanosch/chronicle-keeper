@@ -94,7 +94,11 @@ pub async fn import_transcript(
     use crate::transcript_format::segments_to_plain_text;
 
     let segments = crate::transcript_import::parse(&req.content, req.filename.as_deref())?;
-    let text = segments_to_plain_text(&segments);
+    let (text, corrections) = crate::name_correct::correct_transcript(
+        &state,
+        &req.session_id,
+        segments_to_plain_text(&segments),
+    );
     let speakers = segments
         .iter()
         .filter_map(|s| s.speaker.as_deref())
@@ -114,6 +118,7 @@ pub async fn import_transcript(
         "segments": segments.len(),
         "speakers": speakers,
         "characters": text.chars().count(),
+        "corrections": corrections,
     })))
 }
 
@@ -359,7 +364,11 @@ pub async fn transcribe(
         )));
     }
 
-    let transcript_text = segments_to_plain_text(&outcome.segments);
+    let (transcript_text, corrections) = crate::name_correct::correct_transcript(
+        &state,
+        &req.session_id,
+        segments_to_plain_text(&outcome.segments),
+    );
 
     // Writes transcript.md + provenance into session.toml (files are truth).
     state.with_db(|conn| {
@@ -385,6 +394,7 @@ pub async fn transcribe(
         language,
         json_path: None,
         text_path: None,
+        corrections,
     }))
 }
 

@@ -790,6 +790,14 @@ function pollModelStatus() {
   return () => { stopped = true; };
 }
 
+// "3 names corrected (Sylvan → Sylvaine, …)" — the raw text stays in transcript.raw.md.
+function namesNote(corrections) {
+  const n = (corrections || []).reduce((sum, c) => sum + c.count, 0);
+  if (!n) return '';
+  const shown = corrections.slice(0, 3).map((c) => `${c.from} → ${c.to}`).join(', ');
+  return ` · ${n} name${n === 1 ? '' : 's'} corrected (${shown}${corrections.length > 3 ? ', …' : ''})`;
+}
+
 // Engine + model come from Settings; language from the campaign. No options here.
 export async function runTranscribe() {
   const sid = store.session?.session_id;
@@ -797,10 +805,10 @@ export async function runTranscribe() {
   setOp('Transcribing…');
   const stop = pollModelStatus();
   try {
-    await apiJson('/transcribe', 'POST', { session_id: sid });
+    const r = await apiJson('/transcribe', 'POST', { session_id: sid });
     await loadSession(sid);
     await refreshCampaignSessions();
-    setOp('Transcription complete', 'done');
+    setOp(`Transcription complete${namesNote(r && r.corrections)}`, 'done');
   } catch (e) { setOp(e.message, 'err'); }
   finally { stop(); }
 }
@@ -823,7 +831,7 @@ export async function importTranscript(content, filename) {
     const r = await apiJson('/transcript-import', 'POST', { session_id: sid, content, filename: filename || null });
     await loadSession(sid);
     await refreshCampaignSessions();
-    setOp(`Imported ${r.segments} lines${r.speakers ? ` from ${r.speakers} speakers` : ''}`, 'done');
+    setOp(`Imported ${r.segments} lines${r.speakers ? ` from ${r.speakers} speakers` : ''}${namesNote(r.corrections)}`, 'done');
   } catch (e) { setOp(e.message, 'err'); }
 }
 

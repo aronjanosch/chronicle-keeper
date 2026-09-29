@@ -15,6 +15,7 @@ pub mod http;
 pub mod index_watch;
 pub mod llm;
 pub mod models;
+pub mod name_correct;
 pub mod normalize;
 pub mod paths;
 pub mod prep_page;

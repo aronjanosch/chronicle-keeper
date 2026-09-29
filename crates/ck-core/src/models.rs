@@ -105,6 +105,8 @@ pub struct TranscribeResponse {
     pub language: String,
     pub json_path: Option<String>,
     pub text_path: Option<String>,
+    /// Sound-alike names rewritten to the world's spelling (empty when none).
+    pub corrections: Vec<crate::name_correct::Correction>,
 }
 
 #[derive(Debug, Serialize)]

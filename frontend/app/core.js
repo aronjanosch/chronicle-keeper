@@ -224,6 +224,11 @@ export function moveTab(from, to) {
 // `from`/`to` are either a page path or a folder prefix.
 export function remapTabs(from, to) {
   const remap = (p) => (p === from ? to : p.startsWith(`${from}/`) ? to + p.slice(from.length) : p);
+  const wid = store.campaign?.campaign_id;
+  if (wid) {
+    const moved = recentPages(wid).map(remap);
+    try { localStorage.setItem(recentKey(wid), JSON.stringify([...new Set(moved)])); } catch (_) { /* private mode */ }
+  }
   const tabs = (store.tabs || []).map(remap);
   if (JSON.stringify(tabs) !== JSON.stringify(store.tabs)) setTabs([...new Set(tabs)]);
   const cur = activePagePath();

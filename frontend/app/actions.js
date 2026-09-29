@@ -456,8 +456,13 @@ export async function loadWorldHistory(origin, limit) {
 export async function bulkVault(action, pages, extra = {}) {
   const id = store.campaign.campaign_id;
   const r = await apiJson(`/campaigns/${id}/vault/bulk`, 'POST', { action, pages, ...extra });
+  if (action === 'move') {
+    const dest = (extra.folder || '').replace(/\/$/, '');
+    const failed = new Set(((r && r.errors) || []).map((e) => e.page));
+    for (const from of pages.filter((p) => !failed.has(p))) remapTabs(from, dest ? `${dest}/${from.split('/').pop()}` : from.split('/').pop());
+    await loadAtlasMaps(id);
+  }
   await loadVaultTree(id);
-  if (action === 'move') await loadAtlasMaps(id);
   return r;
 }
 

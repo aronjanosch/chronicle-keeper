@@ -8,9 +8,13 @@
 // with the art copied alongside; pages stay files-as-truth.
 import { html, useState, useEffect, useRef, useMemo, useCallback } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, apiFetch, apiBlob, store, setState, splitPageRef, fmtDateTime } from '../core.js';
-import { loadAtlasMaps, createAtlasMap, saveAtlasMap, replaceAtlasMapArt, deleteAtlasMap, loadAtlasMapHistory, restoreAtlasMapVersion, pickMapImage, loadVaultTree, loadVaultLinks, createVaultPage, openCampaign } from '../actions.js';
+import { loadAtlasMaps, createAtlasMap, saveAtlasMap, replaceAtlasMapArt, deleteAtlasMap, loadAtlasMapHistory, restoreAtlasMapVersion, pickMapImage, loadVaultTree, loadVaultLinks, createVaultPage, saveVaultPage, openCampaign } from '../actions.js';
 import { Shell, Sidebar, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
 import { MeasureLayer, MeasureReadout, UNITS } from './atlasMeasure.js';
+import { useDrawTools, DrawLayer, DrawPalette, TextEditor } from './atlasDraw.js';
+import { createHistory } from './atlasHistory.js';
+import { RegionLayer, REGION_COLORS } from './atlasRegions.js';
+import { setPartOf } from './atlasGeom.js';
 import { Icon, Btn, Empty, Spinner, PageBody, Input, Select, splitDoc, parseProps, openContextMenu } from '../ui.js';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -79,14 +83,14 @@ function nextLabel(pins, letters) {
 
 // full map marker: ground shadow + seal + tip + label.
 // Counter-scales by 1/zoom so pins stay legible at any zoom.
-function PinMarker({ pin, invZoom, scale = 1, showLabel = true, selected, hasMap, onHover, onLeave, onClick, onDoubleClick, onMouseDown, onMenu }) {
+function PinMarker({ pin, invZoom, scale = 1, showLabel = true, inert, selected, hasMap, onHover, onLeave, onClick, onDoubleClick, onMouseDown, onMenu }) {
   const size = pin.kind === 'pc' ? 32 : 38;
   const k = PIN_KINDS[pin.kind] || PIN_KINDS.npc;
   const s = SEAL[k.tone] || SEAL.burgundy;
   return html`<div style=${{ position: 'absolute', left: `${pin.x * 100}%`, top: `${pin.y * 100}%`, zIndex: selected ? 40 : (hasMap ? 30 : 20) }}>
     <div class="ck-pin" onMouseEnter=${onHover} onMouseLeave=${onLeave} onClick=${onClick} onDblClick=${onDoubleClick} onMouseDown=${onMouseDown} onContextMenu=${onMenu}
       style=${{
-        position: 'absolute', left: 0, bottom: 0,
+        position: 'absolute', left: 0, bottom: 0, pointerEvents: inert ? 'none' : undefined,
         transform: `translateX(-50%) scale(${invZoom * scale})`, transformOrigin: 'bottom center',
         cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center',
         willChange: 'transform',
@@ -170,7 +174,7 @@ function pageHeadings(md) {
   return out;
 }
 
-function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canChart, onEnterMap, onChartMap, onRemovePin, onClose }) {
+function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canChart, onEnterMap, onChartMap, onRemovePin, removeLabel = 'Remove pin', onClose }) {
   const bodyRef = useRef(null);
   const [page, setPage] = useState(null);
   const [err, setErr] = useState(null);
@@ -306,8 +310,8 @@ function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canCha
 
     <div style=${{ borderTop: '1px solid var(--rule-soft)', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12, fontSize: 11.5, color: 'var(--ink-muted)' }}>
       <span style=${{ display: 'flex', alignItems: 'center', gap: 5 }}><${Icon} name="backlink" size=${12} /> ${backlinks} backlink${backlinks === 1 ? '' : 's'}</span>
-      ${onRemovePin && html`<button onClick=${onRemovePin} title="Remove this pin (the page stays)" style=${{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--ink-faint)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11.5 }}>
-        <${Icon} name="trash" size=${11} /> Remove pin
+      ${onRemovePin && html`<button onClick=${onRemovePin} title=${`${removeLabel} (the page stays)`} style=${{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--ink-faint)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11.5 }}>
+        <${Icon} name="trash" size=${11} /> ${removeLabel}
       </button>`}
       <span style=${{ flex: 1 }} />
       <button onClick=${() => pagePath && navigate('page', { path: pagePath })} style=${{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 11px', background: 'var(--burgundy)', color: '#FBF6E9', border: '1px solid var(--burgundy-700)', borderRadius: 4, fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', cursor: 'pointer' }}>
@@ -319,10 +323,10 @@ function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canCha
 
 // Shown when a freshly-dropped pin needs a codex entry: name it to mint a new
 // page — or pick an existing page and the pin links to it instead.
-function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy }) {
+function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy, title = 'New pin', initialName = '', discardLabel = 'Discard pin', onSkip }) {
   const k = PIN_KINDS[kind] || {};
   const [width, onResize] = usePanelWidth();
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialName);
   const ex = { place: 'Port Hadwin', npc: 'Reeve Aldwin Lorne', faction: 'The Saltmen', item: 'The Tide-Glass', lore: 'The Drowned Bell', pc: 'New companion' }[kind] || 'A new place';
 
   // where the page lands — the GM's own folder tree, kind folder preselected
@@ -352,7 +356,7 @@ function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy }) {
     <div style=${{ padding: '14px 16px', borderBottom: '1px solid var(--rule-soft)', display: 'flex', alignItems: 'center', gap: 10 }}>
       <${SealHead} kind=${kind} size=${30} />
       <div style=${{ flex: 1 }}>
-        <div style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)' }}>New pin · ${k.label || 'Entry'}</div>
+        <div style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)' }}>${title} · ${k.label || 'Entry'}</div>
         <div style=${{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ink-faint)', marginTop: 1, display: 'flex', alignItems: 'center', gap: 4 }}><${Icon} name="folder" size=${10} /> ${folder || '(vault root)'}</div>
       </div>
       <button onClick=${onCancel} style=${{ width: 28, height: 28, borderRadius: 4, color: 'var(--ink-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer' }}><${Icon} name="x" size=${14} /></button>
@@ -403,7 +407,8 @@ function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy }) {
     </div>
 
     <div style=${{ borderTop: '1px solid var(--rule-soft)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
-      <${Btn} onClick=${onCancel}>Discard pin</${Btn}>
+      <${Btn} onClick=${onCancel}>${discardLabel}</${Btn}>
+      ${onSkip && html`<${Btn} disabled=${busy} onClick=${() => onSkip(name)}>Keep without a page</${Btn}>`}
       <span style=${{ flex: 1 }} />
       <${Btn} kind="primary" icon="check" disabled=${!name.trim() || busy} onClick=${() => onCreate(name, folder)}>
         ${busy ? 'Creating…' : 'Create page'}
@@ -586,6 +591,12 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const [pinPos, setPinPos] = useState(null);   // { id, x, y } live override while dragging a pin
   const [measure, setMeasure] = useState(null);   // { pts: [{x,y}] } while the ruler is open
   const [measureHover, setMeasureHover] = useState(null);
+  const [drawOpen, setDrawOpen] = useState(false);
+  const [newRegion, setNewRegion] = useState(null); // { region, existing } awaiting a name / page
+  const [, setHistTick] = useState(0);        // re-render when undo/redo availability changes
+  const histories = useRef({});               // map id -> history of that map's doc
+  const pending = useRef({});                 // map id -> doc last written, until the store catches up
+  const drawRef = useRef(null);
   const layerRef = useRef(null);
   const wasDrag = useRef(false); // a pan drag ends in a click we must not read as a ruler point
 
@@ -692,6 +703,8 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
       setPlacing(null); setPaletteOpen(false); setGhost(null); setNewEntry(null); setMapForm(null); setSettings(false); setViewOpts(false); setMeasure(null);
+      drawRef.current?.cancel();
+      setNewRegion(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -721,8 +734,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         if (d.moved && d.x != null) {
           pinMoved.current = true;
           const m = live.current.map;
-          saveAtlasMap({ ...m, pins: (m.pins || []).map((p) => (p.id === d.id ? { ...p, x: d.x, y: d.y } : p)) })
-            .catch((e) => console.warn('saveAtlasMap failed:', e))
+          live.current.commit({ ...m, pins: (m.pins || []).map((p) => (p.id === d.id ? { ...p, x: d.x, y: d.y } : p)) })
             .finally(() => setPinPos(null)); // keep the override until the store has the new spot
         } else {
           setPinPos(null);
@@ -757,6 +769,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
       setPlacing(null); setGhost(null);
       return;
     }
+    if (drawRef.current?.tool && layerRef.current?.contains(e.target) && drawRef.current.down(e)) return;
     setAnim(false);
     drag.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty, moved: false };
   };
@@ -764,6 +777,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const onStageMove = (e) => {
     if (placing) { const r = stageRef.current.getBoundingClientRect(); setGhost({ x: e.clientX - r.left, y: e.clientY - r.top }); }
     else if (measure && view) setMeasureHover(screenToNorm(e.clientX, e.clientY));
+    else if (draw.tool === 'region' && view) draw.move(e);
   };
 
   const onStageClick = (e) => {
@@ -775,9 +789,21 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const toggleMeasure = () => {
     setMeasure((m) => (m ? null : { pts: [] })); setMeasureHover(null);
     setPlacing(null); setGhost(null); setPaletteOpen(false);
+    draw.setTool(null); setDrawOpen(false);
   };
 
-  useEffect(() => { setMeasure(null); setMeasureHover(null); }, [mapId]);
+  const toggleDraw = () => {
+    setDrawOpen((o) => !o);
+    if (drawOpen) draw.setTool(null);
+    setMeasure(null); setPlacing(null); setGhost(null); setPaletteOpen(false);
+  };
+
+  const pickTool = (t) => {
+    draw.setTool(t);
+    if (t) { setMeasure(null); setPlacing(null); setGhost(null); setPaletteOpen(false); }
+  };
+
+  useEffect(() => { setMeasure(null); setMeasureHover(null); drawRef.current?.setEdit(null); setNewRegion(null); }, [mapId]);
 
   const centerOn = useCallback((px, py, zMin) => {
     setView((v) => {
@@ -834,7 +860,115 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   };
   const mapEntryOpen = !!(panel && !panel.pinId && map.page && panel.pagePath === map.page);
 
-  const persist = (next) => saveAtlasMap(next).catch((e) => console.warn('saveAtlasMap failed:', e));
+  // Every edit to the map doc goes through commitDoc: it records an undo step
+  // (inside a transaction only the outermost records) and writes the file.
+  const historyOf = (id) => (histories.current[id] ||= createHistory(50));
+  const commitDoc = (next) => {
+    const before = pending.current[next.id] || live.current.map;
+    pending.current[next.id] = next;
+    historyOf(next.id).commit(before, next);
+    setHistTick((n) => n + 1);
+    return saveAtlasMap(next);
+  };
+  const persist = (next) => commitDoc(next).catch((e) => console.warn('saveAtlasMap failed:', e));
+  live.current.commit = persist;
+  useEffect(() => { pending.current[map.id] = null; }, [map]);
+
+  const runTransaction = async (fn) => {
+    const h = historyOf(map.id);
+    h.begin(pending.current[map.id] || map);
+    try { return await fn(); } finally { h.end(); setHistTick((n) => n + 1); }
+  };
+
+  const stepHistory = (redo) => {
+    const h = historyOf(map.id);
+    const cur = pending.current[map.id] || map;
+    const doc = redo ? h.redo(cur) : h.undo(cur);
+    if (!doc) return;
+    pending.current[map.id] = doc;
+    setHistTick((n) => n + 1);
+    saveAtlasMap(doc).catch((e) => console.warn('saveAtlasMap failed:', e));
+  };
+  const historyRef = useRef(null);
+  historyRef.current = stepHistory;
+  useEffect(() => {
+    const onKey = (e) => {
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z') { e.preventDefault(); historyRef.current(e.shiftKey); }
+      else if (k === 'y' && e.ctrlKey) { e.preventDefault(); historyRef.current(true); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const draw = useDrawTools({ map, commit: persist, view, W, H, screenToNorm,
+    onRegion: (points) => { setNewRegion({ region: { id: `r${Date.now().toString(36)}`, name: '', points }, existing: false }); setPanel(null); setNewEntry(null); } });
+  drawRef.current = draw;
+
+  // ── regions: polygons that own a place page ──
+  const saveRegion = (r) => {
+    const cur = map.regions || [];
+    persist({ ...map, regions: cur.some((x) => x.id === r.id) ? cur.map((x) => (x.id === r.id ? r : x)) : [...cur, r] });
+  };
+  const removeRegion = (id) => {
+    persist({ ...map, regions: (map.regions || []).filter((r) => r.id !== id) });
+    setPanel((p) => (p && p.regionId === id ? null : p));
+  };
+  const openRegion = (r) => {
+    if (r.page) {
+      const { path, heading } = splitPageRef(r.page);
+      setNewRegion(null);
+      setPanel({ pagePath: path, heading, regionId: r.id, kind: 'place', name: r.name });
+    } else { setPanel(null); setNewRegion({ region: r, existing: true }); }
+  };
+  const commitRegionNew = async (n, name, folder) => {
+    const nm = (name || '').trim() || n.region.name || 'Region';
+    setBusy(true);
+    try {
+      const page = await createVaultPage(nm, 'place', folder || null);
+      if (map.page) {
+        const parent = (store.vaultPages || []).find((p) => p.path === map.page);
+        const title = parent?.title || map.page.split('/').pop().replace(/\.md$/, '');
+        const content = setPartOf(page.content, title);
+        if (content !== page.content) await saveVaultPage(page.path, content);
+      }
+      saveRegion({ ...n.region, name: nm, page: page.path });
+      setNewRegion(null);
+      setPanel({ pagePath: page.path, regionId: n.region.id, kind: 'place', name: nm });
+    } catch (e) {
+      console.warn('create region page failed:', e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const commitRegionLink = (n, page) => {
+    saveRegion({ ...n.region, name: page.title, page: page.path });
+    setNewRegion(null);
+    setPanel({ pagePath: page.path, regionId: n.region.id, kind: 'place', name: page.title });
+  };
+  const commitRegionSkip = (n, name) => {
+    saveRegion({ ...n.region, name: (name || '').trim() || n.region.name || 'Region' });
+    setNewRegion(null);
+  };
+  const renameRegion = (r) => {
+    const name = window.prompt('Region name', r.name);
+    if (name && name.trim() && name.trim() !== r.name) saveRegion({ ...r, name: name.trim().slice(0, 200) });
+  };
+  const regionMenu = (e, r) => openContextMenu(e, [
+    r.page && { label: 'Open page', icon: 'book', onClick: () => navigate('page', { path: splitPageRef(r.page).path }) },
+    r.page && { label: 'Read here', icon: 'doc', onClick: () => openRegion(r) },
+    !r.page && { label: 'Create place page…', icon: 'plus', onClick: () => openRegion(r) },
+    { label: 'Rename…', icon: 'edit', onClick: () => renameRegion(r) },
+    { label: 'Colour', icon: 'tag', children: REGION_COLORS.map(([label, color]) => ({ label, onClick: () => saveRegion({ ...r, color }) })) },
+    '-',
+    { label: 'Remove region', icon: 'trash', danger: true, onClick: () => removeRegion(r.id) },
+  ]);
+  const regionsShown = [...(map.regions || []), ...(newRegion && !newRegion.existing ? [{ ...newRegion.region, name: newRegion.region.name || '' }] : [])];
+  const drawings = draw.override?.drawings ?? map.drawings ?? [];
+  const texts = draw.override?.texts ?? map.texts ?? [];
 
   const commitNew = async (n, name, folder) => {
     const nm = (name || '').trim() || n.pin.name;
@@ -910,7 +1044,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
       if (renamed || rescaled) {
         const next = { ...map, ...(renamed ? { name } : {}) };
         if (rescaled) { if (scale) next.scale = scale; else delete next.scale; }
-        await saveAtlasMap(next);
+        await commitDoc(next);
       }
       setSettings(false);
     } finally {
@@ -943,9 +1077,10 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
 
   return html`<div style=${{ position: 'absolute', inset: 0, display: 'flex', minHeight: 0 }}>
     <div ref=${stageRef} onMouseDown=${onDown} onMouseMove=${onStageMove} onClick=${onStageClick}
+      onDblClick=${(e) => { if (draw.tool === 'region' && layerRef.current?.contains(e.target)) draw.finishPoly(); }}
       style=${{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden',
         background: 'radial-gradient(circle at 50% 40%, #ECE3CB, #DCCFB0)',
-        cursor: placing || measure ? 'crosshair' : 'grab' }}>
+        cursor: placing || measure || draw.tool ? 'crosshair' : 'grab' }}>
 
       ${!img && html`<div style=${{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><${Spinner} size=${22} /></div>`}
 
@@ -955,10 +1090,17 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         <img src=${img.url} width=${W} height=${H} draggable=${false}
           style=${{ display: 'block', userSelect: 'none', boxShadow: '0 10px 40px rgba(60,40,10,.28)' }} />
 
+        <${RegionLayer} regions=${regionsShown} poly=${draw.poly} polyHover=${draw.polyHover} zoom=${view.zoom} W=${W} H=${H}
+          interactive=${!draw.tool && !measure && !placing} selectedId=${panel?.regionId || (newRegion && newRegion.region.id)}
+          onOpen=${(r) => { if (wasDrag.current) { wasDrag.current = false; return; } openRegion(r); }} onMenu=${regionMenu} />
+
+        <${DrawLayer} drawings=${drawings} texts=${texts} draft=${draw.draft} brush=${draw.brush} zoom=${view.zoom} W=${W} H=${H}
+          tool=${draw.tool} color=${draw.color} width=${draw.width} onTextDblClick=${(t) => draw.setEdit({ ...t })} />
+
         ${measure && html`<${MeasureLayer} pts=${measure.pts} hover=${measureHover} W=${W} H=${H} zoom=${view.zoom} active />`}
 
         ${pins.map((pin) => html`<${PinMarker} key=${pin.id} pin=${pin} invZoom=${invZoom}
-          scale=${pinScale} showLabel=${showLabels}
+          scale=${pinScale} showLabel=${showLabels} inert=${!!draw.tool}
           selected=${panel?.pinId === pin.id || newEntry?.pin.id === pin.id}
           hasMap=${!!pin.to}
           onHover=${() => !placing && setHover(pin.id)} onLeave=${() => setHover(null)}
@@ -1074,10 +1216,15 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         onUndo=${() => setMeasure((m) => ({ pts: m.pts.slice(0, -1) }))}
         onClear=${() => setMeasure({ pts: [] })} onClose=${() => setMeasure(null)} />`}
 
+      ${drawOpen && html`<${DrawPalette} draw=${draw} onPick=${pickTool}
+        history=${{ canUndo: historyOf(map.id).canUndo(), canRedo: historyOf(map.id).canRedo(), step: stepHistory }} />`}
+      <${TextEditor} edit=${draw.edit} setEdit=${draw.setEdit} view=${view} W=${W} H=${H}
+        onSave=${draw.saveText} onDelete=${draw.deleteText} onClose=${() => draw.setEdit(null)} />
+
       ${''/* zoom controls — pinned LEFT so the panel never shoves them */}
       <div style=${{ position: 'absolute', bottom: 16, left: 14, zIndex: 88, display: 'flex', flexDirection: 'column', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 8, boxShadow: 'var(--shadow-card)', overflow: 'hidden' }}>
-        ${[['plus', () => zoomBy(1.4), ''], ['compass', () => { setAnim(true); if (img) setView(fitView(stage, img.w, img.h)); }, 'Fit map'], ['x', () => zoomBy(1 / 1.4), ''], ['ruler', toggleMeasure, 'Measure distance']].map((b, i) => html`
-          <button key=${i} onClick=${b[1]} title=${b[2]} style=${{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', color: i === 3 && measure ? 'var(--burgundy)' : 'var(--ink-soft)', borderBottom: i < 3 ? '1px solid var(--rule-soft)' : 'none', background: i === 3 && measure ? 'var(--paper-deep)' : 'transparent', borderLeft: 'none', borderRight: 'none', borderTop: 'none', cursor: 'pointer' }}>
+        ${[['plus', () => zoomBy(1.4), ''], ['compass', () => { setAnim(true); if (img) setView(fitView(stage, img.w, img.h)); }, 'Fit map'], ['x', () => zoomBy(1 / 1.4), ''], ['ruler', toggleMeasure, 'Measure distance'], ['edit', toggleDraw, 'Draw on the map']].map((b, i) => html`
+          <button key=${i} onClick=${b[1]} title=${b[2]} style=${{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', color: (i === 3 && measure) || (i === 4 && drawOpen) ? 'var(--burgundy)' : 'var(--ink-soft)', borderBottom: i < 4 ? '1px solid var(--rule-soft)' : 'none', background: (i === 3 && measure) || (i === 4 && drawOpen) ? 'var(--paper-deep)' : 'transparent', borderLeft: 'none', borderRight: 'none', borderTop: 'none', cursor: 'pointer' }}>
             <${Icon} name=${b[0]} size=${i === 1 ? 15 : 14} />
           </button>`)}
       </div>
@@ -1087,7 +1234,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         ${paletteOpen && html`<div style=${{ width: 184, background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', borderRadius: 10, boxShadow: 'var(--shadow-raised)', overflow: 'hidden' }}>
           <div style=${{ padding: '9px 12px 7px', borderBottom: '1px solid var(--rule-soft)', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>New pin · pick a kind</div>
           <div style=${{ padding: 5 }}>
-            ${PALETTE.map((k) => html`<div key=${k} onClick=${() => { setPlacing(k); setPaletteOpen(false); }}
+            ${PALETTE.map((k) => html`<div key=${k} onClick=${() => { setPlacing(k); setPaletteOpen(false); draw.setTool(null); }}
               style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderRadius: 6, cursor: 'pointer' }}
               onMouseEnter=${(e) => { e.currentTarget.style.background = 'rgba(120,90,40,.08)'; }}
               onMouseLeave=${(e) => { e.currentTarget.style.background = 'transparent'; }}>
@@ -1099,7 +1246,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
             Creates a codex page of that kind.
           </div>
         </div>`}
-        <button onClick=${() => { setPaletteOpen((o) => !o); setPlacing(null); setGhost(null); }} style=${{
+        <button onClick=${() => { setPaletteOpen((o) => !o); setPlacing(null); setGhost(null); draw.setTool(null); setDrawOpen(false); }} style=${{
           display: 'inline-flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderRadius: 999,
           background: paletteOpen ? 'var(--burgundy-700)' : 'var(--burgundy)', color: '#F7E8E2', border: '1px solid var(--burgundy-700)',
           boxShadow: '0 6px 16px rgba(92,35,23,.26)', fontFamily: 'var(--font-display)', fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap', cursor: 'pointer' }}>
@@ -1121,8 +1268,16 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
       onSetHeading=${panel.pinId ? setPinHeading : null} pinName=${panel.name} kind=${panel.kind}
       to=${panel.to} canChart=${!!panel.pinId && !busy}
       onEnterMap=${() => goToMap(panel.to)} onChartMap=${chartFromPin}
-      onRemovePin=${panel.pinId ? () => removePin(panel.pinId) : null}
+      onRemovePin=${panel.pinId ? () => removePin(panel.pinId) : panel.regionId ? () => removeRegion(panel.regionId) : null}
+      removeLabel=${panel.regionId ? 'Remove region' : 'Remove pin'}
       onClose=${() => setPanel(null)} />`}
+
+    ${newRegion && html`<${NewEntryPanel} kind="place" busy=${busy} title="New region" discardLabel=${newRegion.existing ? 'Close' : 'Discard region'}
+      initialName=${newRegion.region.name}
+      onCreate=${(name, folder) => commitRegionNew(newRegion, name, folder)}
+      onLink=${(page) => commitRegionLink(newRegion, page)}
+      onSkip=${(name) => commitRegionSkip(newRegion, name)}
+      onCancel=${() => setNewRegion(null)} />`}
 
     ${newEntry && html`<${NewEntryPanel} kind=${newEntry.pin.kind} busy=${busy}
       onCreate=${(name, folder) => commitNew(newEntry, name, folder)}

@@ -6,6 +6,7 @@ mod codex;
 mod foundry;
 mod index;
 mod llm;
+mod packs;
 mod prompts;
 mod session_prep;
 mod sessions;
@@ -93,6 +94,12 @@ pub fn router(state: AppState) -> Router {
             post(vault::history_restore),
         )
         .route("/campaigns/:id/backup", post(vault::backup))
+        // world packs: shareable zips of pages, templates, kinds and maps
+        .route("/campaigns/:id/packs", get(packs::list))
+        .route("/campaigns/:id/packs/export", post(packs::export))
+        .route("/campaigns/:id/packs/plan", post(packs::plan))
+        .route("/campaigns/:id/packs/apply", post(packs::apply))
+        .route("/campaigns/:id/packs/:pack/rollback", post(packs::rollback))
         .route(
             "/foundry/settings",
             get(foundry::get_settings).put(foundry::put_settings),

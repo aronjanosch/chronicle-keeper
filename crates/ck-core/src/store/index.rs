@@ -654,29 +654,96 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
-/// Optional facets narrowing a full-text search. Applied in SQL so ranking and
-/// the 50-hit cap stay correct (client-side filtering would drop capped hits).
+/// One `field <op> value` condition on a page's frontmatter (search tokens
+/// like `born>=300`, `faction:"Silver Court"`).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PropFilter {
+    pub field: String,
+    /// `=` (also `:`), `!=`, `>`, `>=`, `<`, `<=`, `~` (contains)
+    pub op: String,
+    pub value: String,
+}
+
+/// Optional facets narrowing a search. Applied in SQL where possible so ranking
+/// and the 50-hit cap stay correct; property conditions run over the candidate
+/// set in Rust (the index stores frontmatter scalars as strings).
 #[derive(Debug, Default)]
 pub struct SearchFacets {
+    /// Comma-separated: any of.
     pub kind: Option<String>,
+    /// Comma-separated: all of.
     pub tag: Option<String>,
+    pub not_kind: Option<String>,
+    /// Comma-separated: none of.
+    pub not_tag: Option<String>,
     pub folder: Option<String>,
     pub edited_after: Option<i64>,
     pub edited_before: Option<i64>,
+    pub props: Vec<PropFilter>,
 }
 
 impl SearchFacets {
     pub fn is_empty(&self) -> bool {
         self.kind.is_none()
             && self.tag.is_none()
+            && self.not_kind.is_none()
+            && self.not_tag.is_none()
             && self.folder.is_none()
             && self.edited_after.is_none()
             && self.edited_before.is_none()
+            && self.props.is_empty()
     }
 }
 
 pub fn search(conn: &Connection, q: &str) -> AppResult<Vec<SearchHit>> {
     search_faceted(conn, q, &SearchFacets::default())
+}
+
+fn csv(v: &Option<String>) -> Vec<String> {
+    v.as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// Values of a frontmatter field as comparable keys (scalars arrive as strings).
+fn field_values(fm: &serde_json::Value, field: &str) -> Vec<String> {
+    match &fm[field] {
+        serde_json::Value::String(s) => vec![query_norm(s)],
+        serde_json::Value::Number(n) => vec![n.to_string()],
+        serde_json::Value::Array(a) => a
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(query_norm)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn prop_matches(fm: &serde_json::Value, f: &PropFilter) -> bool {
+    let vals = field_values(fm, &f.field);
+    let want = query_norm(&f.value);
+    match f.op.as_str() {
+        "=" | ":" => vals.contains(&want),
+        "!=" => !vals.contains(&want),
+        "~" => vals.iter().any(|v| v.contains(want.as_str())),
+        op @ (">" | ">=" | "<" | "<=") => {
+            let Ok(n) = f.value.trim().parse::<f64>() else {
+                return false;
+            };
+            vals.iter()
+                .filter_map(|v| v.parse::<f64>().ok())
+                .any(|x| match op {
+                    ">" => x > n,
+                    ">=" => x >= n,
+                    "<" => x < n,
+                    _ => x <= n,
+                })
+        }
+        _ => false,
+    }
 }
 
 pub fn search_faceted(
@@ -685,60 +752,176 @@ pub fn search_faceted(
     facets: &SearchFacets,
 ) -> AppResult<Vec<SearchHit>> {
     let q = q.trim();
-    if q.is_empty() {
+    if q.is_empty() && facets.is_empty() {
         return Ok(Vec::new());
     }
-    // Quote each token as a phrase + prefix star: FTS5 operators in user input
-    // (-, ", :, [) would otherwise be syntax errors.
-    let fts_query = q
-        .split_whitespace()
-        .map(|t| format!("\"{}\"*", t.replace('"', "")))
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    let mut sql = String::from(
-        "SELECT f.path, p.title, p.kind, p.summary, snippet(pages_fts, 3, '<b>', '</b>', '…', 12) \
-         FROM pages_fts f JOIN pages p ON p.path = f.path \
-         WHERE pages_fts MATCH ?1",
-    );
-    let mut binds: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(fts_query)];
-    if let Some(kind) = &facets.kind {
-        binds.push(Box::new(kind.clone()));
-        sql.push_str(&format!(" AND p.kind = ?{}", binds.len()));
+    let mut binds: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut sql;
+    if q.is_empty() {
+        // Filter-only search: browse the pages that match, alphabetically.
+        sql = String::from(
+            "SELECT p.path, p.title, p.kind, p.summary, p.summary, COALESCE(p.frontmatter, '{}') \
+             FROM pages p WHERE 1=1",
+        );
+    } else {
+        // Quote each token as a phrase + prefix star: FTS5 operators in user input
+        // (-, ", :, [) would otherwise be syntax errors.
+        let fts_query = q
+            .split_whitespace()
+            .map(|t| format!("\"{}\"*", t.replace('"', "")))
+            .collect::<Vec<_>>()
+            .join(" ");
+        binds.push(Box::new(fts_query));
+        sql = String::from(
+            "SELECT p.path, p.title, p.kind, p.summary, snippet(pages_fts, 3, '<b>', '</b>', '…', 12), \
+             COALESCE(p.frontmatter, '{}') \
+             FROM pages_fts f JOIN pages p ON p.path = f.path \
+             WHERE pages_fts MATCH ?1",
+        );
     }
-    if let Some(tag) = &facets.tag {
-        binds.push(Box::new(tag.clone()));
-        sql.push_str(&format!(
-            " AND EXISTS (SELECT 1 FROM page_tags t WHERE t.page_path = f.path AND t.tag = ?{})",
-            binds.len()
-        ));
+    type Binds = Vec<Box<dyn rusqlite::types::ToSql>>;
+    fn push(
+        binds: &mut Binds,
+        sql: &mut String,
+        clause: &str,
+        val: Box<dyn rusqlite::types::ToSql>,
+    ) {
+        binds.push(val);
+        sql.push_str(&clause.replace("?N", &format!("?{}", binds.len())));
+    }
+    let kinds = csv(&facets.kind);
+    if !kinds.is_empty() {
+        let marks: Vec<String> = kinds
+            .iter()
+            .map(|k| {
+                binds.push(Box::new(k.clone()));
+                format!("?{}", binds.len())
+            })
+            .collect();
+        sql.push_str(&format!(" AND p.kind IN ({})", marks.join(",")));
+    }
+    for k in csv(&facets.not_kind) {
+        push(
+            &mut binds,
+            &mut sql,
+            " AND (p.kind IS NULL OR p.kind <> ?N)",
+            Box::new(k),
+        );
+    }
+    for t in csv(&facets.tag) {
+        push(
+            &mut binds,
+            &mut sql,
+            " AND EXISTS (SELECT 1 FROM page_tags t WHERE t.page_path = p.path AND t.tag = ?N)",
+            Box::new(t),
+        );
+    }
+    for t in csv(&facets.not_tag) {
+        push(
+            &mut binds,
+            &mut sql,
+            " AND NOT EXISTS (SELECT 1 FROM page_tags t WHERE t.page_path = p.path AND t.tag = ?N)",
+            Box::new(t),
+        );
     }
     if let Some(folder) = &facets.folder {
-        binds.push(Box::new(format!("{}/%", folder.trim_end_matches('/'))));
-        sql.push_str(&format!(" AND f.path LIKE ?{}", binds.len()));
+        push(
+            &mut binds,
+            &mut sql,
+            " AND p.path LIKE ?N",
+            Box::new(format!("{}/%", folder.trim_end_matches('/'))),
+        );
     }
     if let Some(after) = facets.edited_after {
-        binds.push(Box::new(after));
-        sql.push_str(&format!(" AND p.modified_at >= ?{}", binds.len()));
+        push(
+            &mut binds,
+            &mut sql,
+            " AND p.modified_at >= ?N",
+            Box::new(after),
+        );
     }
     if let Some(before) = facets.edited_before {
-        binds.push(Box::new(before));
-        sql.push_str(&format!(" AND p.modified_at <= ?{}", binds.len()));
+        push(
+            &mut binds,
+            &mut sql,
+            " AND p.modified_at <= ?N",
+            Box::new(before),
+        );
     }
-    sql.push_str(" ORDER BY rank LIMIT 50");
+    sql.push_str(if q.is_empty() {
+        " ORDER BY p.title COLLATE NOCASE"
+    } else {
+        " ORDER BY rank"
+    });
+    // Property conditions filter in Rust, so the SQL cap must not cut first.
+    sql.push_str(if facets.props.is_empty() {
+        " LIMIT 50"
+    } else {
+        " LIMIT 5000"
+    });
 
     let mut stmt = conn.prepare(&sql)?;
     let bind_refs: Vec<&dyn rusqlite::types::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
     let rows = stmt.query_map(bind_refs.as_slice(), |r| {
-        Ok(SearchHit {
-            path: r.get(0)?,
-            title: r.get(1)?,
-            kind: r.get(2)?,
-            summary: r.get(3)?,
-            snippet: r.get(4)?,
-        })
+        Ok((
+            SearchHit {
+                path: r.get(0)?,
+                title: r.get(1)?,
+                kind: r.get(2)?,
+                summary: r.get(3)?,
+                snippet: r.get(4)?,
+            },
+            r.get::<_, String>(5)?,
+        ))
     })?;
-    Ok(rows.filter_map(Result::ok).collect())
+    let mut hits = Vec::new();
+    for (mut hit, fm_json) in rows.filter_map(Result::ok) {
+        if q.is_empty() {
+            // the client renders snippets as HTML; a summary is plain text
+            hit.snippet = hit
+                .snippet
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+        }
+        if !facets.props.is_empty() {
+            let fm: serde_json::Value = serde_json::from_str(&fm_json).unwrap_or_default();
+            if !facets.props.iter().all(|f| prop_matches(&fm, f)) {
+                continue;
+            }
+        }
+        hits.push(hit);
+        if hits.len() == 50 {
+            break;
+        }
+    }
+    Ok(hits)
+}
+
+/// Frontmatter keys in use across the world with page counts — what a search
+/// token like `born>=300` can address.
+pub fn property_keys(conn: &Connection) -> AppResult<Vec<(String, i64)>> {
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    let mut stmt = conn.prepare("SELECT COALESCE(frontmatter, '{}') FROM pages")?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    for fm_json in rows.filter_map(Result::ok) {
+        if let Ok(serde_json::Value::Object(m)) = serde_json::from_str(&fm_json) {
+            for (k, v) in m {
+                let filled = match &v {
+                    serde_json::Value::String(s) => !s.trim().is_empty(),
+                    serde_json::Value::Null => false,
+                    serde_json::Value::Array(a) => !a.is_empty(),
+                    _ => true,
+                };
+                if filled {
+                    *counts.entry(k).or_default() += 1;
+                }
+            }
+        }
+    }
+    let mut out: Vec<_> = counts.into_iter().collect();
+    out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    Ok(out)
 }
 
 pub fn tag_counts(conn: &Connection) -> AppResult<Vec<(String, i64)>> {
@@ -1471,6 +1654,109 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "Rivendell.md");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn prop(field: &str, op: &str, value: &str) -> PropFilter {
+        PropFilter {
+            field: field.into(),
+            op: op.into(),
+            value: value.into(),
+        }
+    }
+
+    #[test]
+    fn token_filters_negate_compare_and_browse() {
+        let dir = tmp_vault("tokens");
+        write(
+            &dir,
+            "People/Ada.md",
+            "---\nkind: npc\ntags: [elf, court]\nborn: 120\nfaction: \"[[Silver Court]]\"\n---\nA scholar.\n",
+        );
+        write(
+            &dir,
+            "People/Bram.md",
+            "---\nkind: npc\ntags: [elf, dead]\nborn: 340\nfaction: Iron Guild\n---\nA smith.\n",
+        );
+        write(
+            &dir,
+            "People/Cael.md",
+            "---\nkind: npc\ntags: [human]\n---\nA drifter.\n",
+        );
+        write(&dir, "Places/Ash.md", "---\nkind: place\n---\nAsh town.\n");
+        let conn = open_index(&dir).unwrap();
+        rebuild(&conn, &dir).unwrap();
+        let paths = |f: &SearchFacets, q: &str| -> Vec<String> {
+            search_faceted(&conn, q, f)
+                .unwrap()
+                .into_iter()
+                .map(|h| h.path)
+                .collect()
+        };
+
+        // no text, no filters: nothing; filters alone browse
+        assert!(paths(&SearchFacets::default(), "").is_empty());
+        let f = SearchFacets {
+            kind: Some("npc".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            paths(&f, ""),
+            ["People/Ada.md", "People/Bram.md", "People/Cael.md"]
+        );
+
+        // -tag, and several tags AND together
+        let f = SearchFacets {
+            tag: Some("elf".into()),
+            not_tag: Some("dead".into()),
+            ..Default::default()
+        };
+        assert_eq!(paths(&f, ""), ["People/Ada.md"]);
+        let f = SearchFacets {
+            not_kind: Some("npc".into()),
+            ..Default::default()
+        };
+        assert_eq!(paths(&f, ""), ["Places/Ash.md"]);
+
+        // numeric compare; pages without the field never match
+        let f = SearchFacets {
+            props: vec![prop("born", ">=", "300")],
+            ..Default::default()
+        };
+        assert_eq!(paths(&f, ""), ["People/Bram.md"]);
+        let f = SearchFacets {
+            props: vec![prop("born", "<", "300")],
+            ..Default::default()
+        };
+        assert_eq!(paths(&f, ""), ["People/Ada.md"]);
+
+        // wikilink-insensitive equality, contains, and != (missing passes)
+        let f = SearchFacets {
+            props: vec![prop("faction", ":", "Silver Court")],
+            ..Default::default()
+        };
+        assert_eq!(paths(&f, ""), ["People/Ada.md"]);
+        let f = SearchFacets {
+            props: vec![prop("faction", "~", "guild")],
+            ..Default::default()
+        };
+        assert_eq!(paths(&f, ""), ["People/Bram.md"]);
+        let f = SearchFacets {
+            kind: Some("npc".into()),
+            props: vec![prop("faction", "!=", "Iron Guild")],
+            ..Default::default()
+        };
+        assert_eq!(paths(&f, ""), ["People/Ada.md", "People/Cael.md"]);
+
+        // text + props combine
+        let f = SearchFacets {
+            props: vec![prop("born", ">", "100")],
+            ..Default::default()
+        };
+        assert_eq!(paths(&f, "smith"), ["People/Bram.md"]);
+
+        let keys = property_keys(&conn).unwrap();
+        assert!(keys.iter().any(|(k, n)| k == "born" && *n == 2));
+        assert!(keys.iter().any(|(k, _)| k == "faction"));
     }
 
     #[test]

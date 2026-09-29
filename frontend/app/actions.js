@@ -332,17 +332,29 @@ export async function loadVaultDiagnostics(campaignId) {
 
 export async function searchVault(q, facets) {
   const id = store.campaign?.campaign_id;
-  if (!id || !q || !q.trim()) return [];
-  const params = new URLSearchParams({ q });
+  const hasText = !!(q && q.trim());
+  if (!id || (!hasText && !(facets && Object.keys(facets).length))) return [];
+  const params = new URLSearchParams({ q: hasText ? q : '' });
   if (facets) {
     if (facets.kind) params.set('kind', facets.kind);
     if (facets.tag) params.set('tag', facets.tag);
     if (facets.folder) params.set('folder', facets.folder);
+    if (facets.not_kind) params.set('not_kind', facets.not_kind);
+    if (facets.not_tag) params.set('not_tag', facets.not_tag);
+    if (facets.props && facets.props.length) params.set('props', JSON.stringify(facets.props));
     if (facets.edited_after) params.set('edited_after', String(facets.edited_after));
     if (facets.edited_before) params.set('edited_before', String(facets.edited_before));
   }
   const r = await apiFetch(`/campaigns/${id}/vault/search?${params}`).catch(() => null);
   return (r && r.results) || [];
+}
+
+// Frontmatter keys in use across the world, most common first: what search tokens can address.
+export async function loadVaultProperties() {
+  const id = store.campaign?.campaign_id;
+  if (!id) return [];
+  const r = await apiFetch(`/campaigns/${id}/vault/properties`).catch(() => null);
+  return ((r && r.properties) || []).map((p) => p.key);
 }
 
 export async function searchSessions(q, scope) {

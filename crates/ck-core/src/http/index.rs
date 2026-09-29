@@ -6,7 +6,7 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::store::index;
 
@@ -55,9 +55,13 @@ pub struct SearchQuery {
     pub q: String,
     pub kind: Option<String>,
     pub tag: Option<String>,
+    pub not_kind: Option<String>,
+    pub not_tag: Option<String>,
     pub folder: Option<String>,
     pub edited_after: Option<i64>,
     pub edited_before: Option<i64>,
+    /// JSON array of `{field, op, value}` frontmatter conditions.
+    pub props: Option<String>,
 }
 
 pub async fn search(
@@ -66,17 +70,39 @@ pub async fn search(
     Query(query): Query<SearchQuery>,
 ) -> AppResult<Json<Value>> {
     let root = vault_root(&state, &campaign_id)?;
+    let props = match query.props.as_deref().filter(|s| !s.is_empty()) {
+        Some(json) => serde_json::from_str(json)
+            .map_err(|e| AppError::BadRequest(format!("props is not valid: {e}")))?,
+        None => Vec::new(),
+    };
     let facets = index::SearchFacets {
         kind: query.kind.filter(|s| !s.is_empty()),
         tag: query.tag.filter(|s| !s.is_empty()),
+        not_kind: query.not_kind.filter(|s| !s.is_empty()),
+        not_tag: query.not_tag.filter(|s| !s.is_empty()),
         folder: query.folder.filter(|s| !s.is_empty()),
         edited_after: query.edited_after,
         edited_before: query.edited_before,
+        props,
     };
     state.with_index(&root, |conn| {
         Ok(Json(
             json!({ "results": index::search_faceted(conn, &query.q, &facets)? }),
         ))
+    })?
+}
+
+pub async fn properties(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let root = vault_root(&state, &campaign_id)?;
+    state.with_index(&root, |conn| {
+        let keys: Vec<Value> = index::property_keys(conn)?
+            .into_iter()
+            .map(|(key, pages)| json!({ "key": key, "pages": pages }))
+            .collect();
+        Ok(Json(json!({ "properties": keys })))
     })?
 }
 

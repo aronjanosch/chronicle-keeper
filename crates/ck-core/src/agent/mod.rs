@@ -25,7 +25,7 @@ use crate::llm::{LlmError, Resolved};
 use crate::state::AppState;
 use crate::world_config::WorldConfig;
 
-const MAX_ITERATIONS: usize = 25;
+const MAX_ITERATIONS: usize = 60;
 const MAX_ERROR_ROUNDS: usize = 3;
 /// Rough context budget in chars (~3 chars/token). Oldest tool-result bodies
 /// are stubbed out when the history grows past this.
@@ -170,12 +170,11 @@ pub fn system_prompt(
          - A session has preparation as well as a record, and they are different kinds of fact. \
          read_prep is what the GM *intended* — the opening, possible scenes, reminders, and after \
          play how each turned out (happened, changed, unused); a scene there may never have been \
-         played. read_summary is what *happened*. Never state prep as world fact. Read prep when \
-         preparing a session, when asked what was planned or what went unused, or before \
-         suggesting what to carry into the next session; list_sessions marks which sessions have \
-         any. Prep is an ordinary Codex page (`kind: prep`, path shown by read_prep): when the GM \
-         asks you to help prepare, edit that page like any other, keeping its `## Opening`, \
-         `## Scenes` (one `###` per scene) and `## Reminders` (`- [ ]` items) layout.\n\
+         played. read_summary is what *happened*. Never state prep as world fact — but unused \
+         prep and the `Prep/Ideas` page are a store of ideas you may draw on when the GM wants \
+         material. list_sessions marks which sessions have prep. Prep is an ordinary Codex page \
+         (`kind: prep`, path shown by read_prep); edit it like any other page. The Prepare \
+         session and Review session skills describe its layout.\n\
          - The Codex digest above is your map of every page. Use it to pick what to read \
          directly — don't rely on search alone. For a simple factual question, one lookup is \
          enough; for open-ended work (session prep, design, brainstorming, \"how should I…\"), \
@@ -665,10 +664,31 @@ pub async fn run_turn<L: AgentLlm, G: PermissionGate, F: FnMut(TurnEvent) + Send
         }
     }
 
+    // Out of rounds: one last turn to report, so a long workflow's progress
+    // is not lost. Tool calls in it are ignored.
+    msgs.push(Msg::User(WRAP_UP.into()));
+    trim_to_budget(&mut msgs);
+    let wrap = {
+        let mut on_delta = |t: String| emit(TurnEvent::TextDelta(t));
+        llm.turn(&msgs, &registry, &mut on_delta).await
+    };
+    if let Ok(turn) = wrap {
+        if !turn.text.trim().is_empty() {
+            chats::append(
+                world_root,
+                chat_id,
+                &chats::assistant_event(&turn.text, &[]),
+            )?;
+        }
+    }
     let msg = "Stopped: iteration limit reached.";
     chats::append(world_root, chat_id, &chats::error_event(msg))?;
     Err(AppError::Internal(anyhow::anyhow!(msg)))
 }
+
+const WRAP_UP: &str = "You have used all tool rounds for this message. Do not call any \
+more tools. Reply now: what you finished, what you found but did not do yet, and the \
+questions still open, so the user can continue in the next message.";
 
 /// Does this transport error mean "the model/endpoint can't do tool calls"
 /// (as opposed to a transient failure worth surfacing as-is)?

@@ -1,12 +1,12 @@
-// Screen 04 — Session Detail. Prepare / Record / Review local views. Record
-// hosts the existing pipeline strip, summary prose, speakers, and metadata.
+// Screen 04 — Session Detail: pipeline strip, summary prose, speakers, and
+// metadata. Preparation and post-session review run as Keeper skills.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal, fmtDate, fmtDateTime, toneFor } from '../core.js';
-import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, saveSummaryEdit, loadSession, importTranscript, loadReviewRun } from '../actions.js';
+import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, saveSummaryEdit, loadSession, importTranscript } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
-import { Icon, Sigil, Btn, Pipeline, Markdown, Empty, Menu, Segmented, Card } from '../ui.js';
-import { SessionPrepare } from './prepare.js';
-import { ReviewPane } from './review.js';
+import { Icon, Sigil, Btn, Pipeline, Markdown, Empty, Menu, Card } from '../ui.js';
+import { loadPrep, prepOps } from '../prep.js';
+import { runSkillChat, reviewSessionChat, sessionLabel } from '../keeperPanel.js';
 
 // Read a transcript file the user made elsewhere. Plain file input rather than a
 // drop zone: this is a rare, deliberate action, not part of the normal flow.
@@ -228,13 +228,40 @@ function SummaryCard({ store, hasS, hasT }) {
   </div>`;
 }
 
-// Review state drives the session's primary action and the default view, so
-// the record is fetched once per session even before Review is opened.
-function useReviewRun(store, sess, enabled) {
+// The prep is an ordinary Codex page; this card only finds, creates, and opens it.
+function PrepCard({ store, sess }) {
+  const [prep, setPrep] = useState(null);
+  const [err, setErr] = useState(null);
+  const cam = sess.campaign || {};
   useEffect(() => {
-    if (!enabled || !sess || store.review) return;
-    loadReviewRun(sess.session_id).catch(() => {});
-  }, [enabled, sess?.session_id, store.summaries.length]);
+    loadPrep(sess.session_id).then(setPrep).catch((e) => setErr(e.message));
+  }, [sess.session_id, store.dirty_vault]);
+
+  const create = async () => {
+    try {
+      const r = await prepOps(sess.session_id, prep?.revision || '', [{ op: 'create' }]);
+      if (r.page) navigate('page', { path: r.page });
+    } catch (e) { setErr(e.message); }
+  };
+  const withKeeper = () => runSkillChat('Prepare session',
+    `Prepare ${sessionLabel(cam)}.${prep?.page ? ` Its prep page is [[${prep.page.split('/').pop().replace(/\.md$/, '')}]].` : ' It has no prep page yet.'}`);
+
+  const page = prep?.page;
+  return html`<div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, padding: '12px 16px' }}>
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+      <${Icon} name="edit" size=${13} className="ck-ink-muted" />
+      <h3 style=${{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 500 }}>Preparation</h3>
+    </div>
+    ${err
+      ? html`<div style=${{ fontSize: 12.5, color: 'var(--burgundy-700)' }}>${err}</div>`
+      : page
+        ? html`<a href="#" style=${{ fontSize: 13, color: 'var(--burgundy)', textDecoration: 'underline', textUnderlineOffset: 2 }} onClick=${(e) => { e.preventDefault(); navigate('page', { path: page }); }}>${page.replace(/\.md$/, '')}</a>`
+        : html`<div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic' }}>Not prepared yet.</div>`}
+    <div style=${{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+      ${prep && !page && html`<${Btn} kind="secondary" size="sm" icon="plus" onClick=${create}>Create prep page</${Btn}>`}
+      <${Btn} kind="secondary" size="sm" icon="sparkle" onClick=${withKeeper}>Prepare with Keeper</${Btn}>
+    </div>
+  </div>`;
 }
 
 export function SessionScreen({ store }) {
@@ -247,33 +274,13 @@ export function SessionScreen({ store }) {
   const hasT = store.transcripts.length > 0;
   const hasS = store.summaries.length > 0;
 
-  // Local view: explicit route param wins; otherwise default per the UX spec.
-  // Bare sessions have no world, so Prepare is unavailable (the API 422s) —
-  // fall back to Record rather than opening an editor that cannot load.
-  // The legacy `codexUpdate` route resolves to this session's Review view so
-  // history/back behave as if Review were opened locally.
-  const hasWorld = !!(c?.campaign_id || cam.campaign_id);
-  const explicit = store.route.name === 'codexUpdate' ? 'review' : store.route.params?.view;
-
-  useReviewRun(store, sess, hasS);
-  // An open review with anything still undecided is what makes Review the
-  // landing view; a stale run is not pending work until it is regenerated.
-  const reviewRun = store.review?.run || null;
-  const reviewStale = !!store.review?.flags?.stale;
-  const reviewPending = hasS && !!reviewRun && reviewRun.status === 'open' && !reviewStale
-    && (reviewRun.developments || []).some((d) => d.decision === 'pending' || d.decision === 'selected');
-
-  const view = explicit
-    || (reviewPending ? 'review' : hasWorld && !hasT && !hasS ? 'prepare' : 'record');
-
   const stages = [
     { key: 'u', label: 'Recording', done: tracks.length > 0, current: tracks.length === 0, detail: tracks.length ? `${tracks.length} track${tracks.length === 1 ? '' : 's'}` : 'No upload', meta: tracks.length ? '' : 'Upload a Craig ZIP' },
     { key: 't', label: 'Transcribed', done: hasT, current: tracks.length > 0 && !hasT, detail: hasT ? `${store.transcripts[0].provider} / ${store.transcripts[0].model}` : 'Pending', meta: hasT ? 'on-device' : '' },
     { key: 's', label: 'Summarized', done: hasS, current: hasT && !hasS, detail: hasS ? `${store.summaries[0].provider} / ${store.summaries[0].model}` : 'Pending', meta: hasS ? fmtDateTime(store.summaries[0].created_at) : '' },
   ];
 
-  // The world review is outstanding until a run exists and is finished.
-  const codexPending = hasS && !(reviewRun && reviewRun.status === 'finished' && !reviewStale);
+  const reviewBtn = html`<${Btn} kind="primary" icon="book" onClick=${() => reviewSessionChat(cam)}>Review session</${Btn}>`;
 
   // Existing transcript/summary dominate: an imported transcript with no audio
   // must offer Summarize, not Upload, as primary.
@@ -285,13 +292,11 @@ export function SessionScreen({ store }) {
           confirmLabel: 'Re-summarize',
           onConfirm: () => navigate('summarize', { id: sess.session_id }),
         })}>Re-summarize</${Btn}>
-        <${Btn} kind=${codexPending ? 'primary' : 'secondary'} icon="book" onClick=${() => navigate('session', { id: sess.session_id, view: 'review' })}>Review world updates</${Btn}>`)
+        ${reviewBtn}`)
     : tracks.length
       ? html`<${Btn} kind="primary" icon="mic" onClick=${() => runTranscribe()}>Transcribe</${Btn}>`
       : html`<${Btn} kind="primary" icon="upload" onClick=${() => navigate('newSession', { id: cam.campaign_id, attach: sess.session_id })}>Upload recording</${Btn}>`;
 
-  // The overflow menu is shared across Prepare / Record / Review — session-level
-  // utilities (delete, edit, export, import) must stay reachable from any view.
   const sessionMenu = html`<${Menu} items=${[
     { label: 'Edit session', icon: 'edit', onClick: () => openModal('session', { session: sess }) },
     { label: 'Export…', icon: 'export', disabled: !hasS, onClick: () => openModal('export', {}) },
@@ -309,16 +314,10 @@ export function SessionScreen({ store }) {
     }) },
   ]} />`;
 
-  // Only the prominent primary action follows the active view. Prepare has no
-  // record/transcribe primary; Review has none (its pane owns its actions).
-  const viewPrimary = view === 'record'
-    ? html`${tracks.length > 0 && !hasT ? html`<${Btn} kind="secondary" size="sm" icon="users" onClick=${() => navigate('newSession', { id: cam.campaign_id, attach: sess.session_id })}>Label speakers</${Btn}>` : ''}${recordPrimary}`
-    : view === 'review'
-      ? html`<${Btn} kind="secondary" icon="book" onClick=${() => navigate('session', { id: sess.session_id, view: 'record' })}>Back to Record</${Btn}>`
-      : html`<span style=${{ fontSize: 12, color: 'var(--ink-faint)', fontFamily: 'var(--font-display)', fontStyle: 'italic' }}>Saves automatically</span>`;
+  const primary = html`${tracks.length > 0 && !hasT ? html`<${Btn} kind="secondary" size="sm" icon="users" onClick=${() => navigate('newSession', { id: cam.campaign_id, attach: sess.session_id })}>Label speakers</${Btn}>` : ''}${recordPrimary}`;
 
   const sessionActions = html`<div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
-    ${viewPrimary}
+    ${primary}
     ${sessionMenu}
   </div>`;
 
@@ -350,26 +349,15 @@ export function SessionScreen({ store }) {
       </div>
     </div>
 
-    <div style=${{ marginBottom: 18 }}>
-      <${Segmented} value=${view} onChange=${(v) => navigate('session', { id: sess.session_id, view: v })}
-        options=${[
-          { value: 'prepare', label: 'Prepare', icon: 'edit' },
-          { value: 'record', label: 'Record', icon: 'mic' },
-          { value: 'review', label: 'Review', icon: 'book' },
-        ]} />
-    </div>
-
-    ${view === 'prepare'
-      ? html`<${SessionPrepare} session=${sess} campaign=${c} />`
-      : view === 'review'
-        ? html`<${ReviewPane} store=${store} sess=${sess} />`
-        : html`<div class="ck-session-record">
+    <div class="ck-session-record">
     <${Pipeline} stages=${stages} />
 
     <div class="ck-session-body" style=${{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 16, marginTop: 22 }}>
       <${SummaryCard} store=${store} hasS=${hasS} hasT=${hasT} />
 
       <div style=${{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        ${(c?.campaign_id || cam.campaign_id) && html`<${PrepCard} store=${store} sess=${sess} />`}
+
         <div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden' }}>
           <div style=${{ padding: '12px 16px', borderBottom: '1px solid var(--rule-soft)', display: 'flex', alignItems: 'center', gap: 8 }}>
             <${Icon} name="users" size=${13} className="ck-ink-muted" />
@@ -398,6 +386,6 @@ export function SessionScreen({ store }) {
         </div>
       </div>
     </div>
-    </div>`}
+    </div>
   </${Shell}>`;
 }

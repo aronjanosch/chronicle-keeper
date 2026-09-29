@@ -225,6 +225,46 @@ async fn three_error_rounds_stop_the_loop() {
 }
 
 #[tokio::test]
+async fn iteration_limit_ends_with_a_progress_report() {
+    let (state, root, cfg) = fixture_world("limit");
+    let chat = chats::create_chat(&root).unwrap();
+    let mut script: Vec<_> = (0..MAX_ITERATIONS)
+        .map(|_| tool_turn("list_pages", json!({})))
+        .collect();
+    script.push(final_turn("Marked the outcomes; world updates still open."));
+    let llm = MockLlm::new(script);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let res = run_turn(
+        &TurnCtx {
+            state: &state,
+            world_root: &root,
+            cfg: &cfg,
+            chat_id: &chat.id,
+            mode: Mode::Ask,
+
+            focus: None,
+        },
+        "go",
+        &[],
+        &llm,
+        &ScriptGate::none(),
+        &cancel,
+        |_| {},
+    )
+    .await;
+    assert!(res.is_err());
+    let persisted = chats::load_chat(&root, &chat.id).unwrap();
+    let n = persisted.len();
+    assert_eq!(persisted[n - 2]["type"], "assistant");
+    assert!(persisted[n - 2]["text"]
+        .as_str()
+        .unwrap()
+        .contains("world updates still open"));
+    assert_eq!(persisted[n - 1]["type"], "error");
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
 async fn cancel_aborts_before_next_round() {
     let (state, root, cfg) = fixture_world("cancel");
     let chat = chats::create_chat(&root).unwrap();

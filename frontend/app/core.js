@@ -9,9 +9,7 @@ export const store = {
   apiToken: null,
   shellMode: false,       // true when the Tauri shell injected the API base (browser-dev → false)
 
-  // routing: { name: 'library'|'campaign'|'sessions'|'session'|'newSession'|'summarize'|'settings'|'codex'|'page'|'codexUpdate', params }
-  // `codexUpdate` is the pre-SC-06 deep link; it resolves to the session's Review view.
-  // `session` params: { id, view? } where view is 'prepare'|'record'|'review'. `codexUpdate` { id } opens Review.
+  // routing: { name: 'library'|'campaign'|'sessions'|'session'|'newSession'|'summarize'|'settings'|'codex'|'page', params }
   route: { name: 'library', params: {} },
 
   // data
@@ -29,8 +27,6 @@ export const store = {
   summaries: [],
   summaryPreview: null,   // { id, text } latest summary content for session screen
   summaryStreaming: null, // { stage:'reading'|'writing'|'metadata', text } live summarize run (null = idle)
-  review: null,           // SC-04 review record: { status, revision, run, flags } ({status:'none'} = never generated)
-  reviewStreaming: null,  // { stage:'reading'|'grounding'|'building' } generation in flight
   providers: null,        // transcription engines
   llmProviders: null,     // LLM provider registry
   providerStatus: null,   // { ok, reason } for the active summary provider (null = unknown)

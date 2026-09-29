@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::codex_update::transcript_turns;
 use crate::error::{AppError, AppResult};
+use crate::session_search::transcript_turns;
 use crate::world_config::WorldConfig;
 use crate::{session_files, vault};
 

@@ -169,7 +169,7 @@ export function NewSessionScreen({ store }) {
         title: title.trim() || null, date: date || null,
         metadata: meta || EMPTY_META, notes: notes.trim() || null,
       });
-      await loadSession(id, { view: preparing ? 'prepare' : 'record' }); // navigates to session screen
+      await loadSession(id); // navigates to session screen
       if (transcribeNow) runTranscribe();  // fire-and-forget; banner shows progress
     } catch (e) { setErr(e.message); setBusy(false); }
   }

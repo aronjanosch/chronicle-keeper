@@ -1071,18 +1071,6 @@ fn rebuild_with_fm(fm: &[(String, Vec<String>)], body: &str) -> String {
     out
 }
 
-/// Overwrite the `summary:` frontmatter field (unlike `set_frontmatter_fields`,
-/// which only fills blanks). Creates the frontmatter block if missing.
-pub(crate) fn overwrite_summary(content: &str, summary: &str) -> String {
-    let (mut fm, body) = split_frontmatter(content);
-    let val = vec![summary.trim().to_string()];
-    match fm.iter_mut().find(|(k, _)| k == "summary") {
-        Some((_, vals)) => *vals = val,
-        None => fm.push(("summary".into(), val)),
-    }
-    rebuild_with_fm(&fm, body)
-}
-
 /// Append a value to a frontmatter list field, creating the field if absent.
 /// No-op when the value is already present (case-insensitive).
 pub(crate) fn fm_append_list_value(content: &str, field: &str, value: &str) -> String {

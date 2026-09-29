@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::codex_update::transcript_turns;
 use crate::error::AppError;
 use crate::llm::agent::ToolDef;
+use crate::session_search::transcript_turns;
 use crate::state::AppState;
 use crate::store::index;
 use crate::world_config::WorldConfig;
@@ -108,7 +108,7 @@ pub fn read_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "read_prep".into(),
-            description: "Read what the GM prepared for one session: the opening situation, possible scenes, reminders, any linked thread/Codex pages, and — after play — how each card turned out (happened, changed, unused). This is intent, not record: a scene here may never have happened. Read it when preparing a session, when asked what was planned or what went unused, or before suggesting what to carry forward.".into(),
+            description: "Read what the GM prepared for one session: the opening situation, possible scenes, reminders, any linked thread/Codex pages, and — after play — how each card turned out (happened, changed, unused). This is intent, not record: a scene here may never have happened. Read it when preparing or reviewing a session, or when asked what was planned or what went unused.".into(),
             schema: obj(json!({ "session": { "type": "integer" } }), &["session"]),
         },
         ToolDef {

@@ -4,6 +4,7 @@ import { navigate, fmtDateTime } from '../core.js';
 import { loadLlmProviders, loadPromptTemplates, runSummarize, openCampaign } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Btn, Markdown, Empty } from '../ui.js';
+import { reviewSessionChat } from '../keeperPanel.js';
 
 function PromptPreset({ active, name, desc, onClick }) {
   return html`<div onClick=${onClick} style=${{
@@ -98,7 +99,7 @@ export function SummarizeScreen({ store }) {
         <${Btn} kind="ghost" onClick=${() => navigate('session', { id: sess.session_id })}>Cancel</${Btn}>
         ${hasSummary
           ? html`<${Btn} kind="secondary" icon="sparkle" disabled=${!store.transcripts.length || !!store.summaryStreaming} onClick=${generate}>${store.summaryStreaming ? 'Generating…' : 'Re-generate'}</${Btn}>
-              <${Btn} kind="primary" icon="book" onClick=${() => navigate('codexUpdate', { id: sess.session_id })}>Update the Codex</${Btn}>`
+              <${Btn} kind="primary" icon="book" onClick=${() => reviewSessionChat(cam)}>Review session</${Btn}>`
           : html`<${Btn} kind="primary" icon="sparkle" disabled=${!store.transcripts.length || !!store.summaryStreaming} onClick=${generate}>${store.summaryStreaming ? 'Generating…' : 'Generate summary'}</${Btn}>`}
       </div>`} />`}
     bodyStyle=${{ padding: 0 }}

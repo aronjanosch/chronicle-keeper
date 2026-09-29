@@ -3,13 +3,11 @@ mod artifacts;
 mod atlas;
 mod campaigns;
 mod codex;
-mod codex_update;
 mod foundry;
 mod index;
 mod llm;
 mod prompts;
 mod session_prep;
-mod session_review;
 mod sessions;
 mod transcribe;
 mod upload;
@@ -212,45 +210,6 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/sessions/:id/prep/ops",
             post(session_prep::ops).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
-        )
-        .route("/sessions/:id/prep/suggest", post(session_prep::suggest))
-        .route("/sessions/:id/prep/carry", post(session_prep::carry))
-        // Session review (SC-04): typed developments applied as recoverable groups
-        .route(
-            "/sessions/:id/review",
-            get(session_review::get)
-                .put(session_review::put)
-                .layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
-        )
-        .route(
-            "/sessions/:id/review/generate",
-            post(session_review::generate),
-        )
-        .route(
-            "/sessions/:id/review/generate/cancel",
-            post(session_review::cancel_generate),
-        )
-        .route(
-            "/sessions/:id/review/clarify",
-            post(session_review::clarify),
-        )
-        .route("/sessions/:id/review/apply", post(session_review::apply))
-        .route(
-            "/sessions/:id/review/recover",
-            post(session_review::recover),
-        )
-        .route("/sessions/:id/review/finish", post(session_review::finish))
-        .route("/sessions/:id/review/reopen", post(session_review::reopen))
-        // Update the Codex (Phase 5): AI page proposals after a summary
-        .route(
-            "/sessions/:id/codex-update",
-            get(codex_update::get)
-                .post(codex_update::generate)
-                .put(codex_update::put),
-        )
-        .route(
-            "/sessions/:id/codex-update/commit",
-            post(codex_update::commit),
         )
         // upload + speakers
         .route("/upload", post(upload::upload))

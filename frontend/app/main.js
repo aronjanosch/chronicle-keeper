@@ -56,7 +56,6 @@ function App() {
     case 'session': screen = html`<${SessionScreen} store=${store} />`; break;
     case 'newSession': screen = html`<${NewSessionScreen} store=${store} />`; break;
     case 'summarize': screen = html`<${SummarizeScreen} store=${store} />`; break;
-    case 'codexUpdate': screen = html`<${SessionScreen} store=${store} />`; break;
     case 'settings': screen = html`<${SettingsScreen} store=${store} />`; break;
     case 'codex': screen = html`<${CodexScreen} store=${store} />`; break;
     case 'search': screen = html`<${SearchScreen} store=${store} />`; break;

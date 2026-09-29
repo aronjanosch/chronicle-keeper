@@ -52,6 +52,14 @@ const DEFAULT_SKILLS: &[(&str, &str)] = &[
         include_str!("skills_default/check-consistency/SKILL.md"),
     ),
     (
+        "prepare-session/SKILL.md",
+        include_str!("skills_default/prepare-session/SKILL.md"),
+    ),
+    (
+        "review-session/SKILL.md",
+        include_str!("skills_default/review-session/SKILL.md"),
+    ),
+    (
         "skill-creator/SKILL.md",
         include_str!("skills_default/skill-creator/SKILL.md"),
     ),

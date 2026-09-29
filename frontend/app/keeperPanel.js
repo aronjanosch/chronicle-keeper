@@ -220,6 +220,28 @@ export async function newChat() {
   }
 }
 
+// Open a fresh chat on the Keeper screen that starts by running a skill —
+// how the session screen hands prep and review to the Keeper.
+export async function runSkillChat(skillName, context) {
+  const cid = store.campaign?.campaign_id;
+  if (!cid || keeperState().live) return;
+  if (keeperState().campaignId !== cid) {
+    patchKeeper({ campaignId: cid, chatId: null, events: [], attachments: [], live: null });
+  }
+  if (!(await newChat())) return;
+  navigate('keeper');
+  sendMessage(`${context} Use the "${skillName}" skill.`);
+}
+
+export function sessionLabel(cam) {
+  return `session ${cam.session_number || '?'}${cam.title ? ` ("${cam.title}")` : ''}`;
+}
+
+export function reviewSessionChat(cam) {
+  return runSkillChat('Review session',
+    `Review ${sessionLabel(cam)}: mark the prep outcomes, update the world, and collect unused ideas.`);
+}
+
 export async function sendMessage(text, images = []) {
   const cid = store.campaign?.campaign_id;
   let k = keeperState();

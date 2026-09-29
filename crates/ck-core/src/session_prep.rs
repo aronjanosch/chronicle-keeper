@@ -4,20 +4,18 @@
 //! those are rendered into a page on first access and the old file is left
 //! untouched.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 use sha2::{Digest, Sha256};
-use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::prep_page::PrepPage;
 use crate::world_config::WorldConfig;
 
-const MAX_CARRY_ITEMS: usize = 200;
 const PREP_FOLDER: &str = "Prep";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,31 +282,56 @@ fn pointer(ctx: &PrepCtx) -> Option<String> {
     ctx.vault.join(&rel).is_file().then_some(rel)
 }
 
-/// A pointer went stale (page renamed outside CK): find the `kind: prep` page
-/// that names this session and repair the pointer.
+/// No live pointer (never set, or the page was renamed outside CK): find the
+/// `kind: prep` page that names this session and point at it. This is how a
+/// page the Keeper or the GM wrote by hand becomes the session's prep.
 fn find_by_session(ctx: &PrepCtx) -> Option<String> {
-    let number = ctx.number?.to_string();
-    let had_pointer = crate::session_files::read_session_toml(&ctx.session_dir)
-        .ok()
-        .flatten()
-        .and_then(|st| st.prep)
-        .is_some();
-    if !had_pointer {
-        return None;
-    }
-    let hit = crate::vault::list_pages(&ctx.vault)
-        .ok()?
-        .into_iter()
-        .filter(|p| p.kind.as_deref() == Some(crate::prep_page::KIND))
-        .find(|p| {
-            crate::vault::read_page(&ctx.vault, &p.path).is_ok_and(|page| {
-                let (fm, _) = crate::vault::split_frontmatter(&page.content);
-                crate::vault::fm_get(&fm, "session") == Some(number.as_str())
-            })
-        })?
-        .path;
+    let number = ctx.number?;
+    let pages = crate::vault::list_pages(&ctx.vault).ok()?;
+    let is_prep = |p: &&crate::vault::PageInfo| p.kind.as_deref() == Some(crate::prep_page::KIND);
+    let by_frontmatter = pages.iter().filter(is_prep).find(|p| {
+        crate::vault::read_page(&ctx.vault, &p.path).is_ok_and(|page| {
+            let (fm, _) = crate::vault::split_frontmatter(&page.content);
+            crate::vault::fm_get(&fm, "session") == Some(number.to_string().as_str())
+        })
+    });
+    let hit = match by_frontmatter {
+        Some(p) => p.path.clone(),
+        None => by_file_name(&pages, number)?,
+    };
     let _ = set_pointer(ctx, &hit);
     Some(hit)
+}
+
+/// Hand-written prep that predates CK: `Session 14 - Windhalle.md`. Only an
+/// unambiguous match counts — a `kind: prep` page wins over untyped ones.
+fn by_file_name(pages: &[crate::vault::PageInfo], number: i64) -> Option<String> {
+    let named: Vec<_> = pages
+        .iter()
+        .filter(|p| names_session(stem(&p.path), number))
+        .collect();
+    let prep: Vec<_> = named
+        .iter()
+        .filter(|p| p.kind.as_deref() == Some(crate::prep_page::KIND))
+        .collect();
+    match (prep.as_slice(), named.as_slice()) {
+        ([one], _) => Some(one.path.clone()),
+        ([], [one]) if one.kind.is_none() => Some(one.path.clone()),
+        _ => None,
+    }
+}
+
+fn names_session(stem: &str, number: i64) -> bool {
+    let lower = stem.to_lowercase();
+    let Some(rest) = lower.strip_prefix("session") else {
+        return false;
+    };
+    let digits: String = rest
+        .trim_start()
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    !digits.is_empty() && digits.parse::<i64>().ok() == Some(number)
 }
 
 fn set_pointer(ctx: &PrepCtx, rel: &str) -> AppResult<()> {
@@ -439,211 +462,6 @@ fn write(ctx: &PrepCtx, rel: &str, content: &str, expected: Option<&str>) -> App
         let _ = crate::history::record_create(&ctx.world_root, rel, "user");
     }
     Ok(())
-}
-
-// ── Carry ─────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CarryRequest {
-    pub base_revision: String,
-    pub request_id: String,
-    pub source_session_id: String,
-    pub item_ids: Vec<String>,
-}
-
-/// Destination-side dedup receipt, kept in the page's `ck_handoffs` frontmatter.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Handoff {
-    request_id: String,
-    source_session_id: String,
-    item_ids: Vec<String>,
-    created_at: String,
-}
-
-impl Handoff {
-    /// Same request, same work. Order of `item_ids` is not part of the payload.
-    fn matches(&self, req: &CarryRequest) -> bool {
-        if self.source_session_id != req.source_session_id {
-            return false;
-        }
-        let mine: HashSet<&str> = self.item_ids.iter().map(String::as_str).collect();
-        let theirs: HashSet<&str> = req.item_ids.iter().map(String::as_str).collect();
-        mine == theirs
-    }
-}
-
-/// Copy the named source cards/possibilities into `dest`'s prep page.
-///
-/// The receipt is checked *before* the revision so a lost response can be
-/// retried with the same `request_id` and produce one copy, not two. The
-/// source prep is never modified; a carried possibility is marked on the
-/// source review afterwards, best effort.
-pub fn carry(dest: &PrepCtx, source: &PrepCtx, req: &CarryRequest) -> AppResult<PrepResponse> {
-    Uuid::parse_str(&req.request_id)
-        .map_err(|_| AppError::Unprocessable(format!("Invalid request id: {}", req.request_id)))?;
-    if req.item_ids.is_empty() {
-        return invalid("Choose at least one item to carry".into());
-    }
-    if req.item_ids.len() > MAX_CARRY_ITEMS {
-        return invalid(format!("Carry is limited to {MAX_CARRY_ITEMS} items"));
-    }
-    if dest.session_dir == source.session_dir {
-        return invalid("Choose a different session to carry into".into());
-    }
-
-    let loaded = load(dest)?;
-    let mut page = match loaded.rel {
-        Some(_) => PrepPage::parse(&loaded.content),
-        None => new_page(dest),
-    };
-    let current = page.read();
-    let replay = current
-        .handoffs
-        .iter()
-        .filter_map(|raw| serde_yaml::from_value::<Handoff>(raw.clone()).ok())
-        .find(|receipt| receipt.request_id == req.request_id)
-        .map(|receipt| receipt.matches(req));
-    match replay {
-        Some(true) => return Ok(response(dest, loaded)),
-        Some(false) => {
-            return Err(AppError::Conflict(
-                "This carry id was already used for different items".into(),
-            ))
-        }
-        None => {}
-    }
-    if req.base_revision != loaded.revision {
-        return Err(AppError::Conflict(
-            "Preparation changed since it was loaded".into(),
-        ));
-    }
-
-    let copies = resolve_carry_items(source, &req.item_ids)?;
-    if copies.iter().any(|c| c.section == PrepSection::Opening)
-        && current
-            .cards
-            .iter()
-            .any(|c| c.section == PrepSection::Opening)
-    {
-        return invalid(
-            "This session already has an opening — replace it explicitly instead".into(),
-        );
-    }
-    for (item_id, card) in req.item_ids.iter().zip(&copies) {
-        let origin = PrepOrigin {
-            session_id: req.source_session_id.clone(),
-            item_id: item_id.clone(),
-        };
-        page.add_card(
-            card.section,
-            card.title.as_deref(),
-            &card.text,
-            Some(&origin),
-            &dest.lang,
-        )?;
-    }
-    let receipt = Handoff {
-        request_id: req.request_id.clone(),
-        source_session_id: req.source_session_id.clone(),
-        item_ids: req.item_ids.clone(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-    };
-    page.push_handoff(
-        serde_yaml::to_value(&receipt)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("encode carry receipt: {e}")))?,
-    );
-
-    let rel = loaded.rel.clone().unwrap_or_else(|| fresh_path(dest));
-    write(
-        dest,
-        &rel,
-        &page.render(),
-        loaded.rel.as_ref().map(|_| loaded.revision.as_str()),
-    )?;
-    if loaded.rel.is_none() {
-        set_pointer(dest, &rel)?;
-    }
-    mark_possibilities_carried(&source.session_dir, &dest.session_id, &req.item_ids);
-    read(dest)
-}
-
-/// Turn source ids into fresh cards. A card that happened is not carryable;
-/// `changed` and `unused` are, because the GM chose them by id.
-fn resolve_carry_items(source: &PrepCtx, item_ids: &[String]) -> AppResult<Vec<PrepCard>> {
-    let loaded = load(source)?;
-    let cards = PrepPage::parse(&loaded.content).read().cards;
-    let possibilities = crate::session_review::load(&source.session_dir)?
-        .map(|loaded| loaded.run.possibilities)
-        .unwrap_or_default();
-
-    let mut out = Vec::with_capacity(item_ids.len());
-    let mut seen = HashSet::new();
-    for id in item_ids {
-        if !seen.insert(id.as_str()) {
-            return invalid(format!("Item listed twice: {id}"));
-        }
-        if let Some(card) = cards.iter().find(|c| c.id.as_deref() == Some(id.as_str())) {
-            if card.outcome == PrepOutcome::Happened {
-                return invalid(format!(
-                    "\"{}\" happened in that session — it cannot carry forward",
-                    card.title.clone().unwrap_or_else(|| card.text.clone())
-                ));
-            }
-            let mut copy = PrepCard::new(card.section, card.text.clone());
-            copy.title = card.title.clone();
-            out.push(copy);
-            continue;
-        }
-        if let Some(p) = possibilities.iter().find(|p| &p.id == id) {
-            out.push(possibility_card(p, &source.vault, id)?);
-            continue;
-        }
-        return invalid(format!("Unknown item: {id}"));
-    }
-    Ok(out)
-}
-
-/// A saved possibility becomes something to keep in mind, never an opening and
-/// never a claim that it happened. Its source pages become wikilinks.
-fn possibility_card(
-    possibility: &crate::session_review::Possibility,
-    vault: &Path,
-    item_id: &str,
-) -> AppResult<PrepCard> {
-    let text = if possibility.text.trim().is_empty() {
-        possibility.title.clone()
-    } else {
-        possibility.text.clone()
-    };
-    if text.trim().is_empty() {
-        return invalid(format!("Possibility {item_id} has no text to carry"));
-    }
-    let text = with_links(vault, &text, &possibility.source_links);
-    let mut card = PrepCard::new(PrepSection::Reminder, text);
-    card.title = Some(possibility.title.clone()).filter(|t| !t.trim().is_empty());
-    Ok(card)
-}
-
-/// Best effort: the destination write is the commitment, so a failure here
-/// leaves the receipt as the record and never rolls the copy back.
-fn mark_possibilities_carried(source_dir: &Path, dest_session_id: &str, item_ids: &[String]) {
-    let Ok(Some(loaded)) = crate::session_review::load(source_dir) else {
-        return;
-    };
-    let mut run = loaded.run;
-    let wanted: HashSet<&str> = item_ids.iter().map(String::as_str).collect();
-    let mut changed = false;
-    for p in &mut run.possibilities {
-        if wanted.contains(p.id.as_str()) {
-            p.decision = crate::session_review::PossibilityDecision::SavedToPrep;
-            p.destination_session_id = Some(dest_session_id.to_string());
-            changed = true;
-        }
-    }
-    if changed {
-        let _ = crate::session_review::save(source_dir, &run);
-    }
 }
 
 // ── Page moves ────────────────────────────────────────────────────
@@ -837,10 +655,6 @@ fn revision(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-fn invalid<T>(message: String) -> AppResult<T> {
-    Err(AppError::Unprocessable(message))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -856,7 +670,7 @@ mod tests {
     }
 
     fn world() -> World {
-        let root = std::env::temp_dir().join(format!("ck-prep-test-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("ck-prep-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("Codex/NPCs")).unwrap();
         std::fs::write(root.join("Codex/NPCs/Mara Voss.md"), "# Mara\n").unwrap();
         World { root }
@@ -898,15 +712,6 @@ mod tests {
             title: None,
             text: text.into(),
             links: Vec::new(),
-        }
-    }
-
-    fn carry_req(revision: &str, source: &str, ids: &[&str]) -> CarryRequest {
-        CarryRequest {
-            base_revision: revision.into(),
-            request_id: Uuid::new_v4().to_string(),
-            source_session_id: source.into(),
-            item_ids: ids.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -1038,6 +843,26 @@ mod tests {
     }
 
     #[test]
+    fn hand_written_prep_is_found_by_file_name() {
+        let w = world();
+        let s = session(&w, 14);
+        let dir = w.root.join("Codex/Prep Notes");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("Session 14 - Windhalle.md"),
+            "## Plan\nThe hall.\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("Session 140 - Later.md"), "Later.\n").unwrap();
+        assert_eq!(
+            read(&s).unwrap().page.as_deref(),
+            Some("Prep Notes/Session 14 - Windhalle.md")
+        );
+        assert!(!names_session("Session 140 - Later", 14));
+        assert!(names_session("Session 014", 14));
+    }
+
+    #[test]
     fn moves_rewrite_session_pointers() {
         let w = world();
         let s = session(&w, 6);
@@ -1052,99 +877,5 @@ mod tests {
         assert_eq!(st(&s).as_deref(), Some("Prep/Six.md"));
         rewrite_page_references_prefix(&w.root, "Prep", "Archive/Prep");
         assert_eq!(st(&s).as_deref(), Some("Archive/Prep/Six.md"));
-    }
-
-    #[test]
-    fn carry_copies_as_new_unmarked_cards_and_leaves_the_source_alone() {
-        let w = world();
-        let src = session(&w, 7);
-        let dst = session(&w, 8);
-        let r = ops(
-            &src,
-            "absent",
-            vec![PrepOp::AddCard {
-                section: PrepSection::Scene,
-                title: Some("The bargain".into()),
-                text: "The magistrate offers a deal".into(),
-                links: vec!["NPCs/Mara Voss.md".into()],
-            }],
-        )
-        .unwrap();
-        let id = r.cards[0].id.clone().unwrap();
-        let before = read(&src).unwrap().revision;
-
-        let dest = carry(&dst, &src, &carry_req("absent", "s7", &[&id])).unwrap();
-        let copy = &dest.cards[0];
-        assert_ne!(copy.id.as_deref(), Some(id.as_str()));
-        assert_eq!(copy.title.as_deref(), Some("The bargain"));
-        assert_eq!(copy.outcome, PrepOutcome::Unmarked);
-        assert_eq!(copy.links, vec!["NPCs/Mara Voss.md"]);
-        assert_eq!(
-            copy.origin,
-            Some(PrepOrigin {
-                session_id: "s7".into(),
-                item_id: id.clone(),
-            })
-        );
-        assert_eq!(read(&src).unwrap().revision, before);
-    }
-
-    #[test]
-    fn carry_retried_with_the_same_request_makes_one_copy() {
-        let w = world();
-        let src = session(&w, 9);
-        let dst = session(&w, 10);
-        let r = ops(
-            &src,
-            "absent",
-            vec![add(PrepSection::Scene, "A nervous courier")],
-        )
-        .unwrap();
-        let req = carry_req("absent", "s9", &[r.cards[0].id.as_deref().unwrap()]);
-        let first = carry(&dst, &src, &req).unwrap();
-        let replay = carry(&dst, &src, &req).unwrap();
-        assert_eq!((first.cards.len(), replay.cards.len()), (1, 1));
-        assert_eq!(first.revision, replay.revision);
-
-        let mut other = req.clone();
-        other.item_ids = vec!["nope".into()];
-        assert!(matches!(
-            carry(&dst, &src, &other),
-            Err(AppError::Conflict(_))
-        ));
-    }
-
-    #[test]
-    fn carry_refuses_happened_cards_and_a_second_opening() {
-        let w = world();
-        let src = session(&w, 11);
-        let dst = session(&w, 12);
-        let r = ops(
-            &src,
-            "absent",
-            vec![
-                add(PrepSection::Opening, "Fog"),
-                add(PrepSection::Reminder, "Done thing"),
-            ],
-        )
-        .unwrap();
-        let (opening, done) = (
-            r.cards[0].id.clone().unwrap(),
-            r.cards[1].id.clone().unwrap(),
-        );
-        let r = ops(
-            &src,
-            &r.revision,
-            vec![PrepOp::SetOutcome {
-                id: done.clone(),
-                outcome: PrepOutcome::Happened,
-                note: String::new(),
-            }],
-        )
-        .unwrap();
-        assert!(carry(&dst, &src, &carry_req("absent", "s11", &[&done])).is_err());
-        let d = ops(&dst, "absent", vec![add(PrepSection::Opening, "Rain")]).unwrap();
-        assert!(carry(&dst, &src, &carry_req(&d.revision, "s11", &[&opening])).is_err());
-        let _ = r;
     }
 }

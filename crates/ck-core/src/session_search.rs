@@ -7,7 +7,6 @@
 use std::path::Path;
 
 use crate::agent::context::session_entries;
-use crate::codex_update::transcript_turns;
 use crate::session_files;
 
 const MAX_HITS: usize = 50;
@@ -170,6 +169,29 @@ fn snippet_html(text: &str, at: usize) -> String {
     format!("{lead}{html}{trail}")
 }
 
+/// Number the transcript into 1-based "turns": one per text line, with the
+/// current `[Speaker]` block label folded in.
+pub(crate) fn transcript_turns(transcript: &str) -> Vec<String> {
+    let mut turns = Vec::new();
+    let mut speaker = String::new();
+    for line in transcript.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') && line.len() > 2 {
+            speaker = line[1..line.len() - 1].to_string();
+            continue;
+        }
+        if speaker.is_empty() {
+            turns.push(line.to_string());
+        } else {
+            turns.push(format!("{speaker}: {line}"));
+        }
+    }
+    turns
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +212,15 @@ mod tests {
         .unwrap();
         std::fs::write(session_files::summary_md_path(&dir), summary).unwrap();
         std::fs::write(session_files::transcript_md_path(&dir), transcript).unwrap();
+    }
+
+    #[test]
+    fn transcript_turns_fold_speakers() {
+        let t = "[Aria]\nHello there.\nWe move on.\n\n[GM]\nThe door opens.";
+        let turns = transcript_turns(t);
+        assert_eq!(turns.len(), 3);
+        assert_eq!(turns[0], "Aria: Hello there.");
+        assert_eq!(turns[2], "GM: The door opens.");
     }
 
     #[test]

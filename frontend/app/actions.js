@@ -1,9 +1,6 @@
 // All data operations. Thin wrappers over the HTTP client that update the store.
 // Ported 1:1 from the legacy app.js so the backend contract is unchanged.
 import { store, setState, setOp, bump, navigate, apiFetch, apiJson, apiText, apiStream, apiUrl, slugify, toneFor, initials, loadWorldTabs, remapTabs, pruneTabs } from './core.js';
-import * as reviewApi from './review.js';
-import { carryPrep, loadPrep } from './prep.js';
-import { newRequestId } from './review.js';
 
 // ── Campaigns ─────────────────────────────────────────────────────
 export async function loadCampaigns() {
@@ -624,10 +621,7 @@ export async function deleteAtlasMap(mapId) {
 }
 
 // ── Sessions ──────────────────────────────────────────────────────
-// `params` may carry { view } for the local Prepare/Record/Review choice. When
-// navigating within the same session, keep the current view so an explicit
-// choice is not clobbered by a re-load; otherwise accept the optional params.
-export async function loadSession(id, params) {
+export async function loadSession(id) {
   setState({ loading: true, error: null });
   try {
     const session = await apiFetch(`/session/${id}`);
@@ -649,17 +643,9 @@ export async function loadSession(id, params) {
       const latest = summaries[0];
       try { summaryPreview = { id: latest.id, text: await apiText(`/sessions/${id}/summaries/${latest.id}/content`) }; } catch (_) {}
     }
-    // The review record drives the session's primary action, so it loads with
-    // the session rather than when Review is first opened.
-    const review = (summaries || []).length
-      ? await apiFetch(`/sessions/${id}/review`).catch(() => null)
-      : null;
-    setState({ session, campaign, transcripts: transcripts || [], summaries: summaries || [], summaryPreview, review, reviewStreaming: null, loading: false });
+    setState({ session, campaign, transcripts: transcripts || [], summaries: summaries || [], summaryPreview, loading: false });
     if (loadErr) setOp(`Couldn't load this session's artifacts: ${loadErr.message}`, 'err');
-    const sameSession = store.route.name === 'session' && store.route.params?.id === id;
-    const view = params?.view ?? (sameSession ? store.route.params?.view : undefined);
-    const next = view ? { id, view } : { id };
-    navigate('session', next);
+    navigate('session', { id });
   } catch (e) { setState({ error: e.message, loading: false }); }
 }
 
@@ -869,219 +855,6 @@ export async function runSummarize({ transcriptId, provider, model, title, conte
   } catch (e) {
     setState({ summaryStreaming: null });
     setOp(e.message, 'err');
-  }
-}
-
-// ── Update the Codex (Phase 5) ────────────────────────────────────
-// Proposals are ephemeral until commit; the backend keeps one JSON run per
-// session (Sessions/NNN/codex-proposals.json). Decisions persist as the user
-// reviews, so a half-reviewed run survives a restart.
-// ── Session review (SC-04/05/06) ──────────────────────────────────
-// The review record owns its own revision. Every mutation sends the revision it
-// was read at, so a second window or an external edit conflicts loudly instead
-// of overwriting decisions.
-
-export async function loadReviewRun(sessionId) {
-  const sid = sessionId || store.session?.session_id;
-  if (!sid) return null;
-  const review = await apiFetch(`/sessions/${sid}/review`).catch(() => null);
-  setState({ review });
-  return review;
-}
-
-function reviewBase() {
-  const r = store.review;
-  if (!r || !r.run) return null;
-  return { run_id: r.run.run_id, base_revision: r.revision };
-}
-
-let reviewGenAbort = null;
-
-export async function generateReview({ includePossibilities = false, developmentIds = [] } = {}) {
-  const sid = store.session?.session_id;
-  if (!sid) return;
-  const base = reviewBase();
-  const controller = new AbortController();
-  reviewGenAbort = controller;
-  setState({ reviewStreaming: { stage: 'reading' } });
-  try {
-    let failure = null;
-    await reviewApi.streamGenerate(sid, {
-      include_possibilities: includePossibilities,
-      development_ids: developmentIds,
-      ...(base || {}),
-    }, (ev) => {
-      switch (ev.stage) {
-        case 'reading':
-        case 'grounding':
-        case 'building':
-          setState({ reviewStreaming: { stage: ev.stage } });
-          break;
-        case 'done':
-          // Existing output stays on screen until the new run replaces it.
-          setState({ review: { status: 'ok', run: ev.run, revision: ev.revision, flags: null }, reviewStreaming: null });
-          break;
-        case 'error':
-          failure = ev.message || 'Generating the review failed.';
-          break;
-      }
-    }, { signal: controller.signal });
-    if (failure) throw new Error(failure);
-    await loadReviewRun(sid);
-  } catch (e) {
-    setState({ reviewStreaming: null });
-    if (e.name !== 'AbortError') setOp(e.message, 'err');
-  } finally {
-    if (reviewGenAbort === controller) reviewGenAbort = null;
-  }
-}
-
-export async function cancelReviewGeneration() {
-  const sid = store.session?.session_id;
-  if (!sid) return;
-  reviewGenAbort?.abort();
-  setState({ reviewStreaming: null });
-  await reviewApi.cancelReviewGeneration(sid).catch(() => {});
-  setOp('Generation cancelled — the previous review is unchanged.', 'done');
-}
-
-// decisions / adjustments / question_actions, merged with the current revision.
-export async function saveReviewDecisions(patch) {
-  const sid = store.session?.session_id;
-  const base = reviewBase();
-  if (!sid || !base) return null;
-  try {
-    const r = await reviewApi.putReview(sid, { ...base, ...patch });
-    setState({ review: { ...store.review, run: r.run, revision: r.revision } });
-    return r;
-  } catch (e) {
-    setOp(e.message, 'err');
-    if (e.status === 409) await loadReviewRun(sid);
-    throw e;
-  }
-}
-
-export async function applySelectedUpdates(ids, requestId) {
-  const sid = store.session?.session_id;
-  const base = reviewBase();
-  if (!sid || !base || !ids.length) return null;
-  setOp('Writing the selected updates…');
-  try {
-    const r = await reviewApi.applyReview(sid, { ...base, request_id: requestId, development_ids: ids });
-    setState({ review: { ...store.review, run: r.run, revision: r.revision } });
-    await loadVaultTree(store.campaign?.campaign_id);
-    bump('vault');
-    const groups = r.report?.groups || [];
-    const written = groups.reduce((n, g) => n + (g.written?.length || 0), 0);
-    const trouble = groups.filter((g) => g.status !== 'applied').length;
-    setOp(
-      `Updated ${written} page${written === 1 ? '' : 's'}${trouble ? ` · ${trouble} need${trouble === 1 ? 's' : ''} attention` : ''}`,
-      trouble ? 'err' : 'done',
-    );
-    await loadReviewRun(sid);
-    return r;
-  } catch (e) {
-    setOp(e.message, 'err');
-    await loadReviewRun(sid);
-    throw e;
-  }
-}
-
-export async function recoverApplication(applicationId, action) {
-  const sid = store.session?.session_id;
-  const base = reviewBase();
-  if (!sid || !base) return null;
-  try {
-    const r = await reviewApi.recoverReview(sid, { ...base, application_id: applicationId, action });
-    setState({ review: { ...store.review, run: r.run, revision: r.revision } });
-    await loadVaultTree(store.campaign?.campaign_id);
-    bump('vault');
-    setOp(action === 'retry' ? 'Remaining changes written.' : 'Applied files kept; the rest is deferred.', 'done');
-    await loadReviewRun(sid);
-    return r;
-  } catch (e) {
-    setOp(e.message, 'err');
-    await loadReviewRun(sid);
-    throw e;
-  }
-}
-
-export async function finishReviewRun(deferPending) {
-  const sid = store.session?.session_id;
-  const base = reviewBase();
-  if (!sid || !base) return null;
-  try {
-    const r = await reviewApi.finishReview(sid, { ...base, defer_pending: !!deferPending });
-    setState({ review: { ...store.review, run: r.run, revision: r.revision } });
-    setOp('World review finished.', 'done');
-    return r;
-  } catch (e) {
-    setOp(e.message, 'err');
-    if (e.status === 409) await loadReviewRun(sid);
-    throw e;
-  }
-}
-
-export async function reopenReviewRun() {
-  const sid = store.session?.session_id;
-  const base = reviewBase();
-  if (!sid || !base) return null;
-  try {
-    const r = await reviewApi.reopenReview(sid, base);
-    setState({ review: { ...store.review, run: r.run, revision: r.revision } });
-    return r;
-  } catch (e) {
-    setOp(e.message, 'err');
-    throw e;
-  }
-}
-
-// The GM's own words become the evidence; no transcript support is invented.
-export async function clarifyQuestion(questionId, text) {
-  const sid = store.session?.session_id;
-  const base = reviewBase();
-  if (!sid || !base) return null;
-  setState({ reviewStreaming: { stage: 'building' } });
-  let failure = null;
-  try {
-    await reviewApi.streamClarify(sid, { ...base, question_id: questionId, text }, (ev) => {
-      if (ev.stage === 'done') {
-        setState({ review: { ...store.review, run: ev.run, revision: ev.revision }, reviewStreaming: null });
-      } else if (ev.stage === 'error') {
-        failure = ev.message || 'Clarifying failed.';
-      }
-    });
-    if (failure) throw new Error(failure);
-    await loadReviewRun(sid);
-  } catch (e) {
-    setState({ reviewStreaming: null });
-    setOp(e.message, 'err');
-    await loadReviewRun(sid);
-    throw e;
-  }
-}
-
-// Carry unused prep and saved possibilities into the next session. The
-// destination is always chosen: a draft is never guessed, and a new session is
-// only created when the GM asks for one.
-export async function carryToSession(destSessionId, itemIds) {
-  const sourceId = store.session?.session_id;
-  if (!sourceId || !destSessionId || !itemIds.length) return null;
-  try {
-    const dest = await loadPrep(destSessionId);
-    const result = await carryPrep(destSessionId, {
-      base_revision: dest.revision,
-      request_id: newRequestId(),
-      source_session_id: sourceId,
-      item_ids: itemIds,
-    });
-    setOp(`Carried ${itemIds.length} item${itemIds.length === 1 ? '' : 's'} forward.`, 'done');
-    // A carried possibility is recorded as saved on the source review.
-    await loadReviewRun(sourceId).catch(() => {});
-    return result;
-  } catch (e) {
-    setOp(e.message, 'err');
-    throw e;
   }
 }
 

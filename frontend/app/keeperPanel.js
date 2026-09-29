@@ -6,7 +6,7 @@
 import { html, useState, useEffect, useRef } from '../vendor/htm-preact-standalone.mjs';
 import { apiFetch, apiJson, apiStream, bump, navigate, setOp, setState, store } from './core.js';
 import { Icon, Spinner, renderBlockHtml, wikilinkClick, openContextMenu } from './ui.js';
-import { loadLlmProviders, fetchLlmModels, loadVaultTree, loadSkills, copyText } from './actions.js';
+import { loadLlmProviders, fetchLlmModels, loadVaultTree, loadSkills, loadAtlasMaps, copyText } from './actions.js';
 
 // store.keeper = { open, chatId, campaignId, events[], attachments[], error, mode }
 // store.keeperRuns = { [chatId]: { chatId, campaignId, live: {text, tools[], ask} } } —
@@ -41,6 +41,8 @@ const VAULT_WRITE_TOOLS = new Set([
   'write_page', 'rename_page', 'move_page',
   'delete_page', 'create_folder',
 ]);
+// Tools that can change Atlas files (a page move repoints pins; place_pin adds one).
+const ATLAS_WRITE_TOOLS = new Set(['place_pin', 'rename_page', 'move_page']);
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 // Longest-edge cap for pasted images. A raw screenshot is multi-MB of base64
 // that gets stored in the chat and re-sent to the model every turn; downscaling
@@ -292,6 +294,7 @@ export async function sendMessage(text, images = []) {
           patchKeeper({ events: [...keeperState().events, { type: 'assistant', text: live.text }] });
         }
         if (!ev.is_error && VAULT_WRITE_TOOLS.has(ev.name)) { loadVaultTree(cid); bump('vault'); }
+        if (!ev.is_error && ATLAS_WRITE_TOOLS.has(ev.name)) loadAtlasMaps(cid);
       } else if (ev.type === 'notice') {
         // Mode change (e.g. grounded fallback) — show it inline right away;
         // the post-stream reload picks up the persisted event either way.
@@ -388,6 +391,7 @@ export async function undoLast() {
     if (typeof remaining === 'number') patchKeeper({ undoable: remaining });
     if (restored.length) {
       loadVaultTree(cid);
+      loadAtlasMaps(cid);
       bump('vault');
     }
   } catch (e) {

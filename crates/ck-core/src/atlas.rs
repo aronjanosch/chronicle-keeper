@@ -100,16 +100,133 @@ pub fn read_map(world_root: &Path, id: &str) -> AppResult<MapDoc> {
     let path = map_path(world_root, id)?;
     let text = std::fs::read_to_string(&path)
         .map_err(|_| AppError::NotFound(format!("Map not found: {id}")))?;
-    serde_json::from_str(&text)
-        .map_err(|e| AppError::BadRequest(format!("Map file {id}.json is not valid: {e}")))
+    serde_json::from_str(&text).map_err(|e| {
+        keep_corrupt_copy(&path, id, &text);
+        AppError::BadRequest(format!(
+            "Map file {id}.json is not valid ({e}); a copy was kept in Atlas/.corrupt/"
+        ))
+    })
+}
+
+/// Keep what an unparseable map file held, so a later save can't lose it.
+/// Named by the file's mtime, so repeated reads of one broken file add nothing.
+fn keep_corrupt_copy(path: &Path, id: &str, text: &str) {
+    let mtime = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    let dir = path.parent().unwrap().join(".corrupt");
+    let copy = dir.join(format!("{id}-{mtime}.json"));
+    if !copy.exists() && std::fs::create_dir_all(&dir).is_ok() {
+        let _ = std::fs::write(copy, text);
+    }
 }
 
 pub fn write_map(world_root: &Path, doc: &MapDoc) -> AppResult<()> {
+    write_map_as(world_root, doc, "user")
+}
+
+/// Save a map, first snapshotting the file it replaces into map history.
+pub fn write_map_as(world_root: &Path, doc: &MapDoc, origin: &str) -> AppResult<()> {
     let path = map_path(world_root, &doc.id)?;
     std::fs::create_dir_all(path.parent().unwrap()).map_err(anyhow::Error::from)?;
+    if let Ok(before) = std::fs::read_to_string(&path) {
+        snapshot(world_root, &doc.id, &before, origin);
+    }
     let text = serde_json::to_string_pretty(doc).map_err(anyhow::Error::from)?;
     std::fs::write(&path, text).map_err(anyhow::Error::from)?;
     Ok(())
+}
+
+// ── Map history: `.ck/history-atlas/<id>/<millis>-<origin>.json` ──────
+// The full pre-save file, like page history. Autosaves from a drag session
+// coalesce: a snapshot is skipped while the latest is under COALESCE_SECS old.
+
+const MAX_HISTORY: usize = 40;
+const COALESCE_SECS: u64 = 300;
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct MapVersion {
+    pub ts: u64,
+    pub origin: String,
+}
+
+fn history_dir(world_root: &Path, id: &str) -> PathBuf {
+    world_root.join(".ck").join("history-atlas").join(id)
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+fn versions(dir: &Path) -> Vec<(PathBuf, MapVersion)> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<_> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter_map(|p| {
+            let stem = p.file_stem()?.to_str()?;
+            let (ts, origin) = stem.split_once('-')?;
+            let v = MapVersion {
+                ts: ts.parse().ok()?,
+                origin: origin.to_string(),
+            };
+            Some((p, v))
+        })
+        .collect();
+    out.sort_by_key(|(_, v)| std::cmp::Reverse(v.ts));
+    out
+}
+
+fn snapshot(world_root: &Path, id: &str, before: &str, origin: &str) {
+    let dir = history_dir(world_root, id);
+    let existing = versions(&dir);
+    if let Some((path, latest)) = existing.first() {
+        let fresh = now_ms().saturating_sub(latest.ts) < COALESCE_SECS * 1000;
+        if (fresh && latest.origin == origin)
+            || std::fs::read_to_string(path).is_ok_and(|t| t == before)
+        {
+            return;
+        }
+    }
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let _ = std::fs::write(dir.join(format!("{}-{origin}.json", now_ms())), before);
+    for (path, _) in versions(&dir).into_iter().skip(MAX_HISTORY) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Saved versions of a map, newest first.
+pub fn list_history(world_root: &Path, id: &str) -> AppResult<Vec<MapVersion>> {
+    map_path(world_root, id)?;
+    Ok(versions(&history_dir(world_root, id))
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect())
+}
+
+/// Put a saved version back. The art file stays as it is now; the current
+/// state is itself snapshotted first, so a restore can be undone.
+pub fn restore_version(world_root: &Path, id: &str, ts: u64) -> AppResult<MapDoc> {
+    let current = read_map(world_root, id)?;
+    let (path, _) = versions(&history_dir(world_root, id))
+        .into_iter()
+        .find(|(_, v)| v.ts == ts)
+        .ok_or_else(|| AppError::NotFound("No such map version".into()))?;
+    let text = std::fs::read_to_string(path).map_err(anyhow::Error::from)?;
+    let mut doc: MapDoc = serde_json::from_str(&text)
+        .map_err(|e| AppError::BadRequest(format!("Saved version is not valid: {e}")))?;
+    doc.id = current.id;
+    doc.image = current.image;
+    write_map_as(world_root, &doc, "user")?;
+    Ok(doc)
 }
 
 /// Validate user-supplied map art and return its lowercase extension.
@@ -229,6 +346,65 @@ pub fn delete_map(world_root: &Path, id: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Repoint pins and map pages at a moved page. A reference may carry a
+/// `#Heading` suffix, which survives the move.
+pub fn rewrite_page_references(world_root: &Path, from: &str, to: &str) {
+    rewrite_refs(world_root, from, to, false);
+}
+
+/// Folder-move variant: re-parent every reference under the `from` prefix.
+pub fn rewrite_page_references_prefix(world_root: &Path, from: &str, to: &str) {
+    rewrite_refs(world_root, from, to, true);
+}
+
+fn rewrite_refs(world_root: &Path, from: &str, to: &str, prefix: bool) {
+    let from = from.trim_matches('/');
+    let to = to.trim_matches('/');
+    if from.is_empty() || from == to {
+        return;
+    }
+    let Ok(maps) = list_maps(world_root) else {
+        return;
+    };
+    for mut m in maps {
+        let mut changed = false;
+        let refs = m
+            .page
+            .iter_mut()
+            .chain(m.pins.iter_mut().filter_map(|p| p.page.as_mut()));
+        for r in refs {
+            if let Some(updated) = rewritten(r, from, to, prefix) {
+                *r = updated;
+                changed = true;
+            }
+        }
+        if changed {
+            let _ = write_map(world_root, &m);
+        }
+    }
+}
+
+fn rewritten(reference: &str, from: &str, to: &str, prefix: bool) -> Option<String> {
+    let (path, anchor) = match reference.split_once('#') {
+        Some((p, a)) => (p, Some(a)),
+        None => (reference, None),
+    };
+    let moved = if prefix {
+        let rest = path.strip_prefix(from)?.strip_prefix('/')?;
+        if to.is_empty() {
+            rest.to_string()
+        } else {
+            format!("{to}/{rest}")
+        }
+    } else {
+        (path == from).then(|| to.to_string())?
+    };
+    Some(match anchor {
+        Some(a) => format!("{moved}#{a}"),
+        None => moved,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,6 +513,103 @@ mod tests {
             Some(root.id.as_str())
         );
         assert!(read_map(&dir, &root.id).unwrap().pins[0].to.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn moving_a_page_repoints_pins_and_keeps_anchor() {
+        let dir = temp_world("mv");
+        let src = fake_png(&dir, "a.png");
+        let doc = create_map(&dir, "Vale", &src, None, Some("Places/Vale.md".into())).unwrap();
+        let mut m = read_map(&dir, &doc.id).unwrap();
+        let pin = |id: &str, page: &str| Pin {
+            id: id.into(),
+            name: id.into(),
+            kind: "place".into(),
+            x: 0.5,
+            y: 0.5,
+            page: Some(page.into()),
+            to: None,
+        };
+        m.pins = vec![
+            pin("a", "Places/Vale.md"),
+            pin("b", "Places/Vale.md#History"),
+            pin("c", "Places/Other.md"),
+            pin("d", "Places/Valey.md"),
+        ];
+        write_map(&dir, &m).unwrap();
+
+        rewrite_page_references(&dir, "Places/Vale.md", "Realms/Vale.md");
+        let m = read_map(&dir, &doc.id).unwrap();
+        let pages: Vec<_> = m.pins.iter().map(|p| p.page.clone().unwrap()).collect();
+        assert_eq!(
+            pages,
+            [
+                "Realms/Vale.md",
+                "Realms/Vale.md#History",
+                "Places/Other.md",
+                "Places/Valey.md"
+            ]
+        );
+        assert_eq!(m.page.as_deref(), Some("Realms/Vale.md"));
+
+        rewrite_page_references_prefix(&dir, "Realms", "World/Realms");
+        let m = read_map(&dir, &doc.id).unwrap();
+        assert_eq!(
+            m.pins[1].page.as_deref(),
+            Some("World/Realms/Vale.md#History")
+        );
+        assert_eq!(m.pins[2].page.as_deref(), Some("Places/Other.md"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_file_is_kept_once_and_reported() {
+        let dir = temp_world("bad-json");
+        let src = fake_png(&dir, "a.png");
+        let doc = create_map(&dir, "Vale", &src, None, None).unwrap();
+        let file = dir.join(ATLAS_DIR).join("vale.json");
+        std::fs::write(&file, "{ not json").unwrap();
+        assert!(read_map(&dir, &doc.id).is_err());
+        assert!(read_map(&dir, &doc.id).is_err());
+        let kept: Vec<_> = std::fs::read_dir(dir.join(ATLAS_DIR).join(".corrupt"))
+            .unwrap()
+            .collect();
+        assert_eq!(kept.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn history_snapshots_restores_and_coalesces() {
+        let dir = temp_world("hist");
+        let src = fake_png(&dir, "a.png");
+        let doc = create_map(&dir, "Vale", &src, None, None).unwrap();
+        // create wrote the first file: nothing to snapshot yet
+        assert!(list_history(&dir, &doc.id).unwrap().is_empty());
+
+        let mut m = read_map(&dir, &doc.id).unwrap();
+        m.name = "Vale 2".into();
+        write_map_as(&dir, &m, "keeper").unwrap();
+        let v = list_history(&dir, &doc.id).unwrap();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].origin, "keeper");
+
+        // same origin inside the coalesce window: no new version
+        m.name = "Vale 3".into();
+        write_map_as(&dir, &m, "keeper").unwrap();
+        assert_eq!(list_history(&dir, &doc.id).unwrap().len(), 1);
+
+        // a different origin is its own version
+        m.name = "Vale 4".into();
+        write_map_as(&dir, &m, "user").unwrap();
+        assert_eq!(list_history(&dir, &doc.id).unwrap().len(), 2);
+
+        // restoring the oldest brings the original name back, and is undoable
+        let oldest = list_history(&dir, &doc.id).unwrap().pop().unwrap();
+        let restored = restore_version(&dir, &doc.id, oldest.ts).unwrap();
+        assert_eq!(restored.name, "Vale");
+        assert_eq!(read_map(&dir, &doc.id).unwrap().name, "Vale");
+        assert!(restore_version(&dir, &doc.id, 1).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

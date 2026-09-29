@@ -138,6 +138,14 @@ pub fn router(state: AppState) -> Router {
                 .delete(atlas::delete_map),
         )
         .route(
+            "/campaigns/:id/atlas/maps/:map/history",
+            get(atlas::map_history),
+        )
+        .route(
+            "/campaigns/:id/atlas/maps/:map/history-restore",
+            post(atlas::restore_map_version),
+        )
+        .route(
             "/campaigns/:id/atlas/maps/:map/image",
             get(atlas::map_image).put(atlas::replace_image),
         )

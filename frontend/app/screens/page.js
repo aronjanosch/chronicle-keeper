@@ -5,7 +5,7 @@
 // markdown highlight, [[ / #tag autocomplete, ⌘F search, and format shortcuts.
 // Auto-saves to the vault (800ms). See cm.js.
 import { html, useState, useEffect, useRef, useMemo, useCallback } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, useStore, openModal, setState, store as globalStore } from '../core.js';
+import { navigate, useStore, openModal, setState, store as globalStore, splitPageRef } from '../core.js';
 import { Shell, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
 import { Empty, Icon, PageBody, WikilinkHoverCard, splitDoc, joinDoc, parseProps, openContextMenu, useAsset, bannerAsset } from '../ui.js';
 import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault, uploadVaultAsset, loadSnippets, loadRelations, loadSkills, copyText } from '../actions.js';
@@ -230,7 +230,7 @@ function OnMapCard({ path, maps, campaignId }) {
   for (const m of maps || []) {
     if (m.page === path) hits.push({ map: m, pin: null });
     for (const p of m.pins || []) {
-      if (p.page === path) hits.push({ map: m, pin: p });
+      if (splitPageRef(p.page).path === path) hits.push({ map: m, pin: p });
     }
   }
   if (!hits.length) return null;

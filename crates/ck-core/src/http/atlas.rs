@@ -94,6 +94,30 @@ pub async fn replace_image(
     )?))
 }
 
+pub async fn map_history(
+    State(state): State<AppState>,
+    Path((campaign_id, map_id)): Path<(String, String)>,
+) -> AppResult<Json<Value>> {
+    let root = world_root(&state, &campaign_id)?;
+    Ok(Json(
+        json!({ "versions": atlas::list_history(&root, &map_id)? }),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct RestoreRequest {
+    pub ts: u64,
+}
+
+pub async fn restore_map_version(
+    State(state): State<AppState>,
+    Path((campaign_id, map_id)): Path<(String, String)>,
+    Json(req): Json<RestoreRequest>,
+) -> AppResult<Json<atlas::MapDoc>> {
+    let root = world_root(&state, &campaign_id)?;
+    Ok(Json(atlas::restore_version(&root, &map_id, req.ts)?))
+}
+
 pub async fn delete_map(
     State(state): State<AppState>,
     Path((campaign_id, map_id)): Path<(String, String)>,

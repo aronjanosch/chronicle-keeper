@@ -7,8 +7,8 @@
 // the palette to mint codex pages. Maps persist as <world>/Atlas/<id>.json
 // with the art copied alongside; pages stay files-as-truth.
 import { html, useState, useEffect, useRef, useMemo, useCallback } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, apiFetch, apiBlob, store, setState } from '../core.js';
-import { loadAtlasMaps, createAtlasMap, saveAtlasMap, replaceAtlasMapArt, deleteAtlasMap, pickMapImage, loadVaultTree, loadVaultLinks, createVaultPage, openCampaign } from '../actions.js';
+import { navigate, apiFetch, apiBlob, store, setState, splitPageRef, fmtDateTime } from '../core.js';
+import { loadAtlasMaps, createAtlasMap, saveAtlasMap, replaceAtlasMapArt, deleteAtlasMap, loadAtlasMapHistory, restoreAtlasMapVersion, pickMapImage, loadVaultTree, loadVaultLinks, createVaultPage, openCampaign } from '../actions.js';
 import { Shell, Sidebar, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
 import { Icon, Btn, Empty, Spinner, PageBody, Input, Select, splitDoc, parseProps, openContextMenu } from '../ui.js';
 
@@ -140,7 +140,22 @@ const RESERVED_FM = new Set(['kind', 'summary', 'aliases', 'tags', 'cssclasses',
 // drag-resizable width shared by the codex + new-entry side panels
 const usePanelWidth = () => useSidebarWidth('ck_atlas_panel_w', 380, { min: 320, max: 640, fromRight: true });
 
-function CodexPanel({ pagePath, pinName, kind, to, canChart, onEnterMap, onChartMap, onRemovePin, onClose }) {
+// H1–H3 of a page body, fenced code skipped — the anchors a pin can point at.
+function pageHeadings(md) {
+  const out = [];
+  let fence = false;
+  for (const raw of (md || '').split('\n')) {
+    const line = raw.trimEnd();
+    if (/^(```|~~~)/.test(line.trim())) { fence = !fence; continue; }
+    if (fence) continue;
+    const m = /^(#{1,3})\s+(.+?)\s*#*$/.exec(line);
+    if (m) out.push(m[2].trim());
+  }
+  return out;
+}
+
+function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canChart, onEnterMap, onChartMap, onRemovePin, onClose }) {
+  const bodyRef = useRef(null);
   const [page, setPage] = useState(null);
   const [err, setErr] = useState(null);
   const [width, onResize] = usePanelWidth();
@@ -155,6 +170,20 @@ function CodexPanel({ pagePath, pinName, kind, to, canChart, onEnterMap, onChart
       .catch((e) => { if (!dead) setErr(e.message); });
     return () => { dead = true; };
   }, [pagePath, store.dirty_vault]);
+
+  const headings = useMemo(() => (page ? pageHeadings(page.content) : []), [page]);
+
+  useEffect(() => {
+    if (!page || !heading) return undefined;
+    const t = setTimeout(() => {
+      const el = [...(bodyRef.current?.querySelectorAll('h1,h2,h3') || [])]
+        .find((h) => h.textContent.trim() === heading);
+      if (!el) return;
+      el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      el.animate([{ background: 'var(--burgundy-50)' }, { background: 'transparent' }], { duration: 1600 });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [page, heading]);
 
   const k = PIN_KINDS[kind || page?.kind] || { label: 'Entry' };
   const folder = pagePath ? pagePath.split('/').slice(0, -1).join('/') || '—' : '—';
@@ -187,11 +216,20 @@ function CodexPanel({ pagePath, pinName, kind, to, canChart, onEnterMap, onChart
       </button>
     </div>
 
-    <div style=${{ flex: 1, overflow: 'auto', padding: '18px 18px 28px' }}>
+    <div ref=${bodyRef} style=${{ flex: 1, overflow: 'auto', padding: '18px 18px 28px' }}>
       <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 500, letterSpacing: '-0.015em', lineHeight: 1.12, color: 'var(--ink)' }}>${page?.title || pinName || '…'}</h1>
 
       ${err && html`<div style=${{ marginTop: 10, padding: '10px 12px', background: '#FBEDE9', border: '1px solid rgba(122,46,31,.25)', borderRadius: 6, fontSize: 12.5, color: 'var(--burgundy-700)' }}>${err}</div>`}
       ${!page && !err && html`<div style=${{ marginTop: 16, display: 'flex', justifyContent: 'center' }}><${Spinner} /></div>`}
+
+      ${page && onSetHeading && headings.length > 0 && html`<div style=${{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>Pin points at</span>
+        <select value=${headings.includes(heading) ? heading : ''} onChange=${(e) => onSetHeading(e.target.value)}
+          style=${{ flex: 1, minWidth: 0, fontSize: 12.5, padding: '3px 6px', border: '1px solid var(--rule)', borderRadius: 4, background: 'var(--surface-raised)', color: 'var(--ink)' }}>
+          <option value="">Entire page</option>
+          ${headings.map((h) => html`<option key=${h} value=${h}>${h}</option>`)}
+        </select>
+      </div>`}
 
       ${page && html`
         ${page.summary && html`<div style=${{ marginTop: 10, padding: '10px 12px', background: 'var(--paper-deep)', border: '1px solid var(--rule-soft)', borderRadius: 6 }}>
@@ -412,6 +450,13 @@ function MapSettings({ map, busy, onSave, onDelete, onCancel }) {
   const [imagePath, setImagePath] = useState('');
   const [confirmDel, setConfirmDel] = useState(false);
   const [err, setErr] = useState(null);
+  const [versions, setVersions] = useState([]);
+  useEffect(() => { loadAtlasMapHistory(map.id).then(setVersions).catch(() => {}); }, [map.id]);
+  const restore = async (ts) => {
+    setErr(null);
+    try { await restoreAtlasMapVersion(map.id, ts); onCancel(); }
+    catch (e) { setErr(e.message); }
+  };
   const dirty = name.trim() !== map.name || imagePath.trim();
   const pick = async () => {
     const p = await pickMapImage();
@@ -443,6 +488,16 @@ function MapSettings({ map, busy, onSave, onDelete, onCancel }) {
           Pins keep their relative spots — best for a redrawn version of the same map.
         </div>
       </div>
+      ${versions.length > 0 && html`<div>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 5 }}>Earlier versions</div>
+        <div style=${{ maxHeight: 132, overflow: 'auto', border: '1px solid var(--rule-soft)', borderRadius: 6 }}>
+          ${versions.map((v) => html`<div key=${v.ts} style=${{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', fontSize: 12.5, borderBottom: '1px solid var(--rule-soft)' }}>
+            <span style=${{ flex: 1 }}>${fmtDateTime(new Date(v.ts).toISOString())}</span>
+            <span style=${{ color: 'var(--ink-faint)', fontSize: 11 }}>${v.origin === 'keeper' ? 'Keeper' : 'You'}</span>
+            <button onClick=${() => restore(v.ts)} disabled=${busy} style=${{ fontSize: 11.5, padding: '2px 8px', border: '1px solid var(--rule)', borderRadius: 4, background: 'transparent', color: 'var(--burgundy-700)', cursor: 'pointer' }}>Restore</button>
+          </div>`)}
+        </div>
+      </div>`}
       ${err && html`<div style=${{ padding: '8px 11px', background: '#FBEDE9', border: '1px solid rgba(122,46,31,.25)', borderRadius: 6, fontSize: 12, color: 'var(--burgundy-700)' }}>${err}</div>`}
     </div>
     <div style=${{ padding: '11px 16px', borderTop: '1px solid var(--rule-soft)', background: 'var(--paper-deep)', display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -707,7 +762,8 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     if (drag.current && drag.current.moved) return;
     if (!pin.page) return;
     setNewEntry(null);
-    setPanel({ pagePath: pin.page, pinId: pin.id, kind: pin.kind, name: pin.name, to: pin.to });
+    const { path, heading } = splitPageRef(pin.page);
+    setPanel({ pagePath: path, heading, pinId: pin.id, kind: pin.kind, name: pin.name, to: pin.to });
     setAnim(true); centerOn(pin.x, pin.y, 1.0);
   };
 
@@ -744,6 +800,13 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     persist({ ...map, pins: [...(map.pins || []), pin] });
     setNewEntry(null);
     setPanel({ pagePath: pin.page, pinId: pin.id, kind: pin.kind, name: pin.name });
+  };
+
+  const setPinHeading = (heading) => {
+    if (!panel?.pinId) return;
+    const page = heading ? `${panel.pagePath}#${heading}` : panel.pagePath;
+    persist({ ...map, pins: (map.pins || []).map((p) => (p.id === panel.pinId ? { ...p, page } : p)) });
+    setPanel((p) => p && { ...p, heading });
   };
 
   const removePin = (pinId) => {
@@ -797,7 +860,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     if (!panel?.pinId) return;
     const pin = (map.pins || []).find((p) => p.id === panel.pinId);
     if (!pin) return;
-    setMapForm({ title: `Map of ${pin.name}`, name: pin.name, parent: map.id, page: pin.page, bindPin: pin.id });
+    setMapForm({ title: `Map of ${pin.name}`, name: pin.name, parent: map.id, page: splitPageRef(pin.page).path, bindPin: pin.id });
   };
 
   const invZoom = view ? clamp(1 / view.zoom, 0.5, 1.5) : 1;
@@ -826,14 +889,14 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
           onClick=${() => openPin(pin)} onDoubleClick=${() => pin.to && goToMap(pin.to)}
           onMouseDown=${onPinDown(pin)}
           onMenu=${(e) => openContextMenu(e, [
-            pin.page && { label: 'Open page', icon: 'book', onClick: () => navigate('page', { path: pin.page }) },
+            pin.page && { label: 'Open page', icon: 'book', onClick: () => navigate('page', { path: splitPageRef(pin.page).path }) },
             pin.page && { label: 'Read here', icon: 'doc', onClick: () => openPin(pin) },
             pin.to && { label: 'Enter the map', icon: 'map', onClick: () => goToMap(pin.to) },
             '-',
             { label: 'Remove pin', icon: 'trash', danger: true, onClick: () => removePin(pin.id) },
           ])} />`)}
 
-        ${hoverPin && hoverPin.page && html`<${HoverCard} pin=${hoverPin} invZoom=${invZoom} scale=${pinScale} summary=${summaryOf(hoverPin.page)} />`}
+        ${hoverPin && hoverPin.page && html`<${HoverCard} pin=${hoverPin} invZoom=${invZoom} scale=${pinScale} summary=${summaryOf(splitPageRef(hoverPin.page).path)} />`}
       </div>`}
 
       ${placing && ghost && html`<div style=${{ position: 'absolute', left: ghost.x, top: ghost.y, transform: 'translate(-50%,-100%)', pointerEvents: 'none', opacity: 0.7, zIndex: 75 }}>
@@ -963,7 +1026,8 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
       </div>`}
     </div>
 
-    ${panel && html`<${CodexPanel} pagePath=${panel.pagePath} pinName=${panel.name} kind=${panel.kind}
+    ${panel && html`<${CodexPanel} pagePath=${panel.pagePath} heading=${panel.heading}
+      onSetHeading=${panel.pinId ? setPinHeading : null} pinName=${panel.name} kind=${panel.kind}
       to=${panel.to} canChart=${!!panel.pinId && !busy}
       onEnterMap=${() => goToMap(panel.to)} onChartMap=${chartFromPin}
       onRemovePin=${panel.pinId ? () => removePin(panel.pinId) : null}

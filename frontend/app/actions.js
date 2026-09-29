@@ -371,7 +371,7 @@ export async function moveVaultEntry(from, to) {
   const id = store.campaign.campaign_id;
   await apiJson(`/campaigns/${id}/vault/move`, 'POST', { from, to });
   remapTabs(from, to);
-  await loadVaultTree(id);
+  await Promise.all([loadVaultTree(id), loadAtlasMaps(id)]);
 }
 
 export async function deleteVaultPage(path) {
@@ -445,6 +445,7 @@ export async function bulkVault(action, pages, extra = {}) {
   const id = store.campaign.campaign_id;
   const r = await apiJson(`/campaigns/${id}/vault/bulk`, 'POST', { action, pages, ...extra });
   await loadVaultTree(id);
+  if (action === 'move') await loadAtlasMaps(id);
   return r;
 }
 
@@ -610,6 +611,19 @@ export async function replaceAtlasMapArt(mapId, imagePath) {
   // art_seq (client-only): same-extension replace keeps doc.image identical,
   // so viewers need another signal to refetch the blob.
   setState({ atlasMaps: (store.atlasMaps || []).map((m) => (m.id === saved.id ? { ...saved, art_seq: Date.now() } : m)) });
+  return saved;
+}
+
+export async function loadAtlasMapHistory(mapId) {
+  const id = store.campaign.campaign_id;
+  const r = await apiFetch(`/campaigns/${id}/atlas/maps/${encodeURIComponent(mapId)}/history`);
+  return r.versions || [];
+}
+
+export async function restoreAtlasMapVersion(mapId, ts) {
+  const id = store.campaign.campaign_id;
+  const saved = await apiJson(`/campaigns/${id}/atlas/maps/${encodeURIComponent(mapId)}/history-restore`, 'POST', { ts });
+  setState({ atlasMaps: (store.atlasMaps || []).map((m) => (m.id === saved.id ? { ...saved, art_seq: m.art_seq } : m)) });
   return saved;
 }
 

@@ -232,6 +232,7 @@ async fn sync_one_scene(
         let Some(page) = pin.page.as_deref() else {
             continue;
         };
+        let page = page.split('#').next().unwrap_or(page);
         let Some(entry) = map.pages.get(page) else {
             continue;
         };

@@ -364,6 +364,13 @@ export function loadApiBase() {
 }
 
 // ── small shared helpers ──────────────────────────────────────────
+// A stored page reference is `path.md` or `path.md#Heading` (Atlas pins).
+export function splitPageRef(ref) {
+  const s = ref || '';
+  const i = s.indexOf('#');
+  return i < 0 ? { path: s, heading: '' } : { path: s.slice(0, i), heading: s.slice(i + 1) };
+}
+
 export function slugify(v) {
   return String(v).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
 }

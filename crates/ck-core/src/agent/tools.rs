@@ -38,9 +38,10 @@ pub fn tier_of(name: &str) -> Tier {
     match name {
         // Memory + save_skill: app-global Keeper state, not world content.
         // Ungated like the notebook — the skill-creator flow confirms in chat.
-        "read_memory" | "write_memory" | "delete_memory" | "save_skill" => Tier::Memory,
+        "read_memory" | "write_memory" | "delete_memory" | "save_skill" | "todo_write"
+        | "ask_user" | "delegate" => Tier::Memory,
         "create_page" | "edit_page" | "multi_edit_page" | "insert_into_page" | "write_page"
-        | "place_pin" => Tier::Write,
+        | "place_pin" | "restore_page" | "edit_map" => Tier::Write,
         "rename_page" | "move_page" | "delete_page" | "create_folder" => Tier::Structural,
         "run_command" => Tier::Shell,
         // Network reads of external content — gated ask-first (a query / page
@@ -557,7 +558,7 @@ pub fn web_tools() -> Vec<ToolDef> {
     ]
 }
 
-fn norm_md_path(raw: &str) -> String {
+pub(super) fn norm_md_path(raw: &str) -> String {
     let p = raw.trim().trim_matches('/');
     if p.to_lowercase().ends_with(".md") {
         p.to_string()
@@ -755,7 +756,7 @@ fn nearest_pages(vault_root: &std::path::Path, wanted: &str, n: usize) -> Vec<St
     scored.into_iter().take(n).map(|(_, p)| p).collect()
 }
 
-fn cap_preview(s: &str) -> String {
+pub(super) fn cap_preview(s: &str) -> String {
     if s.len() <= PREVIEW_CAP {
         return s.to_string();
     }
@@ -1192,6 +1193,9 @@ pub async fn run_web_tool(name: &str, args: &Value) -> Result<String, String> {
 }
 
 fn write_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Value, String> {
+    if super::tools_ext::is_ext_write(name) {
+        return super::tools_ext::preview(ctx, name, args);
+    }
     if name == "place_pin" {
         let plan = plan_pin(ctx, args)?;
         return Ok(json!({
@@ -1959,7 +1963,8 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
         ),
         "delete_memory" => super::memory::delete_memory(ctx.world_root, &str_arg("name")),
         "run_command" => run_command(ctx, &str_arg("command")),
-        other => Err(format!("unknown tool: {other}")),
+        other => super::tools_ext::dispatch(ctx, other, args)
+            .unwrap_or_else(|| Err(format!("unknown tool: {other}"))),
     }
 }
 
@@ -2122,27 +2127,27 @@ fn run_command(ctx: &ToolCtx<'_>, command: &str) -> Result<String, String> {
 
 /// Suppress the watcher echo + refresh the index row, like every CK-side
 /// vault write. Index is a cache — failure must not fail the write.
-fn reindex(ctx: &ToolCtx<'_>, vault_root: &std::path::Path, rel: &str) {
+pub(super) fn reindex(ctx: &ToolCtx<'_>, vault_root: &std::path::Path, rel: &str) {
     ctx.state.note_vault_write(vault_root, rel);
     let _ = ctx.state.with_index(vault_root, |conn| {
         let _ = index::upsert_path(conn, vault_root, rel);
     });
 }
 
-fn app_err(e: AppError) -> String {
+pub(super) fn app_err(e: AppError) -> String {
     e.to_string()
 }
 
 // ── Atlas maps ────────────────────────────────────────────────────
 
-const PIN_KINDS: &[&str] = &["place", "npc", "faction", "item", "lore", "pc"];
+pub(super) const PIN_KINDS: &[&str] = &["place", "npc", "faction", "item", "lore", "pc"];
 const MAX_MAP_LINES: usize = 150;
 
-fn pct(v: f64) -> String {
+pub(super) fn pct(v: f64) -> String {
     format!("{}%", (v * 100.0).round())
 }
 
-fn resolve_map(ctx: &ToolCtx<'_>, key: &str) -> Result<crate::atlas::MapDoc, String> {
+pub(super) fn resolve_map(ctx: &ToolCtx<'_>, key: &str) -> Result<crate::atlas::MapDoc, String> {
     let maps = crate::atlas::list_maps(ctx.world_root).map_err(app_err)?;
     let k = key.trim().to_lowercase();
     if let Some(m) = maps

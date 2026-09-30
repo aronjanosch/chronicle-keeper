@@ -4,6 +4,8 @@
 //!   {type:"tool_start", name, args_summary, diff?}
 //!   {type:"tool_result", name, summary, is_error}
 //!   {type:"permission_request", request_id, name, args, diff}
+//!   {type:"question", request_id, question, options}   (ask_user; reply via /answer)
+//!   {type:"todos", items}
 //!   {type:"turn_done"}
 //!   {type:"error", message}
 
@@ -83,6 +85,12 @@ pub async fn abort(
     // resolves — dropping the sender resolves it as a deny.
     let mut asks = state.agent_asks.lock().unwrap_or_else(|e| e.into_inner());
     asks.retain(|_, (cid, _)| cid != &chat_id);
+    drop(asks);
+    let mut questions = state
+        .agent_questions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    questions.retain(|_, (cid, _)| cid != &chat_id);
     Ok(Json(json!({ "aborted": aborted })))
 }
 
@@ -111,6 +119,32 @@ pub async fn approve(
         return Err(AppError::NotFound("No pending permission request.".into()));
     };
     let _ = sender.send(decision); // run gone = nothing to resolve
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct AnswerRequest {
+    pub request_id: String,
+    pub answer: String,
+}
+
+/// Resolve a parked `ask_user` with the user's answer.
+pub async fn answer(
+    State(state): State<AppState>,
+    Path((_campaign_id, _chat_id)): Path<(String, String)>,
+    Json(req): Json<AnswerRequest>,
+) -> AppResult<Json<Value>> {
+    let sender = {
+        let mut qs = state
+            .agent_questions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        qs.remove(&req.request_id).map(|(_, tx)| tx)
+    };
+    let Some(sender) = sender else {
+        return Err(AppError::NotFound("No pending question.".into()));
+    };
+    let _ = sender.send(req.answer);
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -298,6 +332,7 @@ pub async fn run_brief(
                 send(json!({ "type": "tool_result", "name": name, "summary": summary, "is_error": is_error }))
             }
             TurnEvent::Notice(message) => send(json!({ "type": "notice", "message": message })),
+            TurnEvent::Todos(_) | TurnEvent::Question { .. } => {}
         })
         .await;
         release_run(&st, &campaign_id);
@@ -424,6 +459,29 @@ impl PermissionGate for SseGate {
         let _ = self.tx.send(ev);
         rx.await.unwrap_or(Decision::Deny)
     }
+
+    async fn ask_user(&self, id: String, question: String, options: Vec<String>) -> Option<String> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut qs = self
+                .state
+                .agent_questions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            qs.insert(id.clone(), (self.chat_id.clone(), tx));
+        }
+        let frame = json!({
+            "type": "question",
+            "request_id": id,
+            "question": question,
+            "options": options,
+        });
+        let ev = Event::default()
+            .json_data(&frame)
+            .unwrap_or_else(|_| Event::default());
+        let _ = self.tx.send(ev);
+        rx.await.ok()
+    }
 }
 
 /// Claim a run slot. Keyed by chat id for chat turns/compact (so separate
@@ -519,6 +577,10 @@ pub async fn send_message(
                     "type": "tool_result", "name": name, "summary": summary, "is_error": is_error
                 })),
                 TurnEvent::Notice(message) => send(json!({ "type": "notice", "message": message })),
+                TurnEvent::Todos(items) => send(json!({ "type": "todos", "items": items })),
+                TurnEvent::Question { id, question, options } => send(json!({
+                    "type": "question", "request_id": id, "question": question, "options": options
+                })),
             },
         )
         .await;

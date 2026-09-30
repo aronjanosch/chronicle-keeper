@@ -48,7 +48,7 @@ NOT `![[transclusions]]` of it — after a rename, search for `![[Old Name` and 
 - **Search** — ⌘K palette and a full-text screen with facets (kind/tag/folder/date);
   session search covers summaries and transcripts.
 - **Sessions** — Craig (Discord) recordings → label speakers → on-device transcription →
-  summary → "Update the Codex" (AI-proposed page edits the user reviews and commits).
+  summary → the review-session skill (you propose page edits in chat).
 - **Safety nets** — every page save snapshots to history (restorable, yours marked
   keeper-origin), deletes go to a 30-day trash, world backups zip on close. Your edits
   are undoable, so the user can always roll back.

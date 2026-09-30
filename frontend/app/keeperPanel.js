@@ -39,10 +39,10 @@ const slashLabel = { padding: '5px 8px 3px', fontSize: 10.5, letterSpacing: '0.0
 const VAULT_WRITE_TOOLS = new Set([
   'create_page', 'edit_page', 'multi_edit_page', 'insert_into_page',
   'write_page', 'rename_page', 'move_page',
-  'delete_page', 'create_folder',
+  'delete_page', 'create_folder', 'restore_page',
 ]);
 // Tools that can change Atlas files (a page move repoints pins; place_pin adds one).
-const ATLAS_WRITE_TOOLS = new Set(['place_pin', 'rename_page', 'move_page']);
+const ATLAS_WRITE_TOOLS = new Set(['place_pin', 'edit_map', 'rename_page', 'move_page']);
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 // Longest-edge cap for pasted images. A raw screenshot is multi-MB of base64
 // that gets stored in the chat and re-sent to the model every turn; downscaling
@@ -278,6 +278,10 @@ export async function sendMessage(text, images = []) {
         patchRun(chatId, { live: { ...live, text: live.text + ev.text } });
       } else if (ev.type === 'permission_request') {
         patchRun(chatId, { live: { ...live, ask: { requestId: ev.request_id, name: ev.name, diff: ev.diff } } });
+      } else if (ev.type === 'question') {
+        patchRun(chatId, { live: { ...live, question: { requestId: ev.request_id, question: ev.question, options: ev.options || [] } } });
+      } else if (ev.type === 'todos') {
+        patchRun(chatId, { live: { ...live, todos: ev.items } });
       } else if (ev.type === 'tool_start') {
         toolsRan = true;
         patchRun(chatId, { live: { ...live, ask: null, tools: [...live.tools, { name: ev.name, args: ev.args_summary, diff: ev.diff, running: true }] } });
@@ -289,7 +293,7 @@ export async function sendMessage(text, images = []) {
         // assistant turn — fold it into the row list and reset the buffer.
         // Only the currently displayed chat keeps its events array live; a
         // backgrounded chat picks this up from disk when it's reopened.
-        patchRun(chatId, { live: { ...live, text: '', tools, ask: null } });
+        patchRun(chatId, { live: { ...live, text: '', tools, ask: null, question: null } });
         if (live.text.trim() && isFocused()) {
           patchKeeper({ events: [...keeperState().events, { type: 'assistant', text: live.text }] });
         }
@@ -363,6 +367,19 @@ export function setMode(mode) {
   const k = keeperState();
   if (cid && k.chatId && k.live) {
     apiJson(`/campaigns/${cid}/agent/chats/${k.chatId}/mode`, 'POST', { mode }).catch(() => {});
+  }
+}
+
+// Answer the Keeper's ask_user question (option click or typed text).
+async function answerQuestion(requestId, answer) {
+  const cid = store.campaign?.campaign_id;
+  const k = keeperState();
+  if (!cid || !k.chatId || !answer.trim()) return;
+  if (k.live) patchRun(k.chatId, { live: { ...k.live, question: null } });
+  try {
+    await apiJson(`/campaigns/${cid}/agent/chats/${k.chatId}/answer`, 'POST', { request_id: requestId, answer });
+  } catch (e) {
+    patchKeeper({ error: String(e.message || e) });
   }
 }
 
@@ -528,9 +545,43 @@ function DiffView({ diff }) {
 }
 
 const WRITE_VERB = {
-  create_page: 'create', edit_page: 'edit', write_page: 'overwrite',
+  restore_page: 'restore', create_page: 'create', edit_page: 'edit', write_page: 'overwrite',
   multi_edit_page: 'edit', insert_into_page: 'add to',
 };
+
+// ask_user: the Keeper needs a choice. Option buttons plus free text.
+function QuestionCard({ q }) {
+  const [text, setText] = useState('');
+  return html`<div style=${{ margin: '10px 0', border: '1px solid var(--rule)', borderRadius: 8, background: 'var(--paper-deep)', padding: '10px 12px' }}>
+    <div style=${{ fontSize: 13, fontWeight: 600, display: 'flex', gap: 7, alignItems: 'flex-start' }}>
+      <${Icon} name="feather" size=${13} /> <span>${q.question}</span>
+    </div>
+    ${q.options.length > 0 && html`<div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+      ${q.options.map((o) => html`<button key=${o} class="btn" onClick=${() => answerQuestion(q.requestId, o)}>${o}</button>`)}
+    </div>`}
+    <div style=${{ display: 'flex', gap: 6, marginTop: 8 }}>
+      <input class="input" style=${{ flex: 1, fontSize: 12.5 }} placeholder="Or type an answer…" value=${text}
+        onInput=${(e) => setText(e.target.value)}
+        onKeyDown=${(e) => { if (e.key === 'Enter' && text.trim()) answerQuestion(q.requestId, text.trim()); }} />
+      <button class="btn btn-primary" disabled=${!text.trim()} onClick=${() => answerQuestion(q.requestId, text.trim())}>Send</button>
+    </div>
+  </div>`;
+}
+
+const TODO_MARK = { completed: '☑', in_progress: '▸', pending: '☐' };
+
+// The Keeper's todo_write checklist — always the latest list, never a history.
+function TodoList({ items }) {
+  if (!Array.isArray(items) || !items.length) return null;
+  return html`<div style=${{ margin: '8px 0', padding: '8px 12px', background: 'var(--paper-deep)', border: '1px solid var(--rule-soft)', borderRadius: 6, fontSize: 12.5 }}>
+    ${items.map((t, i) => html`<div key=${i} style=${{
+      display: 'flex', gap: 8, padding: '1px 0',
+      color: t.status === 'completed' ? 'var(--ink-faint)' : 'var(--ink)',
+      textDecoration: t.status === 'completed' ? 'line-through' : 'none',
+      fontWeight: t.status === 'in_progress' ? 600 : 400,
+    }}><span style=${{ fontFamily: 'var(--font-mono)' }}>${TODO_MARK[t.status] || TODO_MARK.pending}</span><span>${t.content}</span></div>`)}
+  </div>`;
+}
 
 function PermissionCard({ ask }) {
   const d = ask.diff || {};
@@ -565,6 +616,9 @@ const ROW_VERB = {
   vault_diagnostics: 'diagnostics', tags: 'tags', query_world: 'query', page_kinds: 'kinds', read_recap: 'recap',
   multi_edit_page: 'edit', insert_into_page: 'insert', search_summaries: 'summaries',
   web_search: 'web search', web_fetch: 'web fetch',
+  todo_write: 'checklist', ask_user: 'question', delegate: 'delegate', read_timeline: 'timeline',
+  read_relations: 'relations', page_history: 'history', list_trash: 'trash', restore_page: 'restore',
+  edit_map: 'map edit',
 };
 
 function ToolRow({ name, summary, isError, running, args, diff }) {
@@ -1090,20 +1144,25 @@ export function Transcript({ k, empty }) {
   };
   useEffect(() => {
     if (ref.current && pinned.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [k.events.length, k.live?.text, k.live?.tools?.length, k.live?.ask]);
+  }, [k.events.length, k.live?.text, k.live?.tools?.length, k.live?.ask, k.live?.question, k.live?.todos]);
   const isEmpty = !k.events.length && !k.live;
+  const lastTodos = k.events.findLastIndex((e) => e.type === 'todos');
   return html`<div ref=${ref} onScroll=${onScroll} style=${{ flex: 1, overflow: 'auto', padding: '6px 14px' }}>
     ${isEmpty && (empty || html`<div style=${{ color: 'var(--ink-faint)', fontSize: 13, padding: '24px 8px', textAlign: 'center', lineHeight: 1.6 }}>
       The Keeper knows this world's Codex and sessions.<br />Ask about people, places, or what happened.
     </div>`)}
-    ${k.events.map((ev, i) => html`<${EventRow} key=${i} ev=${ev} />`)}
+    ${k.events.map((ev, i) => ev.type === 'todos'
+      ? (!k.live && i === lastTodos ? html`<${TodoList} key=${i} items=${ev.items} />` : null)
+      : html`<${EventRow} key=${i} ev=${ev} />`)}
+    ${k.live && k.live.todos && html`<${TodoList} items=${k.live.todos} />`}
     ${k.live && k.live.compacting && html`<${CompactingIndicator} />`}
     ${k.live && !k.live.compacting && html`
       ${k.live.tools.map((t, i) => html`<${ToolRow} key=${`t${i}`} ...${t} />`)}
       ${k.live.text && html`<div class="ck-prose" style=${{ fontSize: 13, margin: '10px 0' }}
         dangerouslySetInnerHTML=${{ __html: renderBlockHtml(k.live.text, store.vaultPages) }} />`}
       ${k.live.ask && html`<${PermissionCard} ask=${k.live.ask} />`}
-      ${!k.live.text && !k.live.ask && !k.live.tools.length && html`<div style=${{ padding: '8px 0' }}><${Spinner} size=${14} /></div>`}
+      ${k.live.question && html`<${QuestionCard} q=${k.live.question} />`}
+      ${!k.live.text && !k.live.ask && !k.live.question && !k.live.tools.length && html`<div style=${{ padding: '8px 0' }}><${Spinner} size=${14} /></div>`}
     `}
     ${k.error && html`<div style=${{ margin: '8px 0', fontSize: 12, color: 'var(--burgundy-700)' }}>⚠ ${k.error}</div>`}
   </div>`;

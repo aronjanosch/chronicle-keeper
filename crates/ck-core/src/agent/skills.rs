@@ -32,6 +32,10 @@ const DEFAULT_SKILLS: &[(&str, &str)] = &[
         include_str!("skills_default/writing-codex-syntax/SKILL.md"),
     ),
     (
+        "about-chronicle-keeper/SKILL.md",
+        include_str!("skills_default/about-chronicle-keeper/SKILL.md"),
+    ),
+    (
         "flesh-out-a-place/SKILL.md",
         include_str!("skills_default/flesh-out-a-place/SKILL.md"),
     ),
@@ -62,6 +66,38 @@ const DEFAULT_SKILLS: &[(&str, &str)] = &[
     (
         "skill-creator/SKILL.md",
         include_str!("skills_default/skill-creator/SKILL.md"),
+    ),
+    (
+        "flesh-out-a-faction/SKILL.md",
+        include_str!("skills_default/flesh-out-a-faction/SKILL.md"),
+    ),
+    (
+        "flesh-out-an-item/SKILL.md",
+        include_str!("skills_default/flesh-out-an-item/SKILL.md"),
+    ),
+    (
+        "flesh-out-a-deity/SKILL.md",
+        include_str!("skills_default/flesh-out-a-deity/SKILL.md"),
+    ),
+    (
+        "npc-voice/SKILL.md",
+        include_str!("skills_default/npc-voice/SKILL.md"),
+    ),
+    (
+        "build-encounter/SKILL.md",
+        include_str!("skills_default/build-encounter/SKILL.md"),
+    ),
+    (
+        "setup-calendar/SKILL.md",
+        include_str!("skills_default/setup-calendar/SKILL.md"),
+    ),
+    (
+        "fix-diagnostics/SKILL.md",
+        include_str!("skills_default/fix-diagnostics/SKILL.md"),
+    ),
+    (
+        "session-zero/SKILL.md",
+        include_str!("skills_default/session-zero/SKILL.md"),
     ),
 ];
 
@@ -631,7 +667,7 @@ mod tests {
         assert!(for_kind(&root, "npc")
             .iter()
             .any(|s| s.slug == "flesh-out-a-character"));
-        assert!(for_kind(&root, "lore").is_empty());
+        assert!(for_kind(&root, "event").is_empty());
         assert!(for_kind(&root, "").is_empty());
         std::fs::remove_dir_all(&root).ok();
     }

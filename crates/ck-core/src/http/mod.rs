@@ -196,6 +196,10 @@ pub fn router(state: AppState) -> Router {
             "/campaigns/:id/agent/chats/:cid/approve",
             post(agent::approve),
         )
+        .route(
+            "/campaigns/:id/agent/chats/:cid/answer",
+            post(agent::answer),
+        )
         .route("/campaigns/:id/agent/chats/:cid/undo", post(agent::undo))
         .route(
             "/campaigns/:id/agent/chats/:cid/attachments",

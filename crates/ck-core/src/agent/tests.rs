@@ -149,7 +149,11 @@ async fn loop_runs_tool_then_answers() {
         .iter()
         .filter_map(|e| e["type"].as_str())
         .collect();
-    assert_eq!(types, ["user", "assistant", "tool_result", "assistant"]);
+    // Baron Aldric has no page, so the citation check adds a notice.
+    assert_eq!(
+        types,
+        ["user", "assistant", "tool_result", "assistant", "notice"]
+    );
     // Tool result delimited as data.
     assert!(persisted[2]["content"]
         .as_str()
@@ -1580,4 +1584,521 @@ async fn place_pin_denied_or_readonly_leaves_map_untouched() {
         assert_eq!(checkpoints::count(&root, &chat.id), 0);
         std::fs::remove_dir_all(&root).ok();
     }
+}
+
+// ── Keeper harness additions: checklist, ask_user, delegate, parallel reads ──
+
+struct AnswerGate(Option<String>);
+
+impl PermissionGate for AnswerGate {
+    async fn ask(&self, _req: AskRequest) -> Decision {
+        Decision::AllowOnce
+    }
+    async fn ask_user(&self, _id: String, _q: String, _o: Vec<String>) -> Option<String> {
+        self.0.clone()
+    }
+}
+
+fn turn_ctx<'a>(
+    state: &'a AppState,
+    root: &'a std::path::Path,
+    cfg: &'a WorldConfig,
+    chat_id: &'a str,
+    mode: Mode,
+) -> TurnCtx<'a> {
+    TurnCtx {
+        state,
+        world_root: root,
+        cfg,
+        chat_id,
+        mode,
+        focus: None,
+    }
+}
+
+fn multi_turn(calls: Vec<(&str, &str, Value)>) -> AssistantTurn {
+    AssistantTurn {
+        text: String::new(),
+        tool_calls: calls
+            .into_iter()
+            .map(|(id, name, arguments)| ToolCall {
+                id: id.into(),
+                name: name.into(),
+                arguments,
+            })
+            .collect(),
+        stop_reason: StopReason::ToolUse,
+    }
+}
+
+#[tokio::test]
+async fn todo_write_persists_and_emits_checklist() {
+    let (state, root, cfg) = fixture_world("todo");
+    let chat = chats::create_chat(&root).unwrap();
+    let todos = json!([{ "content": "Read Thornhold", "status": "in_progress" }]);
+    let llm = MockLlm::new(vec![
+        tool_turn("todo_write", json!({ "todos": todos })),
+        final_turn("Done."),
+    ]);
+    let mut seen = Vec::new();
+    run_turn(
+        &turn_ctx(&state, &root, &cfg, &chat.id, Mode::Ask),
+        "plan it",
+        &[],
+        &llm,
+        &ScriptGate::none(),
+        &Arc::new(AtomicBool::new(false)),
+        |e| seen.push(format!("{e:?}")),
+    )
+    .await
+    .unwrap();
+    assert!(seen
+        .iter()
+        .any(|e| e.starts_with("Todos") && e.contains("Read Thornhold")));
+    let events = chats::load_chat(&root, &chat.id).unwrap();
+    assert!(events.iter().any(|e| e["type"] == "todos"));
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn ask_user_returns_answer_or_error() {
+    for (answer, expect_err) in [(Some("Option B".to_string()), false), (None, true)] {
+        let (state, root, cfg) = fixture_world(if expect_err { "ask-none" } else { "ask-some" });
+        let chat = chats::create_chat(&root).unwrap();
+        let llm = MockLlm::new(vec![
+            tool_turn(
+                "ask_user",
+                json!({ "question": "Which?", "options": ["A", "Option B"] }),
+            ),
+            final_turn("ok"),
+        ]);
+        let mut questions = 0;
+        run_turn(
+            &turn_ctx(&state, &root, &cfg, &chat.id, Mode::Ask),
+            "go",
+            &[],
+            &llm,
+            &AnswerGate(answer),
+            &Arc::new(AtomicBool::new(false)),
+            |e| {
+                if matches!(e, TurnEvent::Question { .. }) {
+                    questions += 1;
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(questions, 1);
+        let events = chats::load_chat(&root, &chat.id).unwrap();
+        let tr = events.iter().find(|e| e["type"] == "tool_result").unwrap();
+        assert_eq!(tr["is_error"], expect_err);
+        if !expect_err {
+            assert!(tr["content"].as_str().unwrap().contains("Option B"));
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+}
+
+#[tokio::test]
+async fn delegate_returns_only_the_report() {
+    let (state, root, cfg) = fixture_world("delegate");
+    let chat = chats::create_chat(&root).unwrap();
+    let llm = MockLlm::new(vec![
+        tool_turn("delegate", json!({ "task": "Who rules Thornhold?" })),
+        // worker: one read, then its report
+        tool_turn("read_page", json!({ "path": "Thornhold.md" })),
+        final_turn("Report: [[Thornhold]] is ruled by Baron Aldric."),
+        final_turn("Baron Aldric."),
+    ]);
+    let mut names = Vec::new();
+    run_turn(
+        &turn_ctx(&state, &root, &cfg, &chat.id, Mode::Ask),
+        "audit",
+        &[],
+        &llm,
+        &ScriptGate::none(),
+        &Arc::new(AtomicBool::new(false)),
+        |e| {
+            if let TurnEvent::ToolStart { name, .. } = e {
+                names.push(name);
+            }
+        },
+    )
+    .await
+    .unwrap();
+    assert!(names.contains(&"delegate".to_string()));
+    assert!(names.contains(&"delegate › read_page".to_string()));
+    let events = chats::load_chat(&root, &chat.id).unwrap();
+    let results: Vec<&Value> = events
+        .iter()
+        .filter(|e| e["type"] == "tool_result")
+        .collect();
+    assert_eq!(results.len(), 1, "worker steps stay out of the chat log");
+    assert!(results[0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("Baron Aldric"));
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn parallel_reads_keep_call_order() {
+    let (state, root, cfg) = fixture_world("parallel");
+    std::fs::write(
+        root.join("Codex/Ashfall.md"),
+        "---\nkind: place\n---\n\nAsh.\n",
+    )
+    .unwrap();
+    let chat = chats::create_chat(&root).unwrap();
+    let llm = MockLlm::new(vec![
+        multi_turn(vec![
+            ("a", "read_page", json!({ "path": "Thornhold.md" })),
+            ("b", "read_page", json!({ "path": "Ashfall.md" })),
+            ("c", "read_page", json!({ "path": "Missing.md" })),
+        ]),
+        final_turn("done"),
+    ]);
+    run_turn(
+        &turn_ctx(&state, &root, &cfg, &chat.id, Mode::Ask),
+        "read them",
+        &[],
+        &llm,
+        &ScriptGate::none(),
+        &Arc::new(AtomicBool::new(false)),
+        |_| {},
+    )
+    .await
+    .unwrap();
+    let events = chats::load_chat(&root, &chat.id).unwrap();
+    let results: Vec<(&str, bool)> = events
+        .iter()
+        .filter(|e| e["type"] == "tool_result")
+        .map(|e| {
+            (
+                e["call_id"].as_str().unwrap(),
+                e["is_error"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(results, [("a", false), ("b", false), ("c", true)]);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn unresolved_citation_raises_a_notice() {
+    let (state, root, cfg) = fixture_world("cite");
+    let chat = chats::create_chat(&root).unwrap();
+    let llm = MockLlm::new(vec![final_turn(
+        "See [[Thornhold]] and [[Castle Nowhere|the castle]].",
+    )]);
+    let mut notices = Vec::new();
+    run_turn(
+        &turn_ctx(&state, &root, &cfg, &chat.id, Mode::Ask),
+        "where?",
+        &[],
+        &llm,
+        &ScriptGate::none(),
+        &Arc::new(AtomicBool::new(false)),
+        |e| {
+            if let TurnEvent::Notice(n) = e {
+                notices.push(n);
+            }
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].contains("[[Castle Nowhere]]") && !notices[0].contains("[[Thornhold]]"));
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn page_write_with_dead_link_gets_a_link_check_note() {
+    let (state, root, cfg) = fixture_world("lint");
+    let chat = chats::create_chat(&root).unwrap();
+    let llm = MockLlm::new(vec![
+        tool_turn(
+            "create_page",
+            json!({ "path": "Keep.md", "content": "---\nkind: place\n---\n\nNear [[Nowhere Hold]] and [[Thornhold]].\n" }),
+        ),
+        final_turn("made it"),
+    ]);
+    run_turn(
+        &turn_ctx(&state, &root, &cfg, &chat.id, Mode::Ask),
+        "make Keep",
+        &[],
+        &llm,
+        &ScriptGate::new(vec![Decision::AllowOnce]),
+        &Arc::new(AtomicBool::new(false)),
+        |_| {},
+    )
+    .await
+    .unwrap();
+    let events = chats::load_chat(&root, &chat.id).unwrap();
+    let tr = events.iter().find(|e| e["type"] == "tool_result").unwrap();
+    let body = tr["content"].as_str().unwrap();
+    assert!(body.contains("Link check") && body.contains("[[Nowhere Hold]]"));
+    assert!(!body.contains("[[Thornhold]]"));
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn ext_tools_timeline_relations_history_restore_and_map_edit() {
+    use super::tools::{dispatch, gate_preview, ToolCtx};
+    let (state, root, cfg) = fixture_world("ext");
+    let vault_root = cfg.codex_dir(&root);
+    std::fs::write(
+        root.join("Codex/Siege.md"),
+        "---\nkind: event\ndate: 1374-02-12\nsummary: The siege.\nlocation: \"[[Thornhold]]\"\n---\n\nBody v1.\n",
+    )
+    .unwrap();
+    let ctx = ToolCtx {
+        state: &state,
+        world_root: &root,
+        cfg: &cfg,
+    };
+
+    let tl = dispatch(&ctx, "read_timeline", &json!({})).unwrap();
+    assert!(tl.contains("Siege") && tl.contains("1374"), "{tl}");
+    let rel = dispatch(&ctx, "read_relations", &json!({ "path": "Thornhold.md" })).unwrap();
+    assert!(
+        rel.contains("Siege.md") && rel.contains("location"),
+        "{rel}"
+    );
+
+    // history → restore
+    crate::history::record_now(&root, &vault_root, "Siege.md", "keeper").unwrap();
+    std::fs::write(
+        root.join("Codex/Siege.md"),
+        "---\nkind: event\n---\n\nBody v2.\n",
+    )
+    .unwrap();
+    let list = dispatch(&ctx, "page_history", &json!({ "path": "Siege.md" })).unwrap();
+    let ts: u64 = list
+        .split("ts ")
+        .nth(1)
+        .unwrap()
+        .split(' ')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let args = json!({ "source": "history", "path": "Siege.md", "ts": ts });
+    let card = gate_preview(&ctx, "restore_page", &args).unwrap();
+    assert!(card["new"].as_str().unwrap().contains("Body v1"));
+    dispatch(&ctx, "restore_page", &args).unwrap();
+    assert!(std::fs::read_to_string(root.join("Codex/Siege.md"))
+        .unwrap()
+        .contains("Body v1"));
+
+    // trash → restore
+    crate::trash::trash_paths(&root, &vault_root, &[("Siege.md".to_string(), false)]).unwrap();
+    let trash = dispatch(&ctx, "list_trash", &json!({})).unwrap();
+    let id = trash
+        .split("id ")
+        .nth(1)
+        .unwrap()
+        .split(' ')
+        .next()
+        .unwrap()
+        .to_string();
+    dispatch(
+        &ctx,
+        "restore_page",
+        &json!({ "source": "trash", "id": id }),
+    )
+    .unwrap();
+    assert!(root.join("Codex/Siege.md").exists());
+
+    // edit_map
+    let doc = crate::atlas::MapDoc {
+        id: "m1".into(),
+        name: "Reach".into(),
+        image: "reach.png".into(),
+        pins: vec![crate::atlas::Pin {
+            id: "p1".into(),
+            name: "Thornhold".into(),
+            kind: "place".into(),
+            x: 0.1,
+            y: 0.1,
+            page: None,
+            to: None,
+            icon: None,
+            label: None,
+        }],
+        ..Default::default()
+    };
+    crate::atlas::write_map(&root, &doc).unwrap();
+    dispatch(
+        &ctx,
+        "edit_map",
+        &json!({ "map": "Reach", "action": "move_pin", "pin": "thornhold", "x": 0.5, "y": 0.6 }),
+    )
+    .unwrap();
+    dispatch(&ctx, "edit_map", &json!({ "map": "Reach", "action": "add_region", "name": "Marches", "points": [[0.1,0.1],[0.4,0.1],[0.4,0.4]] })).unwrap();
+    dispatch(
+        &ctx,
+        "edit_map",
+        &json!({ "map": "Reach", "action": "set_scale", "width": 300, "unit": "km" }),
+    )
+    .unwrap();
+    let m = crate::atlas::read_map(&root, "m1").unwrap();
+    assert!((m.pins[0].x - 0.5).abs() < 1e-9 && m.regions.len() == 1 && m.scale.is_some());
+    assert!(dispatch(
+        &ctx,
+        "edit_map",
+        &json!({ "map": "Reach", "action": "add_region", "name": "Bad", "points": [[0.1,0.1]] })
+    )
+    .is_err());
+    dispatch(
+        &ctx,
+        "edit_map",
+        &json!({ "map": "Reach", "action": "delete_region", "region": "Marches" }),
+    )
+    .unwrap();
+    dispatch(
+        &ctx,
+        "edit_map",
+        &json!({ "map": "Reach", "action": "delete_pin", "pin": "p1" }),
+    )
+    .unwrap();
+    let m = crate::atlas::read_map(&root, "m1").unwrap();
+    assert!(m.pins.is_empty() && m.regions.is_empty());
+    std::fs::remove_dir_all(&root).ok();
+}
+
+// ── Live skill / behaviour evals (manual, not CI) ────────────────────────────
+//   CK_EVAL_PROVIDER=ollama CK_EVAL_MODEL=qwen3:8b CK_EVAL_BASE=http://127.0.0.1:11434 \
+//   cargo test -p ck-core --lib eval_ -- --ignored --nocapture
+
+fn live_resolved() -> Option<crate::llm::Resolved> {
+    let provider = std::env::var("CK_EVAL_PROVIDER").ok()?;
+    let transport = match provider.as_str() {
+        "anthropic" => crate::llm::Transport::Anthropic,
+        "ollama" => crate::llm::Transport::Ollama,
+        _ => crate::llm::Transport::OpenAiCompat,
+    };
+    Some(crate::llm::Resolved {
+        provider,
+        transport,
+        api_base: std::env::var("CK_EVAL_BASE").unwrap_or_else(|_| "http://127.0.0.1:11434".into()),
+        api_key: std::env::var("CK_EVAL_KEY").unwrap_or_default(),
+        model: std::env::var("CK_EVAL_MODEL").unwrap_or_else(|_| "qwen3:8b".into()),
+        timeout: 180,
+        needs_key: false,
+        num_ctx_max: None,
+        retries: 0,
+    })
+}
+
+/// Drive one live turn; returns (final text, tool names used).
+async fn live_turn(
+    tag: &str,
+    pages: &[(&str, &str)],
+    mode: Mode,
+    prompt: &str,
+    answer: Option<&str>,
+) -> Option<(String, Vec<String>, PathBuf)> {
+    let resolved = live_resolved()?;
+    let (state, root, cfg) = fixture_world(tag);
+    for (path, body) in pages {
+        std::fs::write(root.join("Codex").join(path), body).unwrap();
+    }
+    let chat = chats::create_chat(&root).unwrap();
+    let mut text = String::new();
+    let mut tools_used = Vec::new();
+    run_turn(
+        &turn_ctx(&state, &root, &cfg, &chat.id, mode),
+        prompt,
+        &[],
+        &RealLlm { resolved },
+        &AnswerGate(answer.map(str::to_string)),
+        &Arc::new(AtomicBool::new(false)),
+        |e| match e {
+            TurnEvent::TextDelta(t) => text.push_str(&t),
+            TurnEvent::ToolStart { name, .. } => tools_used.push(name),
+            _ => {}
+        },
+    )
+    .await
+    .unwrap();
+    Some((text, tools_used, root))
+}
+
+#[tokio::test]
+#[ignore = "needs a live LLM"]
+async fn eval_check_consistency_finds_planted_contradiction() {
+    let Some((text, tools, root)) = live_turn(
+        "eval-consistency",
+        &[
+            ("Ashfall.md", "---\nkind: place\nsummary: A mining town ruled by Mayor Brenna.\n---\n\nMayor Brenna has ruled Ashfall for twenty years.\n"),
+            ("Brenna.md", "---\nkind: npc\nsummary: Brenna, harbormaster of Saltmere.\n---\n\nBrenna has never left Saltmere and has never heard of Ashfall.\n"),
+        ],
+        Mode::ReadOnly,
+        "Use the check-consistency skill on this world and report what you find.",
+        None,
+    )
+    .await
+    else {
+        return;
+    };
+    eprintln!("tools: {tools:?}\n{text}");
+    assert!(
+        tools.iter().any(|t| t == "use_skill"),
+        "should pull the skill"
+    );
+    assert!(
+        text.contains("Brenna") && text.contains("Ashfall"),
+        "should flag the contradiction"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+#[ignore = "needs a live LLM"]
+async fn eval_ambiguous_request_uses_ask_user() {
+    let Some((text, tools, root)) = live_turn(
+        "eval-ask",
+        &[
+            ("Old Mill.md", "---\nkind: place\nsummary: A ruined mill.\n---\n\nRuined.\n"),
+            ("New Mill.md", "---\nkind: place\nsummary: A working mill.\n---\n\nBusy.\n"),
+        ],
+        Mode::Ask,
+        "Flesh out the mill. I haven't said which one — if it's unclear, ask me with ask_user before writing anything.",
+        Some("Old Mill"),
+    )
+    .await
+    else {
+        return;
+    };
+    eprintln!("tools: {tools:?}\n{text}");
+    assert!(
+        tools.iter().any(|t| t == "ask_user"),
+        "should ask, not guess"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+#[ignore = "needs a live LLM"]
+async fn eval_prepare_session_skill_writes_a_prep_page() {
+    let Some((text, tools, root)) = live_turn(
+        "eval-prep",
+        &[("Ashfall.md", "---\nkind: place\nsummary: A mining town under strain.\n---\n\nStrikes and rumours of a cave-in.\n")],
+        Mode::Yolo,
+        "Use the \"Prepare session\" skill to prepare the next session for this world.",
+        None,
+    )
+    .await
+    else {
+        return;
+    };
+    eprintln!("tools: {tools:?}\n{text}");
+    let wrote_prep = std::fs::read_dir(root.join("Codex"))
+        .unwrap()
+        .flatten()
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .any(|c| c.contains("kind: prep"));
+    assert!(wrote_prep, "should leave a kind: prep page");
+    std::fs::remove_dir_all(&root).ok();
 }

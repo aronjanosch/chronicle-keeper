@@ -78,6 +78,11 @@ pub fn router(state: AppState) -> Router {
         .route("/campaigns/:id/vault/move", post(vault::move_entry))
         .route("/campaigns/:id/vault/promote", post(vault::promote_page))
         .route("/campaigns/:id/vault/bulk", post(vault::bulk))
+        .route("/campaigns/:id/vault/replace", post(vault::replace))
+        .route(
+            "/campaigns/:id/vault/replace/undo",
+            post(vault::replace_undo),
+        )
         // trash (Phase 13D) + page history (13A) + world backup (13E)
         .route("/campaigns/:id/vault/trash", get(vault::trash_list))
         .route(
@@ -95,6 +100,11 @@ pub fn router(state: AppState) -> Router {
             post(vault::history_restore),
         )
         .route("/campaigns/:id/backup", post(vault::backup))
+        .route("/campaigns/:id/vault/export", post(vault::export_pages))
+        .route(
+            "/campaigns/:id/prefs",
+            get(vault::get_prefs).put(vault::put_prefs),
+        )
         // world packs: shareable zips of pages, templates, kinds and maps
         .route("/campaigns/:id/packs", get(packs::list))
         .route("/campaigns/:id/packs/export", post(packs::export))
@@ -163,6 +173,7 @@ pub fn router(state: AppState) -> Router {
         .route("/campaigns/:id/vault/seq", get(index::seq))
         .route("/campaigns/:id/vault/index/links", get(index::links))
         .route("/campaigns/:id/vault/diagnostics", get(index::diagnostics))
+        .route("/campaigns/:id/vault/gaps", get(index::gaps))
         .route("/campaigns/:id/vault/index/tags", get(index::tags))
         .route("/campaigns/:id/vault/relations", get(index::relations))
         .route("/campaigns/:id/vault/query", get(index::query))
@@ -196,6 +207,10 @@ pub fn router(state: AppState) -> Router {
             "/campaigns/:id/agent/chats/:cid/approve",
             post(agent::approve),
         )
+        .route(
+            "/campaigns/:id/agent/chats/:cid/answer",
+            post(agent::answer),
+        )
         .route("/campaigns/:id/agent/chats/:cid/undo", post(agent::undo))
         .route(
             "/campaigns/:id/agent/chats/:cid/attachments",
@@ -207,8 +222,15 @@ pub fn router(state: AppState) -> Router {
         )
         // the Keeper's memory + World Brief
         .route("/campaigns/:id/agent/skills", get(agent::list_skills))
-        .route("/skills", get(agent::list_skills))
-        .route("/skills/:slug", delete(agent::delete_skill))
+        .route("/skills", get(agent::list_skills).post(agent::create_skill))
+        .route(
+            "/skills/:slug",
+            get(agent::get_skill)
+                .put(agent::update_skill)
+                .delete(agent::delete_skill),
+        )
+        .route("/skills/:slug/duplicate", post(agent::duplicate_skill))
+        .route("/skills/:slug/restore", post(agent::restore_skill))
         .route("/skills/:slug/enabled", post(agent::set_skill_enabled))
         .route("/campaigns/:id/agent/memory", get(agent::list_memory))
         .route(

@@ -32,6 +32,10 @@ const DEFAULT_SKILLS: &[(&str, &str)] = &[
         include_str!("skills_default/writing-codex-syntax/SKILL.md"),
     ),
     (
+        "about-chronicle-keeper/SKILL.md",
+        include_str!("skills_default/about-chronicle-keeper/SKILL.md"),
+    ),
+    (
         "flesh-out-a-place/SKILL.md",
         include_str!("skills_default/flesh-out-a-place/SKILL.md"),
     ),
@@ -62,6 +66,38 @@ const DEFAULT_SKILLS: &[(&str, &str)] = &[
     (
         "skill-creator/SKILL.md",
         include_str!("skills_default/skill-creator/SKILL.md"),
+    ),
+    (
+        "flesh-out-a-faction/SKILL.md",
+        include_str!("skills_default/flesh-out-a-faction/SKILL.md"),
+    ),
+    (
+        "flesh-out-an-item/SKILL.md",
+        include_str!("skills_default/flesh-out-an-item/SKILL.md"),
+    ),
+    (
+        "flesh-out-a-deity/SKILL.md",
+        include_str!("skills_default/flesh-out-a-deity/SKILL.md"),
+    ),
+    (
+        "npc-voice/SKILL.md",
+        include_str!("skills_default/npc-voice/SKILL.md"),
+    ),
+    (
+        "build-encounter/SKILL.md",
+        include_str!("skills_default/build-encounter/SKILL.md"),
+    ),
+    (
+        "setup-calendar/SKILL.md",
+        include_str!("skills_default/setup-calendar/SKILL.md"),
+    ),
+    (
+        "fix-diagnostics/SKILL.md",
+        include_str!("skills_default/fix-diagnostics/SKILL.md"),
+    ),
+    (
+        "session-zero/SKILL.md",
+        include_str!("skills_default/session-zero/SKILL.md"),
     ),
 ];
 
@@ -469,6 +505,59 @@ pub fn delete(root: &Path, slug: &str) -> Result<(), String> {
     Err(format!("No skill named {slug}."))
 }
 
+/// Create from the manager UI: like `create`, but a slug held by a built-in is
+/// taken too, so "New skill" never silently shadows one.
+pub fn create_new(
+    root: &Path,
+    name: &str,
+    description: &str,
+    kinds: &[String],
+    body: Option<&str>,
+) -> Result<String, String> {
+    let slug = slugify(name);
+    if !slug.is_empty() && raw_for(root, &slug).is_some() {
+        return Err(format!("A skill named {slug} already exists."));
+    }
+    create(root, name, description, kinds, body)
+}
+
+/// Copy any skill (built-in or custom) into a new custom one under a free
+/// `<slug>-copy[-n]` slug. Returns the new slug.
+pub fn duplicate(root: &Path, slug: &str) -> Result<String, String> {
+    let cur = slugify(slug);
+    let (raw, _) = raw_for(root, &cur).ok_or_else(|| format!("No skill named {slug}."))?;
+    let p = parse(&cur, &raw);
+    let mut new_slug = format!("{cur}-copy");
+    let mut n = 2;
+    while raw_for(root, &new_slug).is_some() {
+        new_slug = format!("{cur}-copy-{n}");
+        n += 1;
+    }
+    let name = format!("{} (copy)", p.name);
+    write_user_skill(
+        root,
+        &new_slug,
+        &name,
+        &p.description,
+        &p.kinds,
+        Some(&strip_frontmatter(&raw)),
+    )?;
+    Ok(new_slug)
+}
+
+/// Drop the user's edit of a built-in so the bundled copy returns. Errors for
+/// anything that isn't an override (custom skills use `delete`).
+pub fn restore(root: &Path, slug: &str) -> Result<(), String> {
+    let cur = slugify(slug);
+    if !bundled().contains_key(&cur) {
+        return Err("Only edited built-in skills can be restored.".into());
+    }
+    if !user_skill_path(root, &cur).exists() {
+        return Ok(());
+    }
+    std::fs::remove_dir_all(root.join(&cur)).map_err(|e| format!("restore skill: {e}"))
+}
+
 /// Turn a skill on or off (membership in `.hidden`). Works for system and user
 /// skills alike.
 pub fn set_enabled(root: &Path, slug: &str, enabled: bool) -> Result<(), String> {
@@ -631,8 +720,56 @@ mod tests {
         assert!(for_kind(&root, "npc")
             .iter()
             .any(|s| s.slug == "flesh-out-a-character"));
-        assert!(for_kind(&root, "lore").is_empty());
+        assert!(for_kind(&root, "event").is_empty());
         assert!(for_kind(&root, "").is_empty());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn npc_voice_is_bundled_for_npcs_and_guards_gm_content() {
+        let root = tmp("npcvoice");
+        assert!(for_kind(&root, "npc").iter().any(|s| s.slug == "npc-voice"));
+        let body = include_str!("skills_default/npc-voice/SKILL.md");
+        assert!(body.contains("NEVER reveal") && body.contains("[!secret]"));
+        assert!(body.contains("gm_fields") && body.contains("GM ONLY"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn create_new_rejects_builtin_slug_and_duplicate_copies() {
+        let root = tmp("dup");
+        assert!(create_new(&root, "NPC voice", "d", &[], None).is_err());
+        let copy = duplicate(&root, "npc-voice").unwrap();
+        assert_eq!(copy, "npc-voice-copy");
+        let one = get_one(&root, &copy).unwrap();
+        assert_eq!(one["source"], "user");
+        assert_eq!(one["overrides_default"], false);
+        assert!(one["name"].as_str().unwrap().ends_with("(copy)"));
+        assert_eq!(duplicate(&root, "npc-voice").unwrap(), "npc-voice-copy-2");
+        assert!(duplicate(&root, "nope").is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn restore_only_for_overridden_builtins() {
+        let root = tmp("restore");
+        assert!(restore(&root, "house-rules").is_err());
+        update(
+            &root,
+            "skill-creator",
+            "Authoring a skill",
+            "mine",
+            &[],
+            "x",
+        )
+        .unwrap();
+        assert_eq!(
+            get_one(&root, "skill-creator").unwrap()["overrides_default"],
+            true
+        );
+        restore(&root, "skill-creator").unwrap();
+        assert_eq!(get_one(&root, "skill-creator").unwrap()["source"], "system");
+        restore(&root, "skill-creator").unwrap();
         std::fs::remove_dir_all(&root).ok();
     }
 }

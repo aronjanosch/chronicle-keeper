@@ -128,6 +128,36 @@ fn truncate_noted(s: &str, cap: usize) -> String {
     format!("{}\n[… truncated]", &s[..end])
 }
 
+/// Real-world date, world calendar names and Atlas maps — facts the model
+/// cannot look up with a tool cheaply and otherwise guesses.
+fn world_facts(world_root: &Path, cfg: &WorldConfig) -> String {
+    let mut s = format!(
+        "Today (real world): {}.\n",
+        chrono::Local::now().format("%Y-%m-%d")
+    );
+    if !cfg.calendar.months.is_empty() {
+        s.push_str(&format!(
+            "Calendar months: {}.\n",
+            cfg.calendar.months.join(", ")
+        ));
+    }
+    if !cfg.calendar.eras.is_empty() {
+        s.push_str(&format!(
+            "Calendar eras: {}.\n",
+            cfg.calendar.eras.join(", ")
+        ));
+    }
+    let maps = crate::atlas::list_maps(world_root).unwrap_or_default();
+    if !maps.is_empty() {
+        let list: Vec<String> = maps
+            .iter()
+            .map(|m| format!("{} ({} pins)", m.name, m.pins.len()))
+            .collect();
+        s.push_str(&format!("Atlas maps: {}.\n", list.join(", ")));
+    }
+    s
+}
+
 /// Layer 3: folder tree + page list with `summary:` one-liners (if it fits,
 /// else tree only) + recent sessions. Computed per call from files.
 pub fn digest(world_root: &Path, cfg: &WorldConfig) -> String {
@@ -136,6 +166,7 @@ pub fn digest(world_root: &Path, cfg: &WorldConfig) -> String {
 
     let mut out = String::from("## Codex digest\n\n");
     out.push_str(&format!("{} pages.\n", pages.len()));
+    out.push_str(&world_facts(world_root, cfg));
 
     let kind_of = |p: &vault::PageInfo| match p.kind.as_deref().unwrap_or("") {
         "" => String::new(),
@@ -393,6 +424,7 @@ mod tests {
         .unwrap();
         let d = digest(&root, &cfg("W"));
         assert!(d.contains("1 pages."));
+        assert!(d.contains("Today (real world): 20"));
         assert!(d.contains("Thornhold.md [place] ⚠stub — A fortified town."));
         std::fs::remove_dir_all(&root).ok();
     }

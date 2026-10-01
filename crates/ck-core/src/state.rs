@@ -111,6 +111,7 @@ pub struct AppState {
     /// Parked permission asks: request id → (chat id, decision sender).
     /// Resolved by `/approve`; drained (= denied) on abort.
     pub agent_asks: AgentAsks,
+    pub agent_questions: AgentQuestions,
     /// Live mode of an in-flight chat turn: chat id → current mode (as
     /// `Mode::to_u8`), registered by `run_turn` for its duration. `POST
     /// .../mode` flips it mid-run so the very next gate check picks up e.g. a
@@ -125,6 +126,10 @@ pub struct AppState {
     /// cancel requested, by the Cancel action or by the client disconnecting.
     pub review_jobs: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
 }
+
+/// `ask_user` parks here: question id → (chat id, answer sender).
+pub type AgentQuestions =
+    Arc<Mutex<HashMap<String, (String, tokio::sync::oneshot::Sender<String>)>>>;
 
 pub type AgentAsks =
     Arc<Mutex<HashMap<String, (String, tokio::sync::oneshot::Sender<crate::agent::Decision>)>>>;
@@ -144,6 +149,7 @@ impl AppState {
             suppress: Arc::new(Mutex::new(HashMap::new())),
             agent_runs: Arc::new(Mutex::new(HashMap::new())),
             agent_asks: Arc::new(Mutex::new(HashMap::new())),
+            agent_questions: Arc::new(Mutex::new(HashMap::new())),
             agent_modes: Arc::new(Mutex::new(HashMap::new())),
             world_writes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             review_jobs: Arc::new(Mutex::new(HashMap::new())),

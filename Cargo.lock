@@ -629,6 +629,7 @@ dependencies = [
  "bzip2",
  "chrono",
  "directories",
+ "flate2",
  "futures-util",
  "imagesize",
  "notify",

@@ -4,7 +4,7 @@ import { useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal } from '../core.js';
 import { openCampaign, refreshOnboarding, dismissOnboarding, EXAMPLE_CAMPAIGN_ID } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
-import { Icon, Sigil, Btn, Spinner, Empty } from '../ui.js';
+import { Icon, Sigil, Btn, Spinner, Empty, SearchField } from '../ui.js';
 
 function PartyAvatars({ players = [] }) {
   const cols = ['#E8DAA8', '#E5C4B5', '#C9D4B5', '#B9C7D6', '#E2C0A8'];
@@ -12,7 +12,7 @@ function PartyAvatars({ players = [] }) {
   return html`<div style=${{ display: 'flex' }}>
     ${shown.map((p, i) => html`<div key=${i} style=${{
       width: 22, height: 22, borderRadius: '50%', background: cols[i % cols.length], color: 'var(--ink)',
-      fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 9,
+      fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 11,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       border: '1.5px solid var(--surface)', marginLeft: i === 0 ? 0 : -7, position: 'relative', zIndex: 10 - i,
     }}>${(p.character_name || p.player_name || '?').slice(0, 1).toUpperCase()}</div>`)}
@@ -43,7 +43,7 @@ function GettingStarted({ store }) {
     padding: '14px 18px', marginBottom: 22, position: 'relative',
   }}>
     <div style=${{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
-      <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>Getting started</div>
+      <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-muted)' }}>Getting started</div>
       <span style=${{ flex: 1 }} />
       <${Btn} kind="ghost" size="sm" icon="x" title="Dismiss" onClick=${dismissOnboarding} />
     </div>
@@ -72,7 +72,6 @@ function CampaignCard({ c }) {
   const players = (c.players || []).filter((p) => !p.is_gm);
   const gms = c.gms?.length ? c.gms : (c.gm ? [c.gm] : []);
   const next = c.next_session_number || 1;
-  const isExample = c.campaign_id === EXAMPLE_CAMPAIGN_ID;
   return html`<div onClick=${() => openCampaign(c.campaign_id)} style=${{
     background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8,
     padding: 18, display: 'flex', flexDirection: 'column', gap: 14,
@@ -81,17 +80,13 @@ function CampaignCard({ c }) {
     onMouseEnter=${(e) => { e.currentTarget.style.borderColor = 'var(--rule-strong)'; }}
     onMouseLeave=${(e) => { e.currentTarget.style.borderColor = 'var(--rule)'; }}>
     <div style=${{ position: 'absolute', left: 0, top: 14, bottom: 14, width: 3, background: `var(--${c.tone})`, borderRadius: '0 2px 2px 0', opacity: 0.85 }} />
-    ${isExample && html`<div title="A sample chronicle — explore it, then delete it whenever you're ready." style=${{
-      position: 'absolute', right: 12, top: 12, fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',
-      padding: '2px 7px', borderRadius: 999, background: 'var(--paper-deep)', border: '1px solid var(--rule)', color: 'var(--ink-muted)',
-    }}>Example</div>`}
     <div style=${{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
       <${Sigil} ch=${c.sigil} tone=${c.tone} size="lg" />
       <div style=${{ flex: 1, minWidth: 0 }}>
-        <div style=${{ fontFamily: 'var(--font-display)', fontSize: 19, fontWeight: 500, color: 'var(--ink)', lineHeight: 1.2, letterSpacing: '-0.01em' }}>${c.name}</div>
-        <div style=${{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style=${{ fontFamily: 'var(--font-display)', fontSize: 19, fontWeight: 500, color: 'var(--ink)', lineHeight: 1.2, letterSpacing: '-0.01em', height: '2.4em', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>${c.name}</div>
+        <div title=${[c.system, c.setting].filter(Boolean).join(' · ')} style=${{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           <span>${c.system || 'System —'}</span>
-          ${c.setting && html`<span style=${{ color: 'var(--ink-ghost)' }}>·</span><span style=${{ fontStyle: 'italic', fontFamily: 'var(--font-display)' }}>${c.setting}</span>`}
+          ${c.setting && html`<span style=${{ color: 'var(--ink-muted)' }}> · </span><span style=${{ fontStyle: 'italic', fontFamily: 'var(--font-display)' }}>${c.setting}</span>`}
         </div>
       </div>
     </div>
@@ -103,7 +98,7 @@ function CampaignCard({ c }) {
     </div>
     <div style=${{ height: 1, background: 'var(--rule-soft)' }} />
     <div style=${{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 12, color: 'var(--ink-muted)' }}>
-      <span>Next session <b style=${{ color: 'var(--ink)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>#${next}</b></span>
+      <span>Next session <b class="ck-num" style=${{ color: 'var(--ink)', fontWeight: 600 }}>#${next}</b></span>
       <span style=${{ flex: 1 }} />
       <${Icon} name="chev-r" size=${12} />
     </div>
@@ -117,18 +112,12 @@ export function LibraryScreen({ store }) {
 
   return html`<${Shell}
     sidebar=${html`<${Sidebar} variant="library" active="worlds" />`}
-    topbar=${html`<${Topbar} crumbs=${['Library', 'Worlds']} right=${html`
-      <div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 4, color: 'var(--ink-muted)', fontSize: 12.5, minWidth: 220 }}>
-          <${Icon} name="search" size=${13} />
-          <input value=${q} onInput=${(e) => setQ(e.target.value)} placeholder="Search worlds…"
-            style=${{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 12.5, color: 'var(--ink)' }} />
-        </div>
-        ${newBtn}
-      </div>`} />`}
+    topbar=${html`<${Topbar} title="Worlds"
+      searchNode=${html`<${SearchField} value=${q} onInput=${setQ} placeholder="Search worlds…" count=${q ? `${campaigns.length} of ${store.campaigns.length}` : undefined} style=${{ width: 'min(100%, 340px)' }} />`}
+      primary=${newBtn} />`}
   >
     <div style=${{ marginBottom: 22 }}>
-      <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 4 }}>Welcome back</div>
+      <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)', marginBottom: 4 }}>Welcome back</div>
       <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 500, letterSpacing: '-0.02em', lineHeight: 1.1, color: 'var(--ink)' }}>
         Your <em style=${{ fontStyle: 'italic', color: 'var(--burgundy)' }}>chronicles</em>
       </h1>
@@ -145,11 +134,11 @@ export function LibraryScreen({ store }) {
       ? html`<div style=${{ display: 'flex', justifyContent: 'center', padding: 60 }}><${Spinner} size=${22} /></div>`
       : html`<div style=${{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
           ${campaigns.map((c) => html`<${CampaignCard} key=${c.campaign_id} c=${c} />`)}
-          <div onClick=${() => navigate('newWorld')} style=${{
+          ${store.campaigns.length === 0 && html`<div onClick=${() => navigate('newWorld')} style=${{
             background: 'transparent', border: '1.5px dashed var(--rule-strong)', borderRadius: 8, padding: 24,
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10,
             minHeight: 160, color: 'var(--ink-muted)', cursor: 'pointer',
-            gridColumn: campaigns.length % 2 === 0 ? 'span 2' : 'auto',
+            gridColumn: 'span 2',
           }}>
             <div style=${{ width: 40, height: 40, borderRadius: 6, background: 'var(--paper-deep)', border: '1px solid var(--rule)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--burgundy)' }}>
               <${Icon} name="plus" size=${18} />
@@ -158,7 +147,7 @@ export function LibraryScreen({ store }) {
             <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', fontStyle: 'italic', fontFamily: 'var(--font-display)', textAlign: 'center' }}>
               Name the world, the system, the setting, the company that will tell it.
             </div>
-          </div>
+          </div>`}
         </div>`}
   </${Shell}>`;
 }

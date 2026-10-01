@@ -419,6 +419,32 @@ export function Select({ value, onChange, options, style = {} }) {
   </select>`;
 }
 
+// ── SearchField — the one 32px search input (topbar, panels, lists) ──
+// `hint` (e.g. "⌘K") shows only while empty; Esc clears, then blurs. With
+// `onFocusOpen` the field is a launcher (readOnly, click opens a palette).
+export function SearchField({ value = '', onInput, placeholder = 'Search', hint, count, autoFocus, onFocusOpen, onKeyDown, inputRef, style = {} }) {
+  const own = useRef(null);
+  const ref = inputRef || own;
+  const has = !!value;
+  return html`<div class="ck-search" style=${style}>
+    <${Icon} name="search" size=${13} className="ck-ink-muted" />
+    <input ref=${ref} value=${value} placeholder=${placeholder} autoFocus=${autoFocus}
+      readOnly=${!!onFocusOpen} style=${onFocusOpen ? { cursor: 'pointer' } : undefined}
+      onMouseDown=${onFocusOpen ? (e) => { e.preventDefault(); onFocusOpen(); } : undefined}
+      onInput=${(e) => onInput && onInput(e.target.value)}
+      onKeyDown=${(e) => {
+        if (e.key === 'Escape') {
+          if (has) { e.preventDefault(); e.stopPropagation(); onInput && onInput(''); } else e.currentTarget.blur();
+        }
+        onKeyDown && onKeyDown(e);
+      }} />
+    ${count != null && has && html`<span class="ck-search-count">${count}</span>`}
+    ${has && !onFocusOpen && html`<button type="button" class="ck-search-clear" title="Clear" aria-label="Clear search"
+      onClick=${() => { onInput && onInput(''); ref.current?.focus(); }}><${Icon} name="x" size=${11} /></button>`}
+    ${!has && hint && html`<span class="ck-search-hint">${hint}</span>`}
+  </div>`;
+}
+
 // ── Card + chrome header ──────────────────────────────────────────
 export function Card({ title, sub, right, children, bodyPad = true, style = {} }) {
   return html`<div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden', ...style }}>

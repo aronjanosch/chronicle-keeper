@@ -379,18 +379,7 @@ export function splitPageRef(ref) {
 export function slugify(v) {
   return String(v).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
 }
-export function fmtDate(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-}
-export function fmtDateTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
+export { fmtDate, fmtDateTime, fmtInWorld } from './dates.js';
 // stable tone from a string — for sigils that have no assigned colour
 const TONES = ['burgundy', 'moss', 'blue', 'ochre', 'gilt'];
 export function toneFor(str) {

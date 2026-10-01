@@ -38,7 +38,7 @@ function Chip({ active, onClick, children, icon }) {
 
 function FacetRow({ label, children }) {
   return html`<div style=${{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
-    <div style=${{ flex: '0 0 64px', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ink-faint)', paddingTop: 5 }}>${label}</div>
+    <div style=${{ flex: '0 0 64px', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ink-faint)', paddingTop: 5 }}>${label}</div>
     <div style=${{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 6 }}>${children}</div>
   </div>`;
 }
@@ -119,7 +119,7 @@ export function SearchScreen() {
 
   return html`<${Shell} sidebar=${sidebar} topbar=${topbar} bodyStyle=${{ padding: 0 }}>
     <div style=${{ height: '100%', overflow: 'auto', padding: '22px 26px', maxWidth: 860, margin: '0 auto', minWidth: 0 }}>
-      <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)' }}>Search the world</div>
+      <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)' }}>Search the world</div>
       <h2 style=${{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 500, letterSpacing: '-0.015em', margin: '2px 0 16px' }}>Full-text search</h2>
 
       <div style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--surface-raised)', border: '1px solid var(--rule)', borderRadius: 10, marginBottom: 16 }}>
@@ -192,7 +192,7 @@ export function SearchScreen() {
                         <${Icon} name=${iconForKind(h.kind)} size=${13} className="ck-ink-muted" />
                         <span style=${{ fontFamily: 'var(--font-display)', fontSize: 14.5, fontWeight: 500, color: 'var(--ink)' }}>${h.title}</span>
                         <span style=${{ flex: 1 }} />
-                        <span style=${{ fontSize: 10.5, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style=${{ fontSize: 11, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', display: 'flex', alignItems: 'center', gap: 4 }}>
                           <${Icon} name="folder" size=${10} />${dirOf(h.path) || 'root'}
                         </span>
                       </div>
@@ -207,7 +207,7 @@ export function SearchScreen() {
                         <${Icon} name=${scope === 'transcripts' ? 'mic' : 'scroll'} size=${13} className="ck-ink-muted" />
                         <span style=${{ fontFamily: 'var(--font-display)', fontSize: 14.5, fontWeight: 500, color: 'var(--ink)' }}>Session ${h.session}${h.title ? ` — ${h.title}` : ''}</span>
                         <span style=${{ flex: 1 }} />
-                        ${h.turn != null && html`<span style=${{ fontSize: 10.5, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>turn ${h.turn}</span>`}
+                        ${h.turn != null && html`<span style=${{ fontSize: 11, color: 'var(--ink-faint)', fontVariantNumeric: 'tabular-nums' }}>turn ${h.turn}</span>`}
                       </div>
                       ${h.snippet && html`<div style=${{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 5, lineHeight: 1.5 }}
                         dangerouslySetInnerHTML=${{ __html: h.snippet }} />`}

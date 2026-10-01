@@ -220,6 +220,12 @@ pub fn notice_event(message: &str) -> Value {
     json!({ "type": "notice", "message": message, "at": crate::store::now() })
 }
 
+/// The Keeper's `todo_write` checklist. UI-only, skipped on replay (the model
+/// sees its own tool call); the last one in the log is the current list.
+pub fn todos_event(todos: &Value) -> Value {
+    json!({ "type": "todos", "items": todos, "at": crate::store::now() })
+}
+
 pub fn aborted_event() -> Value {
     json!({ "type": "aborted", "at": crate::store::now() })
 }

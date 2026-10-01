@@ -4,7 +4,7 @@
 // different calendars, so they don't mix. Sessions with a `world_date` in
 // session.toml also appear on the World lane as `session:<id>` entries.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, useStore, apiFetch, openModal } from '../core.js';
+import { navigate, useStore, apiFetch, openModal, fmtDate, fmtInWorld } from '../core.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Empty, Btn, useAsset } from '../ui.js';
 import { refreshCampaignSessions, loadSession, loadVaultTree } from '../actions.js';
@@ -139,7 +139,7 @@ function EventItem({ ev, cid, gap }) {
   const open = () => (isSession ? loadSession(ev.path.slice(8)) : navigate('page', { path: ev.path }));
   const dur = durationLabel(ev);
   const when = ev.display
-    ? `${ev.display}${ev.end_display ? ` → ${ev.end_display}` : ''}${dur ? ` (${dur})` : ''}`
+    ? fmtInWorld(`${ev.display}${ev.end_display ? ` → ${ev.end_display}` : ''}${dur ? ` (${dur})` : ''}`)
     : (ev.order != null ? `seq ${ev.order}` : '');
   return html`<div>
     ${gap && html`<div style=${{ fontSize: 11, fontStyle: 'italic', color: 'var(--ink-faint)', margin: '0 0 6px 2px' }}>
@@ -155,9 +155,9 @@ function EventItem({ ev, cid, gap }) {
               <${Icon} name=${isSession ? 'mic' : iconForKind(ev.kind)} size=${14} />
             </span>
             <span style=${{ fontSize: 14.5, fontWeight: 500, color: 'var(--ink)' }}>${ev.title}</span>
-            ${ev.gm_only && html`<span style=${{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.06em', padding: '1px 6px', borderRadius: 3, background: 'var(--paper-deep)', border: '1px solid var(--rule)', color: 'var(--ink-muted)' }}>GM</span>`}
+            ${ev.gm_only && html`<span style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', padding: '1px 6px', borderRadius: 3, background: 'var(--paper-deep)', border: '1px solid var(--rule)', color: 'var(--ink-muted)' }}>GM</span>`}
           </div>
-          ${when && html`<div style=${{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-faint)', marginTop: 3 }}>${when}</div>`}
+          ${when && html`<div style=${{ fontSize: 11, fontVariantNumeric: 'tabular-nums', color: 'var(--ink-faint)', marginTop: 3 }}>${when}</div>`}
           ${ev.summary && html`<div style=${{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 5, maxWidth: 560 }}>${ev.summary}</div>`}
           ${(ev.links || []).length > 0 && html`<${LinkChips} links=${ev.links} />`}
         </div>
@@ -235,8 +235,8 @@ function SessionLane({ sessions }) {
             <span style=${{ color: 'var(--burgundy)', display: 'inline-flex' }}><${Icon} name="mic" size=${14} /></span>
             <span style=${{ fontSize: 14.5, fontWeight: 500, color: 'var(--ink)' }}>${s.title || 'Untitled session'}</span>
           </div>
-          <div style=${{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-faint)', marginTop: 3 }}>
-            ${s.date || 'no date'} · session ${String(s.session_number || 0).padStart(2, '0')}
+          <div style=${{ fontSize: 11, fontVariantNumeric: 'tabular-nums', color: 'var(--ink-muted)', marginTop: 3 }}>
+            ${fmtDate(s.date) || 'no date'} · session ${String(s.session_number || 0).padStart(2, '0')}
           </div>
         </div>
       </div>

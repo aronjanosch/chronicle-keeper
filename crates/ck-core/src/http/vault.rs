@@ -551,6 +551,64 @@ pub async fn bulk(
     Ok(Json(json!({ "done": done, "errors": errors })))
 }
 
+// ── World-wide find & replace (Phase 33B) ─────────────────────────
+
+#[derive(Deserialize)]
+pub struct ReplaceRequest {
+    #[serde(flatten)]
+    pub options: crate::replace::Options,
+    #[serde(default = "default_true")]
+    pub dry_run: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+pub async fn replace(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<ReplaceRequest>,
+) -> AppResult<Json<Value>> {
+    let root = vault_root(&state, &campaign_id)?;
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    if req.dry_run {
+        let plan = crate::replace::plan(&world_root, &root, &req.options)?;
+        return Ok(Json(
+            json!({ "dry_run": true, "total": plan.total, "files": plan.files }),
+        ));
+    }
+    let done = crate::replace::apply(&world_root, &root, &req.options)?;
+    for page in &done.pages {
+        reindex_page(&state, &root, page);
+    }
+    Ok(Json(json!({
+        "dry_run": false,
+        "id": done.id,
+        "files": done.files,
+        "replaced": done.replaced,
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct ReplaceUndoRequest {
+    pub id: String,
+}
+
+pub async fn replace_undo(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<ReplaceUndoRequest>,
+) -> AppResult<Json<Value>> {
+    let root = vault_root(&state, &campaign_id)?;
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    let pages = crate::replace::undo(&world_root, &root, &req.id)?;
+    for page in &pages {
+        reindex_page(&state, &root, page);
+    }
+    Ok(Json(json!({ "ok": true, "pages": pages.len() })))
+}
+
 // ── World backup (Phase 13E) ──────────────────────────────────────
 
 pub async fn backup(
@@ -1074,4 +1132,62 @@ pub async fn promote_page(
         }
     }
     Ok(Json(vault::read_page(&root, &path)?))
+}
+
+#[derive(Deserialize)]
+pub struct ExportPagesRequest {
+    /// "page" | "folder"
+    pub scope: String,
+    #[serde(default)]
+    pub path: String,
+    /// "pdf" | "markdown" | "html"
+    pub format: String,
+    #[serde(default)]
+    pub leave_out_gm: bool,
+}
+
+// Page/folder export into `<world>/Exports/` (PDF, Markdown or HTML).
+pub async fn export_pages(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<ExportPagesRequest>,
+) -> AppResult<Json<Value>> {
+    let format = crate::page_export::Format::parse(&req.format)?;
+    let vault_dir = vault_root(&state, &campaign_id)?;
+    let (world_root, cfg) = world_cfg(&state, &campaign_id)?;
+    let out = tokio::task::spawn_blocking(move || {
+        crate::page_export::export(
+            &vault_dir,
+            &world_root,
+            &req.scope,
+            &req.path,
+            format,
+            req.leave_out_gm,
+            &cfg.name,
+        )
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.into()))??;
+    Ok(Json(serde_json::to_value(out).unwrap()))
+}
+
+// Pinned pages + dismissed "Unfinished" rows (`.ck/prefs.json`).
+pub async fn get_prefs(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let (root, _) = world_cfg(&state, &campaign_id)?;
+    Ok(Json(
+        serde_json::to_value(crate::world_prefs::read(&root)).unwrap(),
+    ))
+}
+
+pub async fn put_prefs(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+    Json(req): Json<crate::world_prefs::WorldPrefs>,
+) -> AppResult<Json<Value>> {
+    let (root, _) = world_cfg(&state, &campaign_id)?;
+    let saved = crate::world_prefs::write(&root, req)?;
+    Ok(Json(serde_json::to_value(saved).unwrap()))
 }

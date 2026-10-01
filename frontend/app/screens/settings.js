@@ -1,7 +1,7 @@
 // Screen 08 — Settings. Calm single page, grouped into cards. Real config.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
-import { store, setOp, openModal } from '../core.js';
-import { loadConfig, saveConfig, loadLlmProviders, loadPromptTemplates, deletePromptTemplate, restorePromptDefaults, pingLlmProvider, revealPath, loadFoundrySettings, saveFoundrySettings, testFoundry, syncFoundry, loadSkills, deleteSkill, setSkillEnabled, loadAsrProviders } from '../actions.js';
+import { store, setOp, openModal, setState, navigate } from '../core.js';
+import { loadConfig, saveConfig, loadLlmProviders, loadPromptTemplates, deletePromptTemplate, restorePromptDefaults, pingLlmProvider, revealPath, loadFoundrySettings, saveFoundrySettings, testFoundry, syncFoundry, loadAsrProviders } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Btn } from '../ui.js';
 
@@ -38,7 +38,7 @@ function ProviderCard({ p, live }) {
     <div style=${{ flex: 1, minWidth: 0 }}>
       <div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style=${{ fontSize: 13.5, fontWeight: 500, color: 'var(--ink)' }}>${p.name}</span>
-        ${isDefault && html`<span style=${{ padding: '2px 6px', borderRadius: 999, background: 'var(--burgundy-50)', color: 'var(--burgundy-700)', fontSize: 10, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', border: '1px solid rgba(122,46,31,.2)' }}>Default</span>`}
+        ${isDefault && html`<span style=${{ padding: '2px 6px', borderRadius: 999, background: 'var(--burgundy-50)', color: 'var(--burgundy-700)', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', border: '1px solid rgba(122,46,31,.2)' }}>Default</span>`}
       </div>
       <div style=${{ fontSize: 11.5, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>${model}</div>
     </div>
@@ -56,7 +56,7 @@ function TemplateRow({ t, onDelete }) {
     <div style=${{ flex: 1, minWidth: 0 }}>
       <div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style=${{ fontSize: 13.5, fontWeight: 500, color: 'var(--ink)' }}>${t.label}</span>
-        ${t.builtin && html`<span style=${{ padding: '2px 6px', borderRadius: 999, background: 'var(--paper-deep)', color: 'var(--ink-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', border: '1px solid var(--rule-soft)' }}>Built-in</span>`}
+        ${t.builtin && html`<span style=${{ padding: '2px 6px', borderRadius: 999, background: 'var(--paper-deep)', color: 'var(--ink-muted)', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', border: '1px solid var(--rule-soft)' }}>Built-in</span>`}
       </div>
       <div style=${{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>${(t.text || '').slice(0, 80)}</div>
     </div>
@@ -92,55 +92,14 @@ function TemplatesCard() {
   </${SettingsCard}>`;
 }
 
-function skillBadge(s) {
-  if (s.source !== 'user') return { label: 'Built-in', title: 'Bundled with the app.' };
-  if (s.overrides_default) return { label: 'Modified', title: 'Your edit of a built-in — delete to restore the default.' };
-  return { label: 'Custom', title: 'Authored in this library.' };
-}
-
-function SkillRow({ s, onToggle, onDelete }) {
-  const off = s.enabled === false;
-  const badge = skillBadge(s);
-  const userOwned = s.source === 'user';
-  return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--rule-soft)', borderRadius: 6, opacity: off ? 0.55 : 1 }}>
-    <${Icon} name="sparkle" size=${12} className="ck-muted" />
-    <span style=${{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', flex: '0 0 auto' }}>${s.name}</span>
-    <span title=${badge.title} style=${{ padding: '1px 6px', borderRadius: 999, background: 'var(--paper-deep)', color: 'var(--ink-muted)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', border: '1px solid var(--rule-soft)' }}>${badge.label}</span>
-    ${(s.kinds || []).map((k) => html`<span key=${k} style=${{ padding: '1px 6px', borderRadius: 999, background: 'var(--paper-deep)', color: 'var(--ink-muted)', fontSize: 10, fontFamily: 'var(--font-mono)', border: '1px solid var(--rule-soft)' }}>${k}</span>`)}
-    <span style=${{ flex: 1, minWidth: 0, fontSize: 11.5, color: 'var(--ink-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>${s.description || ''}</span>
-    <${Btn} kind="ghost" size="sm" onClick=${onToggle}>${off ? 'Enable' : 'Disable'}</${Btn}>
-    ${userOwned && html`<${Btn} kind="ghost" size="sm" icon=${s.overrides_default ? 'undo' : 'trash'} title=${s.overrides_default ? 'Restore the built-in' : 'Delete'} onClick=${onDelete} />`}
-  </div>`;
-}
-
 function SkillsCard() {
-  useEffect(() => { loadSkills(null, true); }, []);
-  const skills = store.keeperSkills || [];
-  function toggle(s) {
-    setSkillEnabled(s.slug, s.enabled === false)
-      .then(() => setOp(s.enabled === false ? 'Skill enabled' : 'Skill disabled', 'done'))
-      .catch((e) => setOp(e.message, 'err'));
-  }
-  function del(s) {
-    const restore = s.overrides_default;
-    openModal('confirm', {
-      title: restore ? 'Restore built-in skill' : 'Delete skill',
-      message: restore
-        ? html`Discard your edits to ${html`<strong>${s.name}</strong>`} and restore the built-in version?`
-        : html`Delete the skill ${html`<strong>${s.name}</strong>`}? This removes it for good.`,
-      confirmLabel: restore ? 'Restore' : 'Delete',
-      onConfirm: () => deleteSkill(s.slug).then(() => setOp(restore ? 'Built-in restored' : 'Skill deleted', 'done')).catch((e) => setOp(e.message, 'err')),
-    });
-  }
-  return html`<${SettingsCard} icon="sparkle" title="Keeper skills" desc="References the Keeper pulls on demand — system rules, house rules, prep workflows, lore conventions. Ask the Keeper to make or edit one (“save that as a skill”); shared by every world.">
-    <div style=${{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 12 }}>
-      ${skills.length
-        ? skills.map((s) => html`<${SkillRow} key=${s.slug} s=${s} onToggle=${() => toggle(s)} onDelete=${() => del(s)} />`)
-        : html`<div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', padding: '8px 0' }}>No skills yet — ask the Keeper to author one.</div>`}
+  const cid = store.campaign?.campaign_id;
+  return html`<${SettingsCard} icon="sparkle" title="Keeper skills" desc="Skills now live in The Keeper → Skills: browse, enable, write, edit and duplicate them there. They are shared by every world.">
+    <div style=${{ paddingTop: 12 }}>
+      <${Btn} kind="secondary" size="sm" icon="feather" disabled=${!cid}
+        title=${cid ? '' : 'Open a world first'}
+        onClick=${() => { setState({ keeperTab: 'skills' }); navigate('keeper'); }}>Manage skills</${Btn}>
     </div>
-    ${store.skillsPath && window.__TAURI__ && html`<div style=${{ marginTop: 12 }}>
-      <${Btn} kind="ghost" size="sm" icon="folder" onClick=${() => revealPath(store.skillsPath)}>Open folder</${Btn}>
-    </div>`}
   </${SettingsCard}>`;
 }
 

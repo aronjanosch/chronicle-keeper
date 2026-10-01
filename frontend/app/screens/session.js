@@ -167,7 +167,7 @@ function ArtifactList({ kind, items }) {
         <${Icon} name=${kind === 'transcripts' ? 'doc' : 'feather'} size=${13} className="ck-ink-muted" />
         <div style=${{ flex: 1, minWidth: 0 }}>
           <div style=${{ fontSize: 12.5, color: 'var(--ink)' }}>${a.provider} / ${a.model}</div>
-          <div style=${{ fontSize: 11, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>${fmtDateTime(a.created_at)}</div>
+          <div style=${{ fontSize: 11, color: 'var(--ink-muted)', fontVariantNumeric: 'tabular-nums' }}>${fmtDateTime(a.created_at)}</div>
         </div>
         <${Btn} kind="ghost" size="sm" icon="eye" onClick=${async () => {
           try { openModal('viewer', { title: `${a.provider} / ${a.model}`, text: await artifactContent(kind, a.id) }); } catch (e) { openModal('viewer', { title: 'Error', text: e.message }); }
@@ -332,12 +332,12 @@ export function SessionScreen({ store }) {
     <div style=${{ display: 'flex', alignItems: 'flex-start', gap: 20, marginBottom: 22 }}>
       <div style=${{ width: 64, height: 64, flex: '0 0 auto', background: 'var(--burgundy-50)', color: 'var(--burgundy-700)', borderRadius: 8, border: '1px solid rgba(122,46,31,.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)' }}>
         <div style=${{ textAlign: 'center', lineHeight: 1 }}>
-          <div style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase' }}>Session</div>
+          <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Session</div>
           <div style=${{ fontSize: 24, fontWeight: 500, marginTop: 4 }}>${cam.session_number || '?'}</div>
         </div>
       </div>
       <div style=${{ flex: 1 }}>
-        <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${c?.name || 'Chronicle'}</div>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${c?.name || 'Chronicle'}</div>
         <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, letterSpacing: '-0.015em', color: 'var(--ink)', lineHeight: 1.15, marginTop: 2 }}>
           ${cam.title || html`<span style=${{ fontStyle: 'italic', color: 'var(--ink-muted)' }}>Untitled session</span>`}
         </h1>
@@ -363,7 +363,7 @@ export function SessionScreen({ store }) {
             <${Icon} name="users" size=${13} className="ck-ink-muted" />
             <h3 style=${{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 500 }}>At the table</h3>
             <span style=${{ flex: 1 }} />
-            <span style=${{ fontSize: 11, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>${speakers.length}/${tracks.length || speakers.length}</span>
+            <span style=${{ fontSize: 11, color: 'var(--ink-faint)', fontVariantNumeric: 'tabular-nums' }}>${speakers.length}/${tracks.length || speakers.length}</span>
           </div>
           <div style=${{ padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
             ${speakers.length

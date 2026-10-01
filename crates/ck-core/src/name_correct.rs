@@ -244,6 +244,10 @@ impl Vocabulary {
         for &i in self.buckets.get(&(window.len(), first))? {
             let e = &self.entries[i];
             let e_flat = e.norm.replace(' ', "");
+            // "Gasthauses" is the genitive of the page "Gasthaus", not a mishearing
+            if flat.starts_with(&e_flat) && flat.chars().count() - e_flat.chars().count() <= 3 {
+                continue;
+            }
             let edits = levenshtein(&e_flat, &flat);
             let long = e_flat.chars().count() >= LONG_NAME;
             let ok = if long {
@@ -251,7 +255,13 @@ impl Vocabulary {
                     && edits <= MAX_EDITS.min(e_flat.chars().count() / 4)
                     && jaro_winkler(&e.key, &key) >= CLOSE_PHONETIC
             } else {
-                mid_capitalized && e.strict == strict && edits <= MAX_EDITS
+                mid_capitalized
+                    && edits <= MAX_EDITS
+                    && (e.strict == strict
+                        || (edits == 1
+                            && e_flat.chars().count() >= 5
+                            && e_flat.chars().count().abs_diff(flat.chars().count()) == 1
+                            && e.key == key))
             };
             if !ok {
                 continue;
@@ -332,6 +342,15 @@ impl Vocabulary {
                     // two edits away is only trusted when the same mishearing repeats
                     let phrase = text[spans[i].0..spans[i + k - 1].1].to_lowercase();
                     if edits >= 2 && lower.matches(&phrase).count() < 2 {
+                        continue;
+                    }
+                    // a changed short word in a phrase ("Türe" → "Tore") is another word, not a mishearing
+                    if k > 1
+                        && window
+                            .iter()
+                            .zip(e.norm.split(' '))
+                            .any(|(w, n)| norm_word(w) != n && n.chars().count() < MIN_WINDOW_LEN)
+                    {
                         continue;
                     }
                     let (from_start, to_end) = (spans[i].0, spans[i + k - 1].1);
@@ -504,6 +523,31 @@ mod tests {
         let v = vocab(&["Ælfric", "Mörwen"]);
         let (t, _) = v.correct("[Anna]\nDa kam Morven und sagte etwas.");
         assert_eq!(t, "[Anna]\nDa kam Mörwen und sagte etwas.");
+    }
+
+    #[test]
+    fn inflected_forms_of_a_name_are_left_alone() {
+        let v = vocab(&["Gasthaus", "Krankenstation"]);
+        let text = "Im Gasthauses-Keller, vor dem Gasthauses, in Krankenstationen.";
+        let (t, fixes) = v.correct(text);
+        assert_eq!(t, text);
+        assert!(fixes.is_empty());
+    }
+
+    #[test]
+    fn changed_short_words_in_a_phrase_are_not_mishearings() {
+        let v = vocab(&["Die Tore"]);
+        let text = "Du siehst die Türe. Dann die Türe wieder.";
+        let (t, fixes) = v.correct(text);
+        assert_eq!(t, text);
+        assert!(fixes.is_empty());
+    }
+
+    #[test]
+    fn a_dropped_vowel_in_a_short_name_is_fixed_but_a_swapped_one_is_not() {
+        let v = vocab(&["Dagoon", "Rigel", "Zange"]);
+        let (t, _) = v.correct("Dann kam Dagon und die Regel, mit Zunge.");
+        assert_eq!(t, "Dann kam Dagoon und die Regel, mit Zunge.");
     }
 
     #[test]

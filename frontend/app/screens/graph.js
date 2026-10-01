@@ -223,7 +223,7 @@ export function GraphScreen() {
               title=${centerNode.title}>${centerNode.title}</span>
               <span style=${{ display: 'flex', alignItems: 'center', gap: 3 }}>
                 <button title="Fewer hops" disabled=${depth <= 1} onClick=${() => setDepth((d) => Math.max(1, d - 1))} style=${ctlBtn}>−</button>
-                <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, minWidth: 46, textAlign: 'center' }}>${depth} hop${depth > 1 ? 's' : ''}</span>
+                <span style=${{ fontVariantNumeric: 'tabular-nums', fontSize: 11, minWidth: 46, textAlign: 'center' }}>${depth} hop${depth > 1 ? 's' : ''}</span>
                 <button title="More hops" disabled=${depth >= MAX_DEPTH} onClick=${() => setDepth((d) => Math.min(MAX_DEPTH, d + 1))} style=${ctlBtn}>+</button>
               </span>`}
             <span style=${{ width: 1, height: 14, background: 'var(--rule-soft)' }} />
@@ -234,14 +234,14 @@ export function GraphScreen() {
                 if (e.key === 'Escape') setQuery('');
               }}
               style=${{ background: 'none', border: 'none', outline: 'none', fontSize: 12.5, color: 'var(--ink)', width: 130, fontFamily: 'inherit' }} />
-            ${matches && html`<span style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, color: matches.size ? 'var(--ochre)' : 'var(--ink-faint)' }}>
+            ${matches && html`<span style=${{ fontVariantNumeric: 'tabular-nums', fontSize: 11, color: matches.size ? 'var(--ochre)' : 'var(--ink-faint)' }}>
               ${matches.size ? `${matches.size} ⏎` : 'no match'}
             </span>`}
             ${predicates.length > 0 && html`<span style=${{ width: 1, height: 14, background: 'var(--rule-soft)' }} />
               <${Presets} onApply=${applyPreset} />`}
           </div>
           <${Controls} api=${apiRef} />
-          <div style=${{ position: 'absolute', right: 14, bottom: 12, fontSize: 10.5, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>
+          <div style=${{ position: 'absolute', right: 14, bottom: 12, fontSize: 11, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>
             click select · double-click open · drag moves
           </div>
           <${Legend} hiddenKinds=${hiddenKinds} onToggleKind=${toggleKind}

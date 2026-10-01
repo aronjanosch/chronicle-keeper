@@ -1,6 +1,7 @@
 // All data operations. Thin wrappers over the HTTP client that update the store.
 // Ported 1:1 from the legacy app.js so the backend contract is unchanged.
 import { store, setState, setOp, bump, navigate, apiFetch, apiJson, apiText, apiStream, apiUrl, slugify, toneFor, initials, loadWorldTabs, remapTabs, pruneTabs } from './core.js';
+import { togglePinned, movePinned, remapPaths } from './worldPrefs.js';
 
 // ── Campaigns ─────────────────────────────────────────────────────
 export async function loadCampaigns() {
@@ -93,6 +94,22 @@ export async function loadGenrePacks() {
 }
 
 // mode 'preview' reports what would change without writing.
+// World-wide find & replace. dry_run = true lists hits without touching files.
+export async function replaceInWorld(opts, dryRun = true) {
+  const id = store.campaign.campaign_id;
+  const r = await apiJson(`/campaigns/${id}/vault/replace`, 'POST', { ...opts, dry_run: dryRun });
+  if (!dryRun) { await loadVaultTree(id); bump('vault'); }
+  return r;
+}
+
+export async function undoReplace(replaceId) {
+  const id = store.campaign.campaign_id;
+  const r = await apiJson(`/campaigns/${id}/vault/replace/undo`, 'POST', { id: replaceId });
+  await loadVaultTree(id);
+  bump('vault');
+  return r;
+}
+
 export async function applyGenrePack(campaignId, packId, mode) {
   const r = await apiJson(`/campaigns/${campaignId}/genre-pack/apply`, 'POST', { id: packId, mode: mode || 'apply' });
   if (mode !== 'preview' && store.campaign?.campaign_id === campaignId) {
@@ -287,9 +304,33 @@ export async function loadSkills(_campaignId, force = false) {
   if (r) setState({ keeperSkills: r.skills || [], skillsPath: r.path || '' });
 }
 
-// Skills are app-global (one library for every world) and authored by the Keeper
-// itself via the save_skill tool. Management here is viewing, enabling/disabling,
-// and deleting user skills (deleting an override of a built-in restores it).
+// Skills are app-global (one library for every world). Authored here (Keeper →
+// Skills) or by the Keeper itself via save_skill; deleting an override of a
+// built-in restores it.
+export function getSkill(slug) {
+  return apiFetch(`/skills/${encodeURIComponent(slug)}`);
+}
+
+export async function saveSkill(slug, fields) {
+  const r = slug
+    ? await apiJson(`/skills/${encodeURIComponent(slug)}`, 'PUT', fields)
+    : await apiJson('/skills', 'POST', fields);
+  await loadSkills(null, true);
+  return r;
+}
+
+export async function duplicateSkill(slug) {
+  const r = await apiJson(`/skills/${encodeURIComponent(slug)}/duplicate`, 'POST', {});
+  await loadSkills(null, true);
+  return r;
+}
+
+export async function restoreSkill(slug) {
+  const r = await apiJson(`/skills/${encodeURIComponent(slug)}/restore`, 'POST', {});
+  await loadSkills(null, true);
+  return r;
+}
+
 export async function deleteSkill(slug) {
   const r = await apiFetch(`/skills/${encodeURIComponent(slug)}`, { method: 'DELETE' });
   await loadSkills(null, true);
@@ -400,6 +441,7 @@ export async function moveVaultEntry(from, to) {
   const id = store.campaign.campaign_id;
   await apiJson(`/campaigns/${id}/vault/move`, 'POST', { from, to });
   remapTabs(from, to);
+  remapPins(from, to);
   await Promise.all([loadVaultTree(id), loadAtlasMaps(id)]);
 }
 
@@ -1141,4 +1183,69 @@ export async function checkForUpdate() {
 export function dismissUpdate(tag) {
   try { localStorage.setItem(UPDATE_DISMISS_KEY, tag); } catch (_) { /* private mode */ }
   setState({ updateInfo: null });
+}
+
+// ── Per-world prefs: pinned pages + dismissed "Unfinished" rows (.ck/prefs.json) ──
+export async function loadPrefs(campaignId, force = false) {
+  const id = campaignId || store.campaign?.campaign_id;
+  if (!id) return null;
+  if (!force && store.worldPrefs?.campaignId === id) return store.worldPrefs;
+  const r = await apiFetch(`/campaigns/${id}/prefs`).catch(() => null);
+  if (!r) return null;
+  const prefs = { ...r, campaignId: id, pinned: r.pinned || [], gaps_dismissed: r.gaps_dismissed || [] };
+  setState({ worldPrefs: prefs });
+  return prefs;
+}
+
+async function patchPrefs(patch) {
+  const id = store.campaign?.campaign_id;
+  const cur = store.worldPrefs;
+  if (!id || !cur || cur.campaignId !== id) return;
+  const next = { ...cur, ...patch };
+  setState({ worldPrefs: next });
+  const { campaignId, ...body } = next;
+  try { await apiJson(`/campaigns/${id}/prefs`, 'PUT', body); }
+  catch (e) { setOp(`Could not save: ${e.message}`, 'err'); }
+}
+
+export const pinnedPaths = () => store.worldPrefs?.pinned || [];
+
+export async function togglePin(path) {
+  await loadPrefs();
+  return patchPrefs({ pinned: togglePinned(pinnedPaths(), path) });
+}
+
+export async function pinAt(path, index) {
+  await loadPrefs();
+  return patchPrefs({ pinned: movePinned(pinnedPaths(), path, index) });
+}
+
+function remapPins(from, to) {
+  const cur = pinnedPaths();
+  const next = remapPaths(cur, from, to);
+  if (JSON.stringify(cur) !== JSON.stringify(next)) patchPrefs({ pinned: next });
+}
+
+export async function dismissGap(key) {
+  await loadPrefs();
+  const cur = store.worldPrefs?.gaps_dismissed || [];
+  if (!cur.includes(key)) return patchPrefs({ gaps_dismissed: [...cur, key] });
+}
+
+export const restoreGaps = () => patchPrefs({ gaps_dismissed: [] });
+
+// Overview "Unfinished" card rows (stubs, [?], cold threads, broken links).
+export async function loadGaps(campaignId) {
+  const id = campaignId || store.campaign?.campaign_id;
+  if (!id) return [];
+  const r = await apiFetch(`/campaigns/${id}/vault/gaps`).catch(() => null);
+  const gaps = r?.gaps || [];
+  setState({ vaultGaps: gaps, vaultGapsFor: id });
+  return gaps;
+}
+
+// Export a page or folder into <world>/Exports/. scope: 'page' | 'folder'.
+export function exportPages({ scope, path, format, leaveOutGm }) {
+  const id = store.campaign.campaign_id;
+  return apiJson(`/campaigns/${id}/vault/export`, 'POST', { scope, path, format, leave_out_gm: !!leaveOutGm });
 }

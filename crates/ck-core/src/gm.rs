@@ -126,7 +126,7 @@ fn count_secret_callouts(body: &str) -> usize {
 fn gm_parts(content: &str) -> Vec<String> {
     let (_, body) = split_frontmatter(content);
     let fields = gm_field_names(content);
-    let callouts = count_secret_callouts(&body);
+    let callouts = count_secret_callouts(body);
     let mut parts = Vec::new();
     if is_gm_page(content) {
         parts.push("this whole page is GM-only".to_string());

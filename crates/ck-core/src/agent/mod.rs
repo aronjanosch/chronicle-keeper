@@ -1026,7 +1026,7 @@ async fn grounded_fallback<L: AgentLlm, F: FnMut(TurnEvent) + Send>(
         if !crate::vault::is_canon_kind(page.kind.as_deref()) {
             continue;
         }
-        let mut content = page.content;
+        let mut content = crate::gm::annotate(&page.content);
         if content.len() > 4000 {
             let mut end = 4000;
             while !content.is_char_boundary(end) {

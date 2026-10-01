@@ -141,7 +141,7 @@ function HoverCard({ pin, invZoom, scale = 1, summary }) {
           <${SealHead} kind=${pin.kind} size=${30} />
           <div style=${{ minWidth: 0, flex: 1 }}>
             <div style=${{ fontFamily: 'var(--font-display)', fontSize: 14.5, fontWeight: 600, color: 'var(--ink)', lineHeight: 1.18 }}>${pin.name}</div>
-            <div style=${{ fontSize: 10.5, color: 'var(--ink-faint)', marginTop: 1, fontFamily: 'var(--font-mono)' }}>${k.label || 'Entry'}</div>
+            <div style=${{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 1, fontVariantNumeric: 'tabular-nums' }}>${k.label || 'Entry'}</div>
           </div>
         </div>
         ${summary && html`<div style=${{ padding: '0 12px 11px', fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: 12.5, lineHeight: 1.5, color: 'var(--ink-soft)' }}>${summary}</div>`}
@@ -212,8 +212,8 @@ function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canCha
     <div style=${{ padding: '14px 16px', borderBottom: '1px solid var(--rule-soft)', display: 'flex', alignItems: 'center', gap: 10 }}>
       <${SealHead} kind=${kind || page?.kind || 'lore'} size=${30} />
       <div style=${{ flex: 1, minWidth: 0 }}>
-        <div style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${k.label}</div>
-        <div style=${{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ink-faint)', marginTop: 1, display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${k.label}</div>
+        <div style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-faint)', marginTop: 1, display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           <${Icon} name="folder" size=${10} /> ${folder}
         </div>
       </div>
@@ -229,7 +229,7 @@ function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canCha
       ${!page && !err && html`<div style=${{ marginTop: 16, display: 'flex', justifyContent: 'center' }}><${Spinner} /></div>`}
 
       ${page && onSetHeading && headings.length > 0 && html`<div style=${{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>Pin points at</span>
+        <span style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>Pin points at</span>
         <select value=${headings.includes(heading) ? heading : ''} onChange=${(e) => onSetHeading(e.target.value)}
           style=${{ flex: 1, minWidth: 0, fontSize: 12.5, padding: '3px 6px', border: '1px solid var(--rule)', borderRadius: 4, background: 'var(--surface-raised)', color: 'var(--ink)' }}>
           <option value="">Entire page</option>
@@ -239,7 +239,7 @@ function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canCha
 
       ${page && html`
         ${page.summary && html`<div style=${{ marginTop: 10, padding: '10px 12px', background: 'var(--paper-deep)', border: '1px solid var(--rule-soft)', borderRadius: 6 }}>
-          <div style=${{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--burgundy)', display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+          <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--burgundy)', display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
             <${Icon} name="feather" size=${10} /> The Chronicle remembers
           </div>
           <div style=${{ fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: 13.5, color: 'var(--ink-soft)', lineHeight: 1.5 }}>${page.summary}</div>
@@ -283,7 +283,7 @@ function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canCha
         </div>
 
         ${outLinks.length > 0 && html`<div style=${{ marginTop: 16 }}>
-          <div style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 7 }}>Linked pages</div>
+          <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 7 }}>Linked pages</div>
           <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             ${outLinks.map((path) => html`<span key=${path} onClick=${() => navigate('page', { path })}
               style=${{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 999, background: 'var(--burgundy-50)', color: 'var(--burgundy-700)', border: '1px solid rgba(122,46,31,.18)', fontSize: 12, fontFamily: 'var(--font-display)', cursor: 'pointer' }}>
@@ -342,8 +342,8 @@ function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy, title = 'New pi
     <div style=${{ padding: '14px 16px', borderBottom: '1px solid var(--rule-soft)', display: 'flex', alignItems: 'center', gap: 10 }}>
       <${SealHead} kind=${kind} size=${30} />
       <div style=${{ flex: 1 }}>
-        <div style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)' }}>${title} · ${k.label || 'Entry'}</div>
-        <div style=${{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ink-faint)', marginTop: 1, display: 'flex', alignItems: 'center', gap: 4 }}><${Icon} name="folder" size=${10} /> ${folder || '(vault root)'}</div>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)' }}>${title} · ${k.label || 'Entry'}</div>
+        <div style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-faint)', marginTop: 1, display: 'flex', alignItems: 'center', gap: 4 }}><${Icon} name="folder" size=${10} /> ${folder || '(vault root)'}</div>
       </div>
       <button onClick=${onCancel} style=${{ width: 28, height: 28, borderRadius: 4, color: 'var(--ink-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer' }}><${Icon} name="x" size=${14} /></button>
     </div>
@@ -362,7 +362,7 @@ function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy, title = 'New pi
       </div>
 
       <div style=${{ marginTop: 14 }}>
-        <div style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>
           ${q ? 'Or link an existing page' : `Existing ${(k.label || '').toLowerCase()} pages — type to search all pages`}
         </div>
         ${matches.length === 0 && html`<div style=${{ fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: 12.5, color: 'var(--ink-faint)' }}>
@@ -377,7 +377,7 @@ function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy, title = 'New pi
             <${SealHead} kind=${PIN_KINDS[p.kind] ? p.kind : kind} size=${22} />
             <div style=${{ flex: 1, minWidth: 0 }}>
               <div style=${{ fontFamily: 'var(--font-display)', fontSize: 13.5, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${p.title}</div>
-              <div style=${{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${p.path}</div>
+              <div style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${p.path}</div>
             </div>
             <${Icon} name="link" size=${12} style=${{ color: 'var(--burgundy)' }} />
           </div>`)}
@@ -385,7 +385,7 @@ function NewEntryPanel({ kind, onCreate, onLink, onCancel, busy, title = 'New pi
       </div>
 
       <div style=${{ marginTop: 18, padding: '11px 13px', background: 'var(--paper-deep)', border: '1px dashed var(--rule-strong)', borderRadius: 8 }}>
-        <div style=${{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--burgundy)', display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}><${Icon} name="feather" size=${10} /> The Chronicle will remember</div>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--burgundy)', display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}><${Icon} name="feather" size=${10} /> The Chronicle will remember</div>
         <div style=${{ fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: 13, color: 'var(--ink-faint)', lineHeight: 1.5 }}>
           A one-line memory is drafted from your sessions as soon as this entry is mentioned in play. You can write it yourself, too.
         </div>
@@ -1231,10 +1231,10 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
         position: 'absolute', top: 50, right: 16, zIndex: 95, width: 196,
         background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', borderRadius: 10,
         boxShadow: 'var(--shadow-raised)', overflow: 'hidden' }}>
-        <div style=${{ padding: '9px 12px 7px', borderBottom: '1px solid var(--rule-soft)', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>View options</div>
+        <div style=${{ padding: '9px 12px 7px', borderBottom: '1px solid var(--rule-soft)', fontSize: 11, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>View options</div>
         <div style=${{ padding: '10px 12px 12px', display: 'flex', flexDirection: 'column', gap: 11 }}>
           <div>
-            <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>Pin size</div>
+            <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>Pin size</div>
             <div style=${{ display: 'flex', border: '1px solid var(--rule)', borderRadius: 6, overflow: 'hidden' }}>
               ${['small', 'medium', 'large'].map((s, i) => html`<button key=${s} onClick=${() => setPinSize(s)} style=${{
                 flex: 1, padding: '5px 0', fontSize: 11.5, fontWeight: pinSize === s ? 600 : 400, cursor: 'pointer',
@@ -1251,7 +1251,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
             <span style=${{ fontSize: 12.5, color: 'var(--ink)' }}>Pin labels</span>
           </button>
           <div>
-            <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>Scroll wheel</div>
+            <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>Scroll wheel</div>
             <div style=${{ display: 'flex', border: '1px solid var(--rule)', borderRadius: 6, overflow: 'hidden' }}>
               ${[['auto', 'Auto'], ['mouse', 'Zoom'], ['trackpad', 'Pan']].map(([m, label], i) => html`<button key=${m} onClick=${() => setNavMode(m)} title=${m === 'auto' ? 'Guess mouse vs trackpad; pinch always zooms' : m === 'mouse' ? 'Scrolling zooms (mouse wheel)' : 'Scrolling pans, pinch zooms (trackpad)'} style=${{
                 flex: 1, padding: '5px 0', fontSize: 11.5, fontWeight: navMode === m ? 600 : 400, cursor: 'pointer',
@@ -1299,7 +1299,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
       ${''/* pin palette + Drop-a-pin (bottom-right) — lifted clear of the global Ask-the-Keeper dock button */}
       <div style=${{ position: 'absolute', bottom: 74, right: 16, zIndex: 88, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
         ${paletteOpen && html`<div style=${{ width: 184, background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', borderRadius: 10, boxShadow: 'var(--shadow-raised)', overflow: 'hidden' }}>
-          <div style=${{ padding: '9px 12px 7px', borderBottom: '1px solid var(--rule-soft)', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>New pin · pick a kind</div>
+          <div style=${{ padding: '9px 12px 7px', borderBottom: '1px solid var(--rule-soft)', fontSize: 11, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>New pin · pick a kind</div>
           <div style=${{ padding: 5 }}>
             ${PALETTE.map((k) => html`<div key=${k} onClick=${() => { setPlacing(k); setPaletteOpen(false); draw.setTool(null); }}
               style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderRadius: 6, cursor: 'pointer' }}

@@ -2,16 +2,16 @@
 // Pure frontend over shipped endpoints: fuzzy page jump (name + alias),
 // full-text hits, tag jump, recent pages, and a handful of nav/create actions.
 import { html, useState, useEffect, useRef } from '../../vendor/htm-preact-standalone.mjs';
-import { store, navigate, openModal, closeModal, recentPages } from '../core.js';
+import { store, navigate, openModal, closeModal, recentPages, fmtDate } from '../core.js';
 import { Icon } from '../ui.js';
-import { searchVault, loadVaultTags, createVaultPage } from '../actions.js';
+import { searchVault, loadVaultTags, createVaultPage, loadSession } from '../actions.js';
 import { runCommand, promptNewPage, promptNewFolder } from '../commands.js';
 
 // ⌘<key> / ⌘⇧<key> → command id (14E). Symbol keys match on e.key regardless
 // of shift so non-US layouts that type them shifted still work.
-const MOD_KEYS = { f: 'find', k: 'palette', p: 'quick-open', n: 'new-page', s: 'save', w: 'tab-close' };
-const MOD_SHIFT_KEYS = { f: 'search-world', j: 'quick-capture', k: 'toggle-rail', t: 'tab-reopen' };
-const MOD_SYMBOLS = { '[': 'nav-back', ']': 'nav-forward', ',': 'settings', '/': 'shortcuts' };
+const MOD_KEYS = { f: 'find', j: 'keeper', k: 'palette', p: 'quick-open', n: 'new-page', s: 'save', b: 'toggle-panel', w: 'tab-close' };
+const MOD_SHIFT_KEYS = { f: 'search-world', j: 'quick-capture', k: 'toggle-rail', t: 'tab-reopen', b: 'toggle-sidebar' };
+const MOD_SYMBOLS = { '[': 'nav-back', ']': 'nav-forward', ',': 'settings', '/': 'shortcuts', '\\': 'toggle-panel' };
 // ⌘⇧[ / ⌘⇧] cycle tabs (15D); both raw and shifted forms so layouts that
 // report '{'/'}' still match.
 const MOD_SHIFT_SYMBOLS = { '[': 'tab-prev', '{': 'tab-prev', ']': 'tab-next', '}': 'tab-next' };
@@ -29,6 +29,8 @@ export function useGlobalHotkeys() {
         || (e.shiftKey ? MOD_SHIFT_KEYS[e.key.toLowerCase()] : MOD_KEYS[e.key.toLowerCase()])
         || (!e.shiftKey && /^[1-9]$/.test(e.key) ? `tab-${e.key}` : null);
       if (!id) return;
+      // ⌘B is Bold while the editor has focus; the vault panel toggle yields; ⌘\ always works.
+      if (id === 'toggle-panel' && e.key.toLowerCase() === 'b' && e.target?.closest?.('.cm-editor')) return;
       e.preventDefault();
       runCommand(id);
     };
@@ -74,7 +76,7 @@ function Row({ item, active, onHover, onRun }) {
       ${item.sub && html`<span class="ck-ink-faint" style=${{ fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}
         dangerouslySetInnerHTML=${item.subHtml ? { __html: item.sub } : undefined}>${item.subHtml ? undefined : item.sub}</span>`}
     </span>
-    ${item.hint && html`<span style=${{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--ink-faint)', flex: '0 0 auto' }}>${item.hint}</span>`}
+    ${item.hint && html`<span style=${{ fontSize: 11, color: 'var(--ink-muted)', flex: '0 0 auto', fontVariantNumeric: 'tabular-nums' }}>${item.hint}</span>`}
   </div>`;
 }
 
@@ -127,6 +129,16 @@ function CommandPalette() {
         .map((h) => ({ icon: 'search', label: h.title, sub: h.snippet, subHtml: true, run: go('page', { path: h.path }) }));
       if (body.length) groups.push({ head: 'In page text', items: body });
 
+      const sessionHits = (store.campaignSessions || [])
+        .map((x) => {
+          const num = String(x.session_number || 0).padStart(2, '0');
+          const label = x.title ? `Session ${num} · ${x.title}` : `Session ${num}`;
+          return { x, label, s: Math.max(fuzzyScore(query, label), fuzzyScore(query, `session ${x.session_number}`)) };
+        })
+        .filter((r) => r.s >= 0).sort((a, b) => b.s - a.s).slice(0, 5)
+        .map(({ x, label }) => ({ icon: 'mic', label, sub: fmtDate(x.date), run: () => { closeModal(); loadSession(x.session_id); } }));
+      if (sessionHits.length) groups.push({ head: 'Sessions', items: sessionHits });
+
       const tagHits = tags.filter((t) => t.tag.toLowerCase().includes(query)).slice(0, 6)
         .map((t) => ({ icon: 'tag', label: `#${t.tag}`, hint: String(t.count), run: go('codex', { id: cid, tag: t.tag }) }));
       if (tagHits.length) groups.push({ head: 'Tags', items: tagHits });
@@ -148,8 +160,11 @@ function CommandPalette() {
     { icon: 'time', label: 'Go to Timeline', run: go('timeline', { id: cid }) },
     { icon: 'link', label: 'Go to Graph', run: go('graph', { id: cid }) },
     { icon: 'feather', label: 'Quick capture', run: () => { closeModal(); openModal('quickCapture'); } },
-    { icon: 'feather', label: 'Go to the Keeper', run: go('keeper', { id: cid }) },
+    { icon: 'feather', label: 'Ask the Keeper', hint: '⌘J', run: () => { runCommand('keeper'); } },
     { icon: 'mic', label: 'Go to Sessions', run: go('sessions', { id: cid }) },
+    { icon: 'plus', label: 'New session', run: () => { runCommand('new-session'); } },
+    { icon: 'sparkle', label: 'Toggle sidebar', hint: '⌘⇧B', run: () => { closeModal(); runCommand('toggle-sidebar'); } },
+    { icon: 'folder', label: 'Toggle vault panel', hint: '⌘\\', run: () => { closeModal(); runCommand('toggle-panel'); } },
     { icon: 'compass', label: 'World overview', run: go('campaign', { id: cid }) },
     { icon: 'globe', label: 'All worlds', run: go('library') },
     { icon: 'cog', label: 'Settings', run: go('settings') },
@@ -188,14 +203,14 @@ function CommandPalette() {
       <div style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid var(--rule-soft)' }}>
         <${Icon} name="search" size=${15} className="ck-ink-faint" />
         <input ref=${inputRef} value=${q} onInput=${(e) => setQ(e.target.value)} onKeyDown=${onKeyDown}
-          placeholder=${cid ? 'Jump to a page, tag, or action…' : 'Jump to…'}
+          placeholder=${cid ? 'Jump to a page, session, tag, or command…' : 'Jump to…'}
           style=${{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 15, color: 'var(--ink)', fontFamily: 'inherit' }} />
-        <span style=${{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--ink-faint)' }}>esc</span>
+        <span style=${{ fontSize: 11, color: 'var(--ink-muted)' }}>esc</span>
       </div>
       <div style=${{ overflow: 'auto', padding: '6px 0' }}>
         ${flat.length === 0 && html`<div style=${{ padding: '20px 16px', fontSize: 13, color: 'var(--ink-faint)', fontStyle: 'italic' }}>No matches.</div>`}
         ${groups.map((g) => html`<div key=${g.head}>
-          <div style=${{ padding: '8px 16px 3px', fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${g.head}</div>
+          <div style=${{ padding: '8px 16px 3px', fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${g.head}</div>
           ${g.items.map((item) => { i++; const idx = i; return html`<${Row} key=${idx} item=${item} active=${idx === cur}
             onHover=${() => setSel(idx)} onRun=${item.run} />`; })}
         </div>`)}

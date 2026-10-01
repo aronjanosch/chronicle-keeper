@@ -16,8 +16,8 @@ function buildTheme(cm) {
   const { HighlightStyle, syntaxHighlighting, tags, EditorView } = cm;
   const hl = HighlightStyle.define([
     { tag: tags.heading1, fontSize: '26px', fontWeight: '500', letterSpacing: '-0.015em', color: 'var(--ink)' },
-    { tag: tags.heading2, fontSize: '12px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', fontFamily: 'var(--font-ui)', color: 'var(--ink-faint)' },
-    { tag: tags.heading3, fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', fontFamily: 'var(--font-ui)', color: 'var(--burgundy)' },
+    { tag: tags.heading2, fontSize: '12px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', fontFamily: 'var(--font-ui)', color: 'var(--ink-faint)' },
+    { tag: tags.heading3, fontSize: '11px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', fontFamily: 'var(--font-ui)', color: 'var(--burgundy)' },
     { tag: tags.heading, fontWeight: '600', color: 'var(--ink)' },
     { tag: tags.strong, fontWeight: '600', color: 'var(--ink)' },
     { tag: tags.emphasis, fontStyle: 'italic', color: 'var(--ink-soft)' },

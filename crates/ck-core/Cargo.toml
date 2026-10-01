@@ -57,6 +57,7 @@ futures-util = "0.3"
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 imagesize = "0.13"
+flate2 = "1"
 toml = "0.8"
 notify = "6"
 trash = "5"

@@ -2,12 +2,13 @@
 // the full conversation (right), reusing the docked panel's Conversation over
 // the same store.keeper state (ask-the-keeper-ux-spec.md).
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, apiFetch, apiJson, bump, fmtDate } from '../core.js';
+import { navigate, apiFetch, apiJson, bump, fmtDate, setState } from '../core.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
-import { Icon, Spinner } from '../ui.js';
+import { Icon, Spinner, Btn, SearchField } from '../ui.js';
 import {
-  keeperState, patchKeeper, openChat, newChat, ModeSelect, Conversation, sendMessage, abortRun,
+  keeperState, patchKeeper, openChat, newChat, Conversation, sendMessage, abortRun, runSkillChat,
 } from '../keeperPanel.js';
+import { SkillsView } from '../keeperSkills.js';
 import { MemoryView, fetchBriefStatus } from '../keeperMemory.js';
 
 const SUGGESTIONS = [
@@ -22,7 +23,8 @@ export function KeeperScreen({ store }) {
   const cid = c?.campaign_id;
   const [chats, setChats] = useState(null);
   const [q, setQ] = useState('');
-  const [view, setView] = useState('chat'); // 'chat' | 'memory'
+  const [view, setView] = useState(() => store.keeperTab || 'chat'); // 'chat' | 'skills' | 'memory'
+  const [skillSel, setSkillSel] = useState(null); // null = list, '__new', or a slug
   const [brief, setBrief] = useState(null);
   const k = keeperState();
   // Each chat has its own run slot, so more than one can be live at once —
@@ -30,6 +32,8 @@ export function KeeperScreen({ store }) {
   const runningIds = new Set(
     Object.values(store.keeperRuns || {}).filter((r) => r.campaignId === cid).map((r) => r.chatId)
   );
+
+  useEffect(() => { if (store.keeperTab) setState({ keeperTab: null }); }, []);
 
   useEffect(() => { if (cid) fetchBriefStatus(cid).then(setBrief); }, [cid, view, store.dirty_keeper]);
 
@@ -64,19 +68,35 @@ export function KeeperScreen({ store }) {
 
   const filtered = (chats || []).filter((ch) => !q.trim() || (ch.title || '').toLowerCase().includes(q.toLowerCase()));
 
+  const navItem = (id, icon, text, extra) => {
+    const on = view === id;
+    return html`<div key=${id} onClick=${() => { setView(id); if (id === 'skills') setSkillSel(null); }} class="ck-chat-row" role="button" style=${{
+      display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 500,
+      background: on ? 'var(--surface)' : 'transparent', border: `1px solid ${on ? 'var(--rule-soft)' : 'transparent'}`,
+      color: on ? 'var(--burgundy)' : 'var(--ink-soft)',
+    }}>
+      <${Icon} name=${icon} size=${14} /> <span style=${{ flex: 1 }}>${text}</span> ${extra}
+    </div>`;
+  };
+  const skillCount = (store.keeperSkills || []).length;
+
   const list = html`<div style=${{ width: 280, flex: '0 0 280px', borderRight: '1px solid var(--rule)', display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--paper-deep)' }}>
-    <div style=${{ padding: '12px 12px 8px', borderBottom: '1px solid var(--rule-soft)' }}>
-      <button class="btn btn-primary" style=${{ width: '100%', justifyContent: 'center' }} onClick=${onNew}>
-        <${Icon} name="plus" size=${13} /> New chat
-      </button>
-      <input value=${q} placeholder="Search chats…" onInput=${(e) => setQ(e.target.value)}
-        style=${{ width: '100%', boxSizing: 'border-box', marginTop: 8, fontSize: 12.5, padding: '6px 8px', borderRadius: 5, border: '1px solid var(--rule)', background: 'var(--surface)', color: 'var(--ink)' }} />
+    <div style=${{ padding: '14px 14px 8px', fontFamily: 'var(--font-display)', fontSize: 15 }}>The Keeper</div>
+    <div style=${{ padding: '0 8px 8px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+      ${navItem('chat', 'feather', 'Chats')}
+      ${navItem('skills', 'book', 'Skills', skillCount ? html`<span style=${{ fontSize: 12, color: 'var(--ink-muted)' }}>${skillCount}</span>` : null)}
+      ${navItem('memory', 'doc', 'Memory & Brief', brief && (!brief.exists || brief.stale)
+        ? html`<span title=${brief.exists ? 'Brief is out of date' : 'No brief yet'} style=${{ width: 7, height: 7, borderRadius: 999, background: 'var(--burgundy)' }} />` : null)}
+    </div>
+    ${view === 'chat' && html`<div style=${{ padding: '10px 12px 8px', borderTop: '1px solid var(--rule-soft)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <${Btn} kind="primary" icon="plus" onClick=${onNew} style=${{ width: '100%', justifyContent: 'center', height: 32, boxSizing: 'border-box' }}>New chat</${Btn}>
+      <${SearchField} value=${q} onInput=${setQ} placeholder="Search chats…" />
     </div>
     <div style=${{ flex: 1, overflow: 'auto', padding: 6 }}>
       ${chats === null && html`<div style=${{ padding: 16, textAlign: 'center' }}><${Spinner} size=${14} /></div>`}
-      ${chats !== null && !filtered.length && html`<div style=${{ padding: 16, fontSize: 12.5, color: 'var(--ink-faint)', textAlign: 'center' }}>No chats yet.</div>`}
+      ${chats !== null && !filtered.length && html`<div style=${{ padding: 16, fontSize: 12.5, color: 'var(--ink-faint)', textAlign: 'center' }}>${q.trim() ? 'No chats match.' : 'No chats yet.'}</div>`}
       ${filtered.map((ch) => {
-        const active = view === 'chat' && ch.id === k.chatId;
+        const active = ch.id === k.chatId;
         const running = runningIds.has(ch.id);
         return html`<div key=${ch.id} onClick=${() => pickChat(ch.id)} class="ck-chat-row" style=${{
           padding: '9px 10px', borderRadius: 6, cursor: 'pointer', marginBottom: 2,
@@ -93,19 +113,13 @@ export function KeeperScreen({ store }) {
             : html`<span onClick=${(e) => onDelete(ch.id, e)} title="Delete chat" style=${{ color: 'var(--ink-faint)', display: 'flex', padding: 2 }}><${Icon} name="trash" size=${12} /></span>`}
         </div>`;
       })}
-    </div>
-    <div style=${{ borderTop: '1px solid var(--rule-soft)', padding: 8 }}>
-      <div onClick=${() => setView('memory')} class="ck-chat-row" style=${{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', borderRadius: 6, cursor: 'pointer',
-        background: view === 'memory' ? 'var(--burgundy-50)' : 'transparent',
-        border: `1px solid ${view === 'memory' ? 'var(--rule-soft)' : 'transparent'}`,
-      }}>
-        <${Icon} name="book" size=${14} />
-        <span style=${{ flex: 1, fontSize: 13, fontWeight: view === 'memory' ? 600 : 500, color: 'var(--ink)' }}>Memory & Brief</span>
-        ${brief && (!brief.exists || brief.stale) && html`<span title=${brief.exists ? 'Brief is out of date' : 'No brief yet'} style=${{ width: 7, height: 7, borderRadius: 999, background: 'var(--burgundy)' }} />`}
-      </div>
-    </div>
+    </div>`}
   </div>`;
+
+  const skillsPane = html`<${SkillsView} sel=${skillSel} setSel=${setSkillSel}
+    onWrite=${() => { setView('chat'); runSkillChat('Authoring a skill', 'Help me write a new Keeper skill: ask what it should cover, then draft it.'); }}
+    onImprove=${(s) => { setView('chat'); runSkillChat('Authoring a skill', `Improve my "${s.name}" skill (slug: ${s.slug}): load it, suggest concrete improvements, and save them with save_skill once I approve.`); }}
+    onTry=${async (s) => { setView('chat'); await newChat(); patchKeeper({ draft: `Use the "${s.name}" skill. ` }); }} />`;
 
   const emptyState = html`<div style=${{ color: 'var(--ink-faint)', fontSize: 13, padding: '36px 16px', textAlign: 'center', lineHeight: 1.7, maxWidth: 460, margin: '0 auto' }}>
     <div style=${{ fontFamily: 'var(--font-display)', fontSize: 18, color: 'var(--ink)', marginBottom: 6 }}>Ask the Keeper</div>
@@ -133,7 +147,6 @@ export function KeeperScreen({ store }) {
           <div style=${{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             ${(chats || []).find((x) => x.id === k.chatId)?.title || 'Chat'}
           </div>
-          <${ModeSelect} mode=${k.mode} />
         </div>
         <${Conversation} k=${k} empty=${emptyState} />
       </div>`
@@ -141,12 +154,12 @@ export function KeeperScreen({ store }) {
 
   return html`<${Shell}
     sidebar=${html`<${Sidebar} variant="campaign" active="keeper" campaign=${c} />`}
-    topbar=${html`<${Topbar} crumbs=${[{ label: 'Worlds', onClick: () => navigate('library') }, c.name, 'The Keeper']} />`}
+    topbar=${html`<${Topbar} title="The Keeper" sub=${c.name} />`}
     bodyStyle=${{ padding: 0 }}
   >
     <div style=${{ display: 'flex', height: '100%', minHeight: 0 }}>
       ${list}
-      ${view === 'memory' ? memoryPane : convo}
+      ${view === 'memory' ? memoryPane : view === 'skills' ? skillsPane : convo}
     </div>
   </${Shell}>`;
 }

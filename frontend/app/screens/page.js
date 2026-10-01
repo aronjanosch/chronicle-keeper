@@ -5,23 +5,25 @@
 // markdown highlight, [[ / #tag autocomplete, ⌘F search, and format shortcuts.
 // Auto-saves to the vault (800ms). See cm.js.
 import { html, useState, useEffect, useRef, useMemo, useCallback } from '../../vendor/htm-preact-standalone.mjs';
-import { navigate, useStore, openModal, setState, store as globalStore, splitPageRef } from '../core.js';
+import { navigate, useStore, openModal, setState, store as globalStore, splitPageRef, fmtDateTime } from '../core.js';
 import { Shell, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
 import { Empty, Icon, PageBody, WikilinkHoverCard, splitDoc, joinDoc, parseProps, openContextMenu, useAsset, bannerAsset } from '../ui.js';
-import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault, uploadVaultAsset, loadSnippets, loadRelations, loadSkills, copyText } from '../actions.js';
+import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault, uploadVaultAsset, loadSnippets, loadRelations, loadSkills, copyText, togglePin, loadPrefs } from '../actions.js';
 import { mountEditor, gotoHeading } from '../cm.js';
 import { setEditorActive } from '../commands.js';
 import { TabStrip, openPageEvt } from '../tabs.js';
 import { FileTree, buildTree, makeVaultActions, iconForKind, KINDS, dirOf } from './codex.js';
 import { colorForKind } from '../graph.js';
-import { keeperState, openPanel, newChat, ModeSelect, Conversation } from '../keeperPanel.js';
+import { openExport } from '../exportDialog.js';
+import { gmFieldList, isGmPage, setGmField, setGmPage } from '../gmFields.js';
+import { keeperState, openPanel, newChat, Conversation } from '../keeperPanel.js';
 
 function kindLabel(k) {
   return (KINDS.find((x) => x.value === k) || {}).label || k || 'Page';
 }
 
 // Frontmatter keys that never render as infobox fields (page-data-model-spec).
-const RESERVED_KEYS = new Set(['kind', 'aliases', 'tags', 'summary', 'cssclasses', 'publish', 'permalink', 'image', 'cover']);
+const RESERVED_KEYS = new Set(['kind', 'aliases', 'tags', 'summary', 'cssclasses', 'publish', 'permalink', 'image', 'cover', 'gm_fields', 'gm_only']);
 
 function schemaFor(schemas, kind) {
   return ((schemas || []).find((s) => s.kind === kind) || {}).fields || [];
@@ -104,17 +106,30 @@ function RailCard({ icon, title, right, children }) {
 }
 
 // Infobox: the page kind's frontmatter fields (design page.jsx right rail).
-function InfoboxCard({ fm, kind, schemas, pages }) {
+// Each field's ⋯ menu marks it GM-only (`gm_fields:` frontmatter): tinted,
+// badged, and left out of exports that skip GM content.
+function InfoboxCard({ fm, kind, schemas, pages, page, onSave }) {
   const fields = schemaFor(schemas, kind);
+  const gmKeys = gmFieldList(fm);
   const rows = infoboxRows(parseProps(fm), fields).filter((r) => r.values.length);
   if (!kind && !rows.length) return null;
-  return html`<${RailCard} icon="book" title="Infobox" right="frontmatter">
+  const pageGm = isGmPage(fm);
+  const menu = (key, isGm) => (e) => openContextMenu(e, [
+    { label: isGm ? 'Show to players (remove GM-only)' : 'Mark GM-only', icon: 'eye',
+      onClick: () => onSave(setGmField(page.content, key, !isGm)).catch(() => {}) },
+  ]);
+  return html`<${RailCard} icon="book" title="Infobox" right=${pageGm ? html`<span class="ck-gm-badge" title="This page is GM-only — exports can leave it out">■ GM</span>` : 'frontmatter'}>
     ${kind && html`<div class="ck-infobox-row"><span class="ck-infobox-key">kind</span>
       <span class="ck-prop-vals"><span class="ck-prop-tag">${kindLabel(kind)}</span></span></div>`}
-    ${rows.map((r) => html`<div class="ck-infobox-row" key=${r.key}>
-      <span class="ck-infobox-key">${r.key}</span>
-      <span class="ck-prop-vals"><${FieldVal} type=${r.type} values=${r.values} pages=${pages} /></span>
-    </div>`)}
+    ${rows.map((r) => {
+      const isGm = gmKeys.includes(r.key);
+      return html`<div class="ck-infobox-row ${isGm ? 'gm' : ''}" key=${r.key} onContextMenu=${menu(r.key, isGm)}>
+        <span class="ck-infobox-key">${r.key}</span>
+        <span class="ck-prop-vals"><${FieldVal} type=${r.type} values=${r.values} pages=${pages} /></span>
+        ${isGm && html`<span class="ck-gm-badge" title="GM-only field">■ GM</span>`}
+        <span class="ck-infobox-more" tabindex="0" role="button" title="Field options" onClick=${menu(r.key, isGm)}><${Icon} name="dots" size=${13} /></span>
+      </div>`;
+    })}
     ${!rows.length && html`<div class="ck-prop-blank" style=${{ paddingTop: 4 }}>No fields yet — edit the page properties</div>`}
   </${RailCard}>`;
 }
@@ -604,7 +619,7 @@ function ReadView({ page, path, pages, campaignId, onBroken, scrollRef }) {
       ${bannerUrl && html`<img class="ck-page-banner" src=${bannerUrl} alt="" />`}
       <div style=${{ maxWidth: 680, margin: '0 auto', padding: `${bannerUrl ? 24 : 34}px 52px 0` }}>
         <${Provenance} path=${path} />
-        <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--burgundy)', marginTop: 16 }}>${eyebrow}</div>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)', marginTop: 16 }}>${eyebrow}</div>
         <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 38, fontWeight: 500, letterSpacing: '-0.02em', lineHeight: 1.08, color: 'var(--ink)', marginTop: 6 }}>${page.title}</h1>
         <div style=${{ height: 1, background: 'var(--rule)', margin: '26px 0' }} />
         <${PageBody} text=${prose} pages=${pages} onBroken=${onBroken} />
@@ -621,7 +636,7 @@ function PageRail({ page, path, pages, links, relations, schemas, atlasMaps, cam
   const outline = useMemo(() => parseOutline(prose), [prose]);
   const meta = (pages || []).find((p) => p.path === path);
   const words = prose.trim() ? prose.trim().split(/\s+/).length : 0;
-  const edited = meta?.modified ? new Date(meta.modified * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : null;
+  const edited = meta?.modified ? fmtDateTime(meta.modified * 1000) : null;
 
   // Threads get a status selector, but a world whose custom thread schema
   // deliberately drops `status` keeps its own fields — we only add a status
@@ -642,7 +657,7 @@ function PageRail({ page, path, pages, links, relations, schemas, atlasMaps, cam
     </div>
     ${railTab === 'info'
       ? html`<div style=${{ flex: 1, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <${InfoboxCard} fm=${fm} kind=${page.kind} schemas=${schemas} pages=${pages} />
+          <${InfoboxCard} fm=${fm} kind=${page.kind} schemas=${schemas} pages=${pages} page=${page} onSave=${onSave} />
           ${showThreadStatus && html`<${ThreadStatusCard} page=${page} onSave=${onSave} />`}
           <${SummaryCard} page=${page} onSave=${onSave} />
           <${TagsCard} tags=${meta?.tags} />
@@ -681,7 +696,7 @@ function RailChat() {
   useEffect(() => { if (!k.chatId) openPanel(); }, []);
   return html`<div style=${{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
     <div style=${{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 8px', borderBottom: '1px solid var(--rule-soft)' }}>
-      <span style=${{ flex: 1, minWidth: 0 }}><${ModeSelect} mode=${k.mode} /></span>
+      <span style=${{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 500, color: 'var(--ink-muted)' }}>The Keeper</span>
       <button title="New chat" class="btn btn-icon" onClick=${() => newChat()}><${Icon} name="plus" size=${15} /></button>
       <button title="Open the Keeper full-screen" class="btn btn-icon" onClick=${() => navigate('keeper', { id: k.campaignId })}><${Icon} name="export" size=${14} /></button>
     </div>
@@ -735,6 +750,7 @@ export function PageScreen() {
   useEffect(() => {
     const onCmd = (e) => {
       if (e.detail === 'toggle-rail') toggleRail();
+      else if (e.detail === 'show-chat') showRail('chat');
       else if (e.detail === 'zen' && mode === 'edit') toggleZen();
     };
     window.addEventListener('ck:cmd', onCmd);
@@ -747,7 +763,7 @@ export function PageScreen() {
   useEffect(() => {
     if (!c) return;
     loadVaultTree(c.campaign_id); loadKindSchemas(c.campaign_id); loadRelations(c.campaign_id);
-    loadSkills(c.campaign_id);
+    loadSkills(c.campaign_id); loadPrefs(c.campaign_id);
     if (!(store.snippets || []).length) loadSnippets(c.campaign_id);
     if (c.vault_path && !(store.atlasMaps || []).length) loadAtlasMaps(c.campaign_id);
   }, [c?.campaign_id]);
@@ -812,52 +828,49 @@ export function PageScreen() {
 
   const byPath = new Map(pages.map((p) => [p.path, p]));
   const ancestry = containmentAncestry(path, store.vaultRelations);
-  const crumbs = [
-    { label: 'Worlds', onClick: () => navigate('library') },
-    { label: c.name, onClick: () => openCampaign(c.campaign_id) },
-    { label: 'Codex', onClick: () => navigate('codex', { id: c.campaign_id }) },
-    ...ancestry.map((ap) => ({ label: byPath.get(ap)?.title || ap, onClick: () => navigate('page', { path: ap }) })),
-    (page && page.title) || path,
-  ];
-
   if (missing) {
     return html`<${Shell}
       sidebar=${html`<${FileTree} campaign=${c} tree=${tree} active=${null} onOpen=${(p, e) => openPageEvt(p.path, e)} act=${act} />`}
-      topbar=${html`<${Topbar} crumbs=${crumbs} />`} tabstrip=${html`<${TabStrip} />`} bodyStyle=${{ padding: 40 }}>
+      topbar=${html`<${Topbar} title="Page not found" sub=${c.name} />`} tabstrip=${html`<${TabStrip} />`} bodyStyle=${{ padding: 40 }}>
       <${Empty} icon="scroll" title="Page not found">
         <a onClick=${() => navigate('codex', { id: c.campaign_id })} style=${{ color: 'var(--burgundy)', cursor: 'pointer' }}>Back to the codex</a>.
       </${Empty}>
     </${Shell}>`;
   }
 
-  const savedChip = mode === 'edit' && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontFamily: 'var(--font-mono)',
-    color: saveState === 'saved' ? 'var(--moss)' : 'var(--ink-faint)' }}>
+  const savedChip = mode === 'edit' && html`<span style=${{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12,
+    color: saveState === 'saved' ? 'var(--moss)' : 'var(--ink-muted)' }}>
     <${Icon} name=${saveState === 'saved' ? 'check' : 'feather'} size=${12} />
     ${saveState === 'saving' ? 'Saving…' : saveState === 'dirty' ? 'Unsaved' : 'Saved to vault'}
   </span>`;
 
   const pageLeaf = page ? { path, title: page.title, kind: page.kind } : null;
-  const topbar = html`<${Topbar} crumbs=${crumbs}
-    right=${html`<div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
+  const pinned = (store.worldPrefs?.pinned || []).includes(path);
+  const pageGm = page ? isGmPage(splitDoc(page.content).fm) : false;
+  const topbar = html`<${Topbar} title=${(page && page.title) || path} sub=${['Codex', ...ancestry.map((ap) => byPath.get(ap)?.title || ap)].join(' / ')}
+    actions=${html`<div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
       ${savedChip}
-      <button onClick=${toggleRail} title=${railHidden ? 'Show side panel' : 'Hide side panel'}
-        style=${{ padding: '6px 8px', color: railHidden ? 'var(--ink-faint)' : 'var(--ink-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
+      <button onClick=${toggleRail} title=${railHidden ? 'Show side panel' : 'Hide side panel'} aria-label="Toggle side panel"
+        style=${{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
         <${Icon} name=${railHidden ? 'chev-l' : 'chev-r'} size=${14} />
       </button>
-      ${mode === 'edit' && html`<button onClick=${toggleZen} title=${zen ? 'Leave zen mode' : 'Zen mode — hide the sidebar'}
-        style=${{ padding: '6px 8px', color: zen ? 'var(--burgundy)' : 'var(--ink-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
+      ${mode === 'edit' && html`<button onClick=${toggleZen} title=${zen ? 'Leave zen mode' : 'Zen mode — hide the sidebar'} aria-label="Zen mode"
+        style=${{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', color: zen ? 'var(--burgundy)' : 'var(--ink-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
         <${Icon} name="sun" size=${14} />
       </button>`}
       <${ModeToggle} mode=${mode} onChange=${changeMode} />
-      ${pageLeaf && html`<${KebabMenu} items=${[
-        { icon: 'edit', label: 'Rename', onClick: () => act.renamePage(pageLeaf) },
-        { icon: 'folder', label: 'Move…', onClick: () => act.movePage(pageLeaf) },
-        { icon: 'sparkle', label: 'Promote to kind…', onClick: () => act.promotePage(pageLeaf) },
-        { icon: 'link', label: 'Link to prep…', onClick: () => openModal('linkPrep', { path }) },
-        { icon: 'time', label: 'History', onClick: () => openModal('pageHistory', { path, onRestored: () => readVaultPage(path).then(setPage).catch(() => {}) }) },
-        { icon: 'trash', label: 'Move to trash', danger: true, onClick: () => act.deletePage(pageLeaf) },
-      ]} />`}
-    </div>`} />`;
+    </div>`}
+    overflow=${pageLeaf ? [
+      { icon: 'pin', label: pinned ? 'Unpin from vault panel' : 'Pin to vault panel', onClick: () => togglePin(path) },
+      { icon: 'export', label: 'Export…', onClick: () => openExport({ page: pageLeaf, folderPath: dirOf(path) }) },
+      { icon: 'edit', label: 'Rename', onClick: () => act.renamePage(pageLeaf) },
+      { icon: 'folder', label: 'Move…', onClick: () => act.movePage(pageLeaf) },
+      { icon: 'sparkle', label: 'Promote to kind…', onClick: () => act.promotePage(pageLeaf) },
+      { icon: 'eye', label: pageGm ? 'Show to players (remove GM-only)' : 'Mark page GM-only', onClick: () => doSave(setGmPage(page.content, !pageGm)).catch(() => {}) },
+      { icon: 'link', label: 'Link to prep…', onClick: () => openModal('linkPrep', { path }) },
+      { icon: 'time', label: 'History', onClick: () => openModal('pageHistory', { path, onRestored: () => readVaultPage(path).then(setPage).catch(() => {}) }) },
+      { icon: 'trash', label: 'Move to trash', danger: true, onClick: () => act.deletePage(pageLeaf) },
+    ] : undefined} />`;
 
   const doSave = async (content) => { const updated = await saveVaultPage(path, content); setPage(updated); return updated; };
 

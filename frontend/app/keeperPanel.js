@@ -4,9 +4,10 @@
 // 6.4: structural/shell permission cards, attachments (picker + drag-drop),
 // [[ autocomplete in the composer.
 import { html, useState, useEffect, useRef } from '../vendor/htm-preact-standalone.mjs';
-import { apiFetch, apiJson, apiStream, bump, navigate, setOp, setState, store } from './core.js';
+import { apiFetch, apiJson, apiStream, bump, navigate, openInNewTab, setOp, setState, store } from './core.js';
 import { Icon, Spinner, renderBlockHtml, wikilinkClick, openContextMenu } from './ui.js';
-import { loadLlmProviders, fetchLlmModels, loadVaultTree, loadSkills, loadAtlasMaps, copyText } from './actions.js';
+import { loadLlmProviders, fetchLlmModels, loadVaultTree, loadSkills, loadAtlasMaps, loadSession, copyText } from './actions.js';
+import { buildItems, liveItems, summarizeSteps, isEmptyResult, estimateTokens, contextLimit, fmtTokens } from './keeperTrace.js';
 
 // store.keeper = { open, chatId, campaignId, events[], attachments[], error, mode }
 // store.keeperRuns = { [chatId]: { chatId, campaignId, live: {text, tools[], ask} } } —
@@ -32,7 +33,7 @@ const MAX_FILE_BYTES = 256 * 1024;
 const KEEPER_COMMANDS = [
   { slug: 'compact', name: 'Compact conversation', description: 'Summarize this chat to free up context', command: true, run: () => compactChat() },
 ];
-const slashLabel = { padding: '5px 8px 3px', fontSize: 10.5, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--ink-faint)' };
+const slashLabel = { padding: '5px 8px 3px', fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--ink-faint)' };
 
 // Tools that mutate vault pages — a successful result means the open page may
 // now be stale, so refresh it mid-stream instead of waiting for run end.
@@ -371,10 +372,10 @@ export function setMode(mode) {
 }
 
 // Answer the Keeper's ask_user question (option click or typed text).
-async function answerQuestion(requestId, answer) {
+async function answerQuestion(requestId, answer, { skip = false } = {}) {
   const cid = store.campaign?.campaign_id;
   const k = keeperState();
-  if (!cid || !k.chatId || !answer.trim()) return;
+  if (!cid || !k.chatId || (!skip && !answer.trim())) return;
   if (k.live) patchRun(k.chatId, { live: { ...k.live, question: null } });
   try {
     await apiJson(`/campaigns/${cid}/agent/chats/${k.chatId}/answer`, 'POST', { request_id: requestId, answer });
@@ -549,22 +550,76 @@ const WRITE_VERB = {
   multi_edit_page: 'edit', insert_into_page: 'add to',
 };
 
-// ask_user: the Keeper needs a choice. Option buttons plus free text.
+const kbdStyle = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 20, height: 20, padding: '0 5px',
+  boxSizing: 'border-box', borderRadius: 4, border: '1px solid var(--rule)', background: 'var(--surface-raised)',
+  fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-soft)', flex: '0 0 auto',
+};
+
+// ask_user: numbered option rows (1–9 to pick, ↵ confirms the highlighted one,
+// Esc skips) plus a free-text answer.
 function QuestionCard({ q }) {
   const [text, setText] = useState('');
-  return html`<div style=${{ margin: '10px 0', border: '1px solid var(--rule)', borderRadius: 8, background: 'var(--paper-deep)', padding: '10px 12px' }}>
-    <div style=${{ fontSize: 13, fontWeight: 600, display: 'flex', gap: 7, alignItems: 'flex-start' }}>
-      <${Icon} name="feather" size=${13} /> <span>${q.question}</span>
+  const [sel, setSel] = useState(0);
+  const cardRef = useRef(null);
+  const inputRef = useRef(null);
+  const done = useRef(false);
+  const opts = q.options.slice(0, 9);
+
+  const answer = (a, opt) => {
+    if (done.current) return;
+    done.current = true;
+    answerQuestion(q.requestId, a, opt);
+  };
+
+  // Take focus off the composer so the number keys reach the card.
+  useEffect(() => { done.current = false; cardRef.current?.focus({ preventScroll: true }); cardRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [q.requestId]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+      const t = e.target;
+      const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+      if (typing) {
+        if (t === inputRef.current && e.key === 'Escape') { e.preventDefault(); if (text) setText(''); else answer('', { skip: true }); }
+        return;
+      }
+      if (/^[1-9]$/.test(e.key) && opts[+e.key - 1] != null) { e.preventDefault(); answer(opts[+e.key - 1]); }
+      else if (e.key === 'Enter' && opts[sel] != null) { e.preventDefault(); answer(opts[sel]); }
+      else if (e.key === 'ArrowDown' && opts.length) { e.preventDefault(); setSel((i) => (i + 1) % opts.length); }
+      else if (e.key === 'ArrowUp' && opts.length) { e.preventDefault(); setSel((i) => (i - 1 + opts.length) % opts.length); }
+      else if (e.key === 'Escape') { e.preventDefault(); answer('', { skip: true }); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [q.requestId, sel, text, opts.length]);
+
+  return html`<div style=${{ margin: '12px 0' }}>
+    <div ref=${cardRef} tabIndex=${-1} style=${{ outline: 'none', border: '1px solid var(--burgundy-300)', borderRadius: 10, background: 'var(--surface)', boxShadow: 'var(--shadow-card)', overflow: 'hidden' }}>
+      <div style=${{ padding: '12px 14px 8px', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <span style=${{ color: 'var(--burgundy)', display: 'flex', paddingTop: 3 }}><${Icon} name="feather" size=${14} /></span>
+        <span style=${{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 500, flex: 1, lineHeight: 1.35 }}>${q.question}</span>
+        <span style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--burgundy)', paddingTop: 4, whiteSpace: 'nowrap' }}>Keeper asks</span>
+      </div>
+      ${opts.length > 0 && html`<div style=${{ padding: '0 10px 8px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        ${opts.map((o, i) => html`<div key=${i} role="button" onClick=${() => answer(o)} onMouseEnter=${() => setSel(i)} style=${{
+          display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13.5,
+          border: `1px solid ${i === sel ? 'var(--burgundy-300)' : 'var(--rule-soft)'}`,
+          background: i === sel ? 'var(--burgundy-50)' : 'var(--surface-raised)',
+        }}>
+          <span style=${kbdStyle}>${i + 1}</span>
+          <span style=${{ flex: 1, minWidth: 0 }}>${o}</span>
+          ${i === sel && html`<span style=${{ fontSize: 11, color: 'var(--burgundy-700)' }}>↵</span>`}
+        </div>`)}
+      </div>`}
+      <div style=${{ padding: '8px 10px 12px', display: 'flex', gap: 8, borderTop: '1px solid var(--rule-soft)' }}>
+        <input ref=${inputRef} class="input" style=${{ flex: 1, fontSize: 13 }} placeholder="Or type an answer…" value=${text}
+          onInput=${(e) => setText(e.target.value)}
+          onKeyDown=${(e) => { if (e.key === 'Enter' && text.trim()) { e.preventDefault(); answer(text.trim()); } }} />
+        <button class="btn btn-primary" disabled=${!text.trim()} onClick=${() => answer(text.trim())}>Send</button>
+      </div>
     </div>
-    ${q.options.length > 0 && html`<div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-      ${q.options.map((o) => html`<button key=${o} class="btn" onClick=${() => answerQuestion(q.requestId, o)}>${o}</button>`)}
-    </div>`}
-    <div style=${{ display: 'flex', gap: 6, marginTop: 8 }}>
-      <input class="input" style=${{ flex: 1, fontSize: 12.5 }} placeholder="Or type an answer…" value=${text}
-        onInput=${(e) => setText(e.target.value)}
-        onKeyDown=${(e) => { if (e.key === 'Enter' && text.trim()) answerQuestion(q.requestId, text.trim()); }} />
-      <button class="btn btn-primary" disabled=${!text.trim()} onClick=${() => answerQuestion(q.requestId, text.trim())}>Send</button>
-    </div>
+    <div style=${{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 6 }}>${opts.length > 1 ? `1–${opts.length} to choose · ` : opts.length ? '1 to choose · ' : ''}${opts.length ? '↵ to confirm · ' : ''}Esc to skip</div>
   </div>`;
 }
 
@@ -641,6 +696,84 @@ function ToolRow({ name, summary, isError, running, args, diff }) {
   </div>`;
 }
 
+// The tool loop folded into one row: "Read 2 pages, searched 6 sources" with
+// the individual steps on demand. Empty search results read as dimmed "no
+// results", never as content.
+function StepsGroup({ steps }) {
+  const [open, setOpen] = useState(false);
+  const running = steps.some((s) => s.running);
+  return html`<div style=${{ margin: '8px 0', border: '1px solid var(--rule)', borderRadius: 8, background: 'var(--surface)' }}>
+    <div role="button" tabIndex=${0} onClick=${() => setOpen(!open)}
+      onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(!open); } }}
+      style=${{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', fontSize: 13, cursor: 'pointer' }}>
+      ${running ? html`<${Spinner} size=${12} />` : html`<span style=${{ color: 'var(--moss)', display: 'flex' }}><${Icon} name="check" size=${13} /></span>`}
+      <span style=${{ flex: 1, minWidth: 0 }}>${running ? 'Working… ' : ''}${summarizeSteps(steps)}</span>
+      <span style=${{ fontSize: 12, color: 'var(--ink-muted)', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+        ${open ? 'Hide steps' : 'Show steps'} <${Icon} name=${open ? 'chev-u' : 'chev-d'} size=${11} />
+      </span>
+    </div>
+    ${open && html`<div style=${{ borderTop: '1px solid var(--rule-soft)', padding: '6px 12px 8px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+      ${steps.map((st, i) => {
+        const empty = !st.running && !st.isError && isEmptyResult(st.summary);
+        return html`<div key=${i} title=${st.summary || ''} style=${{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12, opacity: empty ? 0.6 : 1, color: st.isError ? 'var(--burgundy-700)' : 'var(--ink-muted)' }}>
+          <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 11.5, flex: '0 0 auto' }}>${ROW_VERB[st.name] || st.name}</span>
+          <span style=${{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${st.args}${st.running ? '' : empty ? ' — no results' : st.summary && !st.args ? st.summary : ''}</span>
+          ${st.isError && html`<span style=${{ flex: '0 0 auto' }}>failed</span>`}
+        </div>`;
+      })}
+    </div>`}
+  </div>`;
+}
+
+function openSource(e, src) {
+  if (src.type === 'page') {
+    const p = pageForSource(src);
+    if (!p) return;
+    if (e.metaKey || e.ctrlKey) openInNewTab(p.path, { background: true });
+    else navigate('page', { path: p.path });
+  } else {
+    const s = (store.campaignSessions || []).find((x) => Number(x.session_number) === src.number);
+    if (s) loadSession(s.session_id);
+  }
+}
+
+function pageForSource(src) {
+  const want = String(src.path).toLowerCase();
+  return (store.vaultPages || []).find((p) => {
+    const path = p.path.toLowerCase();
+    return path === want || path === `${want}.md`;
+  });
+}
+
+function SourceChips({ sources }) {
+  return html`<div style=${{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '8px 0 12px' }}>
+    <span class="label-xs" style=${{ marginRight: 2 }}>Sources</span>
+    ${sources.map((src) => {
+      const page = src.type === 'page' ? pageForSource(src) : null;
+      const sess = src.type === 'session' ? (store.campaignSessions || []).find((x) => Number(x.session_number) === src.number) : null;
+      const label = src.type === 'page'
+        ? (page?.title || String(src.path).split('/').pop().replace(/\.md$/i, ''))
+        : `Session ${src.number}`;
+      const live = !!(page || sess);
+      return html`<button key=${`${src.type}${src.path ?? src.number}`} type="button" class=${`chip ${live ? 'chip-burgundy' : 'chip-ghost'}`}
+        title=${live ? `Open ${label}` : 'No longer in this world'} disabled=${!live}
+        onClick=${(e) => openSource(e, src)} style=${{ cursor: live ? 'pointer' : 'default' }}>
+        <${Icon} name=${src.type === 'page' ? 'book' : 'mic'} size=${11} /> ${label}
+      </button>`;
+    })}
+  </div>`;
+}
+
+// A finished ask_user exchange, kept as a quiet one-liner.
+function QaRow({ item }) {
+  return html`<div style=${{ margin: '8px 0', display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: 12.5, color: 'var(--ink-muted)' }}>
+    <span style=${{ display: 'flex', paddingTop: 2, color: 'var(--burgundy)' }}><${Icon} name="feather" size=${12} /></span>
+    <span><span>${item.question || 'The Keeper asked a question'}</span> — ${item.skipped
+      ? html`<em>skipped</em>`
+      : html`<strong style=${{ color: 'var(--ink)', fontWeight: 500 }}>${item.answer}</strong>`}</span>
+  </div>`;
+}
+
 // In-flight compaction: an assistant-side line with a pulsing feather and
 // shimmering label — reads as the Keeper working, not a toast.
 function CompactingIndicator() {
@@ -693,10 +826,6 @@ function EventRow({ ev }) {
       ])}
       dangerouslySetInnerHTML=${{ __html: renderBlockHtml(ev.text, store.vaultPages) }} />`;
   }
-  if (ev.type === 'tool_result') {
-    const first = (ev.content || '').split('\n').find((l) => l.trim() && !l.startsWith('Tool output') && l.trim() !== '```') || '';
-    return html`<${ToolRow} name=${ev.name} summary=${first.trim()} isError=${ev.is_error} diff=${ev.diff} />`;
-  }
   if (ev.type === 'permission' && ev.decision === 'deny') {
     return html`<div style=${{ margin: '8px 0', fontSize: 12, color: 'var(--ink-faint)', fontStyle: 'italic' }}>${ev.diff?.summary ? `${ev.diff.summary}` : `Edit to ${ev.diff?.path || 'a page'}`} denied.</div>`;
   }
@@ -714,13 +843,28 @@ function EventRow({ ev }) {
   return null;
 }
 
-// Compact overrides on the themed .select class (theme = border/focus/colors).
-const pickSelect = { fontSize: 11.5, padding: '4px 6px', width: 'auto', maxWidth: 150, cursor: 'pointer' };
+// A pill that opens a native select laid invisibly over it.
+function SelectChip({ label, title, value, onChange, options, maxWidth = 200 }) {
+  return html`<label class="chip" title=${title} style=${{ position: 'relative', cursor: 'pointer', maxWidth, minWidth: 0 }}>
+    <span style=${{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${label}</span>
+    <${Icon} name="chev-d" size=${10} />
+    <select value=${value} onChange=${(e) => onChange(e.target.value)} aria-label=${title}
+      style=${{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}>
+      ${options.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
+    </select>
+  </label>`;
+}
 
-// Provider + model selects for the active chat — embedded in the composer
+export function ModeChip({ mode }) {
+  const cur = MODES.find((m) => m.id === mode) || MODES[1];
+  return html`<${SelectChip} label=${cur.label} title="What the Keeper may do without asking" value=${cur.id}
+    onChange=${setMode} options=${MODES.map((m) => ({ value: m.id, label: m.label }))} />`;
+}
+
+// Provider + model chips for the active chat — embedded in the composer
 // footer. Resets to the global default on a new chat; the choice rides along in
-// the /messages body as provider/model overrides. Returns the two selects only
-// (no wrapper) so the caller controls layout.
+// the /messages body as provider/model overrides. Returns the chips only (no
+// wrapper) so the caller controls layout.
 export function PickerControls({ k }) {
   const provs = configuredProviders();
   const [models, setModels] = useState([]);
@@ -740,22 +884,34 @@ export function PickerControls({ k }) {
   }, [k.provider]);
 
   if (!provs.length) return null;
-  const provId = provs.some((p) => p.id === k.provider) ? k.provider : provs[0].id;
+  const prov = provs.find((p) => p.id === k.provider) || provs[0];
   const list = k.model && !models.includes(k.model) ? [k.model, ...models] : models;
   const onProvider = (id) => {
     const p = provs.find((x) => x.id === id);
     patchKeeper({ provider: id, model: (p?.saved_model || p?.default_model) || '' });
   };
+  const modelOpts = (list.length ? list : [k.model || 'default']).map((m) => ({ value: m, label: m }));
 
   return html`
-    ${provs.length > 1 && html`<select class="select" value=${provId} onChange=${(e) => onProvider(e.target.value)} title="Provider" style=${pickSelect}>
-      ${provs.map((p) => html`<option key=${p.id} value=${p.id}>${p.name}</option>`)}
-    </select>`}
-    <select class="select" value=${k.model || ''} onChange=${(e) => patchKeeper({ model: e.target.value })} title="Model"
-      style=${{ ...pickSelect, flex: 1, minWidth: 0, maxWidth: 'none' }}>
-      ${!list.length && html`<option value=${k.model || ''}>${k.model || 'default'}</option>`}
-      ${list.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
-    </select>`;
+    ${provs.length > 1 && html`<${SelectChip} label=${prov.name} title="Provider" value=${prov.id} onChange=${onProvider}
+      options=${provs.map((p) => ({ value: p.id, label: p.name }))} maxWidth=${130} />`}
+    <${SelectChip} label=${k.model || 'default'} title="Model" value=${k.model || ''}
+      onChange=${(m) => patchKeeper({ model: m })} options=${modelOpts} maxWidth=${190} />`;
+}
+
+// Estimated context use (~4 chars/token over what the model re-reads each turn).
+function ContextRing({ k }) {
+  if (!k.events.length) return null;
+  const used = estimateTokens(k.events);
+  const limit = contextLimit(k.provider, k.model, store.config?.ollama_num_ctx_max);
+  const pct = Math.min(100, Math.round((used / limit) * 100));
+  const col = pct >= 85 ? 'var(--ochre)' : 'var(--burgundy)';
+  return html`<span title=${`Context: about ${fmtTokens(used)} of ${fmtTokens(limit)} tokens used (estimate)`}
+    style=${{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ink-muted)', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+    <span style=${{ width: 18, height: 18, borderRadius: '50%', background: `conic-gradient(${col} ${pct}%, var(--rule) 0)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <span style=${{ width: 12, height: 12, borderRadius: '50%', background: 'var(--surface)' }} />
+    </span>${pct}%
+  </span>`;
 }
 
 // Float32 PCM chunks → 16-bit mono WAV blob. The mic is captured at the
@@ -1096,7 +1252,7 @@ export function Composer({ busy, compacting }) {
           style=${{ position: 'absolute', top: 2, right: 2, width: 16, height: 16, borderRadius: 999, background: 'rgba(0,0,0,.6)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}><${Icon} name="x" size=${9} /></span>
       </div>`)}
     </div>`}
-    <div class=${compacting ? 'ck-breathe' : ''} style=${{ margin: 10, border: '1px solid var(--rule)', borderRadius: 10, background: 'var(--surface)', display: 'flex', flexDirection: 'column' }}>
+    <div class=${compacting ? 'ck-breathe' : ''} style=${{ margin: 10, border: '1px solid var(--rule)', borderRadius: 12, background: 'var(--surface-raised)', display: 'flex', flexDirection: 'column' }}>
       <textarea ref=${taRef} value=${text} disabled=${compacting}
         placeholder=${compacting ? 'Compacting conversation…' : 'Ask the Keeper… (@ link a page, / a skill, paste images)'} rows=${1}
         onInput=${onInput}
@@ -1120,19 +1276,34 @@ export function Composer({ busy, compacting }) {
               ? html`<button class="btn btn-primary" title="Stop & transcribe" onClick=${dictation.stop} style=${{ padding: '6px 8px' }}><${Icon} name="check" size=${14} /></button>`
               : html`<button class="btn btn-primary" disabled style=${{ padding: '6px 8px' }}><${Spinner} size=${14} /></button>`}
           </div>`
-        : html`<div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px 6px' }}>
+        : html`<div style=${{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '4px 8px 8px' }}>
             <button class="btn btn-ghost" title="Attach a page, session or file" onClick=${() => setPicker(picker === 'attach' ? null : 'attach')}
               style=${{ padding: '6px 7px' }}><${Icon} name="plus" size=${14} /></button>
+            <${ModeChip} mode=${k.mode} />
             <${PickerControls} k=${k} />
+            <span style=${{ flex: 1 }} />
+            <${ContextRing} k=${k} />
             <button class="btn btn-ghost" title="Dictate" disabled=${busy} onClick=${dictation.start}
               style=${{ padding: '6px 7px' }}><${Icon} name="mic" size=${14} /></button>
             ${busy
-              ? html`<button class="btn" onClick=${() => abortRun()} title="Stop the Keeper" style=${{ padding: '6px 7px', marginLeft: 'auto' }}><${Icon} name="x" size=${14} /></button>`
+              ? html`<button class="btn" onClick=${() => abortRun()} title="Stop the Keeper" style=${{ padding: '6px 10px' }}><${Icon} name="x" size=${13} /> Stop</button>`
               : html`<button class="btn btn-primary" onClick=${send} title="Send (Enter)" disabled=${!text.trim() && !images.length}
-                  style=${{ padding: '6px 8px', marginLeft: 'auto' }}><${Icon} name="arrow-r" size=${14} /></button>`}
+                  style=${{ padding: '6px 12px' }}>Send <span style=${{ opacity: 0.8 }}>↵</span></button>`}
           </div>`}
     </div>
   </div>`;
+}
+
+function renderItem(it, key, k) {
+  if (it.kind === 'steps') return html`<${StepsGroup} key=${key} steps=${it.steps} />`;
+  if (it.kind === 'row') return html`<${ToolRow} key=${key} ...${it.step} />`;
+  if (it.kind === 'sources') return html`<${SourceChips} key=${key} sources=${it.sources} />`;
+  if (it.kind === 'qa') return html`<${QaRow} key=${key} item=${it} />`;
+  if (it.ev.type === 'todos') {
+    const last = k.events.findLastIndex((e) => e.type === 'todos');
+    return !k.live && it.i === last ? html`<${TodoList} key=${key} items=${it.ev.items} />` : null;
+  }
+  return html`<${EventRow} key=${key} ev=${it.ev} />`;
 }
 
 export function Transcript({ k, empty }) {
@@ -1146,18 +1317,16 @@ export function Transcript({ k, empty }) {
     if (ref.current && pinned.current) ref.current.scrollTop = ref.current.scrollHeight;
   }, [k.events.length, k.live?.text, k.live?.tools?.length, k.live?.ask, k.live?.question, k.live?.todos]);
   const isEmpty = !k.events.length && !k.live;
-  const lastTodos = k.events.findLastIndex((e) => e.type === 'todos');
+  const items = buildItems(k.events, { live: !!k.live });
   return html`<div ref=${ref} onScroll=${onScroll} style=${{ flex: 1, overflow: 'auto', padding: '6px 14px' }}>
     ${isEmpty && (empty || html`<div style=${{ color: 'var(--ink-faint)', fontSize: 13, padding: '24px 8px', textAlign: 'center', lineHeight: 1.6 }}>
       The Keeper knows this world's Codex and sessions.<br />Ask about people, places, or what happened.
     </div>`)}
-    ${k.events.map((ev, i) => ev.type === 'todos'
-      ? (!k.live && i === lastTodos ? html`<${TodoList} key=${i} items=${ev.items} />` : null)
-      : html`<${EventRow} key=${i} ev=${ev} />`)}
+    ${items.map((it, n) => renderItem(it, n, k))}
     ${k.live && k.live.todos && html`<${TodoList} items=${k.live.todos} />`}
     ${k.live && k.live.compacting && html`<${CompactingIndicator} />`}
     ${k.live && !k.live.compacting && html`
-      ${k.live.tools.map((t, i) => html`<${ToolRow} key=${`t${i}`} ...${t} />`)}
+      ${liveItems(k.live.tools).map((it, n) => renderItem(it, `l${n}`, k))}
       ${k.live.text && html`<div class="ck-prose" style=${{ fontSize: 13, margin: '10px 0' }}
         dangerouslySetInnerHTML=${{ __html: renderBlockHtml(k.live.text, store.vaultPages) }} />`}
       ${k.live.ask && html`<${PermissionCard} ask=${k.live.ask} />`}
@@ -1209,6 +1378,9 @@ export function Conversation({ k, empty }) {
     }}>Drop text files to attach</div>`}
   </div>`;
 }
+
+// Compact overrides on the themed .select class (theme = border/focus/colors).
+const pickSelect = { fontSize: 11.5, padding: '4px 6px', width: 'auto', maxWidth: 150, cursor: 'pointer' };
 
 export function ModeSelect({ mode }) {
   return html`<select class="select" value=${mode} onChange=${(e) => setMode(e.target.value)}

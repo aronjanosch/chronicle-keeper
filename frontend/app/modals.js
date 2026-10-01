@@ -6,6 +6,7 @@ import { CommandPalette } from './screens/palette.js';
 import { kindForFolder } from './folderKinds.js';
 import { loadPrep, prepOps } from './prep.js';
 import { ExportPackModal, ImportPackModal } from './packs.js';
+import { ExportPagesModal } from './exportDialog.js';
 import {
   createCampaign, updateCampaign, saveSessionMetadata, loadSession,
   runExport,
@@ -17,7 +18,7 @@ import {
   createVaultPage, saveVaultPage, promoteVaultPage,
   loadPageHistory, readPageVersion, restorePageVersion, loadWorldHistory,
   loadTrash, restoreTrash, emptyTrash,
-  loadGenrePacks, applyGenrePack,
+  loadGenrePacks, applyGenrePack, replaceInWorld, undoReplace,
 } from './actions.js';
 
 const PRONOUNS = ['she/her', 'he/him', 'they/them'];
@@ -333,7 +334,7 @@ const SHORTCUT_GROUPS = [
     ['⌘N', 'New page'], ['⌘⇧J', 'Quick capture'],
   ] },
   { head: 'Page', keys: [
-    ['⌘F', 'Find in page'], ['⌘⇧K', 'Toggle the side panel'], ['⌘S', 'Save now'], ['⌘/', 'This cheat sheet'],
+    ['⌘F', 'Find in page'], ['⌘\\', 'Toggle the vault panel (⌘B outside the editor)'], ['⌘⇧K', 'Toggle the side panel'], ['⌘S', 'Save now'], ['⌘/', 'This cheat sheet'],
   ] },
   { head: 'Editor', keys: [
     ['⌘B / ⌘I', 'Bold / italic'], ['⌘L', 'Wrap as [[wikilink]]'],
@@ -347,7 +348,7 @@ function ShortcutsModal() {
   return html`<${ModalShell} title="Keyboard shortcuts" wide>
     <div style=${{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '18px 28px' }}>
       ${SHORTCUT_GROUPS.map((g) => html`<div key=${g.head}>
-        <div style=${{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 8 }}>${g.head}</div>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 8 }}>${g.head}</div>
         ${g.keys.map(([k, label]) => html`<div key=${k} style=${{ display: 'flex', alignItems: 'baseline', gap: 12, padding: '3px 0' }}>
           <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--ink)', background: 'var(--surface-inset)', border: '1px solid var(--rule-soft)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap' }}>${key(k)}</span>
           <span style=${{ fontSize: 13, color: 'var(--ink-soft)' }}>${label}</span>
@@ -705,7 +706,7 @@ function OriginChip({ origin }) {
   const keeper = origin === 'keeper';
   return html`<span style=${{
     display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999,
-    fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
+    fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
     background: keeper ? 'var(--burgundy-50)' : 'var(--moss-50)',
     color: keeper ? 'var(--burgundy)' : 'var(--moss)',
     border: `1px solid ${keeper ? 'rgba(122,46,31,.22)' : 'rgba(74,93,58,.22)'}`,
@@ -779,7 +780,7 @@ function PageHistoryModal({ path, onRestored }) {
                 boxShadow: sel === v.ts ? 'inset 2px 0 0 var(--burgundy)' : 'none',
               }}>
                 <${OriginChip} origin=${v.origin} />
-                <span style=${{ fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--ink-soft)' }}>${fmtDateTime(v.ts)}</span>
+                <span style=${{ fontSize: 11.5, fontVariantNumeric: 'tabular-nums', color: 'var(--ink-soft)' }}>${fmtDateTime(v.ts)}</span>
               </div>`)}
             </div>
             <div style=${{ minWidth: 0 }}>
@@ -821,7 +822,7 @@ function WorldHistoryModal() {
               onMouseLeave=${(e) => { e.currentTarget.style.background = 'transparent'; }}>
               <${OriginChip} origin=${r.origin} />
               <span style=${{ flex: 1, fontSize: 12.5, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${r.path.replace(/\.md$/, '')}</span>
-              <span style=${{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-faint)' }}>${fmtDateTime(r.ts)}</span>
+              <span style=${{ fontSize: 11, fontVariantNumeric: 'tabular-nums', color: 'var(--ink-faint)' }}>${fmtDateTime(r.ts)}</span>
             </div>`)}
           </div>`}
   </${ModalShell}>`;
@@ -866,7 +867,7 @@ function TrashModal() {
                 <div style=${{ fontSize: 13, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   ${g.items.map(itemLabel).join(', ')}
                 </div>
-                <div style=${{ fontSize: 11, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>deleted ${fmtDateTime(g.deleted_at * 1000)}</div>
+                <div style=${{ fontSize: 11, color: 'var(--ink-faint)', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>deleted ${fmtDateTime(g.deleted_at * 1000)}</div>
               </div>
               <${Btn} kind="secondary" size="sm" disabled=${busy}
                 onClick=${() => run(() => restoreTrash(g.id), 'Restored from trash')}>Restore</${Btn}>
@@ -1003,7 +1004,7 @@ function CodexImportModal() {
         ${kindCounts.length > 1 && html`<span style=${{ fontSize: 11.5, color: 'var(--ink-faint)' }}>· only:</span>
           ${kindCounts.map((k) => html`<button key=${k.value} onClick=${() => selectOnlyKind(k.value)}
             style=${{ fontSize: 11.5, color: 'var(--ink-soft)', border: '1px solid var(--rule)', background: 'var(--surface)', borderRadius: 999, padding: '2px 9px', cursor: 'pointer' }}>
-            ${k.label}s <span style=${{ fontFamily: 'var(--font-mono)', color: 'var(--ink-faint)' }}>${k.n}</span>
+            ${k.label}s <span style=${{ fontVariantNumeric: 'tabular-nums', color: 'var(--ink-faint)' }}>${k.n}</span>
           </button>`)}`}
         <span style=${{ flex: 1 }} />
         <span style=${{ fontSize: 11.5, color: 'var(--ink-faint)' }}>${pickedCount} of ${rows.length} selected</span>
@@ -1017,7 +1018,7 @@ function CodexImportModal() {
           <input type="checkbox" checked=${r.on} onChange=${(e) => upd(i, 'on', e.target.checked)} style=${{ cursor: 'pointer' }} />
           <div style=${{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
             <${Input} value=${r.name} onInput=${(v) => upd(i, 'name', v)} placeholder="Name" />
-            ${r.exists && html`<span style=${{ flex: '0 0 auto', fontSize: 9.5, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--ochre)', background: 'var(--ochre-50)', border: '1px solid rgba(168,115,40,.24)', borderRadius: 999, padding: '1px 6px' }} title="Already in the codex — tick to replace">in codex</span>`}
+            ${r.exists && html`<span style=${{ flex: '0 0 auto', fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--ochre)', background: 'var(--ochre-50)', border: '1px solid rgba(168,115,40,.24)', borderRadius: 999, padding: '1px 6px' }} title="Already in the codex — tick to replace">in codex</span>`}
           </div>
           <${Select} value=${r.kind} onChange=${(v) => upd(i, 'kind', v)} options=${CODEX_KINDS} />
           <${Input} value=${r.body} onInput=${(v) => upd(i, 'body', v)} placeholder="One-line description" />
@@ -1159,8 +1160,8 @@ function ExportWorldModal() {
 function DiagSection({ title, items, render }) {
   if (!items || items.length === 0) return null;
   return html`<div>
-    <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>
-      ${title} <span style=${{ fontFamily: 'var(--font-mono)' }}>${items.length}</span>
+    <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>
+      ${title} <span style=${{ fontVariantNumeric: 'tabular-nums' }}>${items.length}</span>
     </div>
     <div style=${{ display: 'flex', flexDirection: 'column', gap: 2 }}>${items.map(render)}</div>
   </div>`;
@@ -1257,12 +1258,90 @@ function GenrePackModal() {
     ${!packs ? html`<${Spinner} />` : html`<${Select} value=${sel} onChange=${setSel} options=${packs.map((p) => ({ value: p.id, label: p.name }))} />`}
     ${pack && html`<div style=${{ fontSize: 13, color: 'var(--ink-soft)' }}>${pack.description}</div>`}
     ${report && html`<div style=${{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
-      <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 4 }}>${done ? 'Applied' : 'Would change'}</div>
+      <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 4 }}>${done ? 'Applied' : 'Would change'}</div>
       ${report.kinds.map((k) => html`<div key=${k.kind}>${k.created ? 'New kind ' : ''}<b>${k.kind}</b>${k.fields_added.length ? ` + ${k.fields_added.join(', ')}` : ''}</div>`)}
       ${report.templates.map((t) => html`<div key=${t.name} style=${{ color: 'var(--ink-muted)' }}>${t.name}: ${TEMPLATE_WORDS[t.status]}</div>`)}
       ${report.calendar !== 'none' && html`<div>Calendar: ${{ set: 'added', unchanged: 'already set', kept: 'yours kept' }[report.calendar]}</div>`}
       ${report.tags.length > 0 && html`<div style=${{ marginTop: 4, color: 'var(--ink-muted)' }}>Suggested tags: ${report.tags.map((t) => '#' + t).join(' ')}</div>`}
     </div>`}
+  </${ModalShell}>`;
+}
+
+function Check({ label, checked, onChange }) {
+  return html`<label style=${{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
+    <input type="checkbox" checked=${checked} onChange=${(e) => onChange(e.target.checked)} /> ${label}
+  </label>`;
+}
+
+const KIND_WORDS = { page: 'Page', transcript: 'Transcript', summary: 'Summary' };
+
+function ReplaceModal() {
+  const [find, setFind] = useState('');
+  const [replace, setReplace] = useState('');
+  const [whole, setWhole] = useState(true);
+  const [matchCase, setMatchCase] = useState(false);
+  const [pages, setPages] = useState(true);
+  const [sessions, setSessions] = useState(true);
+  const [plan, setPlan] = useState(null);
+  const [done, setDone] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const opts = { find, replace, whole_word: whole, case_sensitive: matchCase, pages, sessions };
+  const key = JSON.stringify(opts);
+  // Any edit invalidates the preview: apply only ever runs what the user just saw.
+  useEffect(() => {
+    setPlan(null); setErr(null);
+    if (!find || find === replace || (!pages && !sessions)) return undefined;
+    const t = setTimeout(() => { replaceInWorld(opts).then(setPlan).catch((e) => setErr(e.message)); }, 300);
+    return () => clearTimeout(t);
+  }, [key]);
+  async function go() {
+    setBusy(true); setErr(null);
+    try { setDone(await replaceInWorld(opts, false)); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+  async function undo() {
+    setBusy(true); setErr(null);
+    try { await undoReplace(done.id); setDone(null); setPlan(null); setFind(''); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+  const files = plan ? plan.files : [];
+  return html`<${ModalShell} wide title="Find and replace in world" footer=${done
+    ? html`<${Btn} kind="ghost" disabled=${busy || !done.id} onClick=${undo}>Undo</${Btn}>
+        <${Btn} kind="primary" onClick=${closeModal}>Done</${Btn}>`
+    : html`<${Btn} kind="ghost" disabled=${busy} onClick=${closeModal}>Cancel</${Btn}>
+        <${Btn} kind="primary" disabled=${busy || !plan || plan.total === 0} onClick=${go}>
+          ${busy ? 'Replacing…' : plan && plan.total ? `Replace ${plan.total} in ${files.length} file${files.length === 1 ? '' : 's'}` : 'Replace'}
+        </${Btn}>`}>
+    ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
+    ${done ? html`<div style=${{ fontSize: 13.5, color: 'var(--ink-soft)' }}>
+      Replaced ${done.replaced} in ${done.files} file${done.files === 1 ? '' : 's'}. Pages keep a history snapshot; Undo restores everything this replace touched.
+    </div>` : html`
+      <${Field} label="Find"><${Input} value=${find} onInput=${setFind} placeholder="Brannick" autoFocus /></${Field}>
+      <${Field} label="Replace with"><${Input} value=${replace} onInput=${setReplace} placeholder="Brannik" /></${Field}>
+      <div style=${{ fontSize: 11.5, color: 'var(--ink-faint)', lineHeight: 1.4 }}>
+        Replaces text everywhere it matches, including inside [[links]]. Page file names stay as they are.
+      </div>
+      <div style=${{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        <${Check} label="Whole word" checked=${whole} onChange=${setWhole} />
+        <${Check} label="Match case" checked=${matchCase} onChange=${setMatchCase} />
+        <${Check} label="Codex pages" checked=${pages} onChange=${setPages} />
+        <${Check} label="Session transcripts and summaries" checked=${sessions} onChange=${setSessions} />
+      </div>
+      ${find && plan === null && !err && html`<${Spinner} />`}
+      ${plan && plan.total === 0 && html`<div style=${{ fontSize: 13, color: 'var(--ink-muted)', fontStyle: 'italic' }}>No matches.</div>`}
+      ${files.length > 0 && html`<div style=${{ maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        ${files.map((f) => html`<div key=${f.path}>
+          <div style=${{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 12.5 }}>
+            <span style=${{ fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${KIND_WORDS[f.kind]}</span>
+            <span style=${{ color: 'var(--ink)' }}>${f.path}</span>
+            <span style=${{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums', color: 'var(--ink-muted)' }}>${f.count}</span>
+          </div>
+          ${f.samples.map((s, i) => html`<div key=${i} style=${{ ...mono, paddingLeft: 8 }}>${s}</div>`)}
+        </div>`)}
+      </div>`}`}
   </${ModalShell}>`;
 }
 
@@ -1293,9 +1372,11 @@ export function ModalHost({ modal }) {
     case 'quickCapture': return html`<${QuickCaptureModal} />`;
     case 'newEvent': return html`<${NewEventModal} ...${modal.props} />`;
     case 'exportWorld': return html`<${ExportWorldModal} />`;
+    case 'exportPages': return html`<${ExportPagesModal} ...${modal.props} />`;
     case 'exportPack': return html`<${ExportPackModal} />`;
     case 'importPack': return html`<${ImportPackModal} />`;
     case 'genrePack': return html`<${GenrePackModal} />`;
+    case 'replace': return html`<${ReplaceModal} />`;
     default: return null;
   }
 }

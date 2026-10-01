@@ -321,7 +321,12 @@ fn page_history(ctx: &ToolCtx<'_>, args: &Value) -> Result<String, String> {
     if let Some(ts) = args.get("ts").and_then(Value::as_u64) {
         let (meta, content) = history::read_version(ctx.world_root, &path, ts).map_err(app_err)?;
         return Ok(match content {
-            Some(c) => format!("{path} as of {} ({}):\n\n{c}", meta.ts, meta.origin),
+            Some(c) => format!(
+                "{path} as of {} ({}):\n\n{}",
+                meta.ts,
+                meta.origin,
+                crate::gm::annotate(&c)
+            ),
             None => format!("{path} did not exist at version {ts}."),
         });
     }

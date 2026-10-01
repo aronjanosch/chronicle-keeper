@@ -1,9 +1,11 @@
 // App shell: sidebar + topbar + body slot. Ported from the design's shell.jsx,
 // wired to the store's router.
 import { html, useState, useEffect } from '../vendor/htm-preact-standalone.mjs';
-import { navigate, navigateBack, navigateForward, store, useStore } from './core.js';
-import { dismissUpdate } from './actions.js';
-import { Icon, Sigil, BrandMark } from './ui.js';
+import { navigate, navigateBack, navigateForward, openModal, store, useStore } from './core.js';
+import { dismissUpdate, openCampaign } from './actions.js';
+import { Icon, Sigil, BrandMark, Menu, SearchField } from './ui.js';
+import { useFlag, toggleFlag, RAIL_COMPACT } from './layoutPrefs.js';
+import { runCommand } from './commands.js';
 
 // Drag-resizable sidebar width, persisted per key. Returns [width, onMouseDown].
 // opts.fromRight flips the drag direction for panels anchored on the right edge.
@@ -35,37 +37,16 @@ export function useSidebarWidth(key, fallback = 220, opts = {}) {
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
   }
-  return [w, onMouseDown];
+  const reset = () => {
+    setW(fallback);
+    try { localStorage.removeItem(key); } catch (_) { /* private mode */ }
+  };
+  return [w, onMouseDown, reset];
 }
 
-export function ResizeHandle({ onMouseDown, side }) {
-  return html`<div class=${side === 'left' ? 'ck-resize-handle left' : 'ck-resize-handle'} onMouseDown=${onMouseDown} title="Drag to resize" />`;
-}
-
-function NavItem({ icon, label, count, active, indent, onClick }) {
-  return html`<div onClick=${onClick} style=${{
-    display: 'flex', alignItems: 'center', gap: 9,
-    padding: indent ? `6px 9px 6px ${9 + Number(indent) * 21}px` : '7px 9px',
-    borderRadius: 4, color: active ? 'var(--ink)' : 'var(--ink-soft)',
-    fontSize: 13, fontWeight: 500,
-    background: active ? 'var(--surface)' : 'transparent',
-    border: active ? '1px solid var(--rule-soft)' : '1px solid transparent',
-    boxShadow: active ? '0 1px 0 rgba(120,90,40,.05)' : 'none', cursor: 'pointer',
-  }}
-    onMouseEnter=${(e) => { if (!active) e.currentTarget.style.background = 'rgba(120,90,40,.08)'; }}
-    onMouseLeave=${(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}>
-    ${icon && html`<${Icon} name=${icon} />`}
-    <span style=${{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${label}</span>
-    ${count != null && html`<span style=${{ fontFamily: 'var(--font-mono)', fontSize: 11, color: active ? 'var(--burgundy)' : 'var(--ink-faint)' }}>${count}</span>`}
-  </div>`;
-}
-function codexCount() {
-  const n = (store.vaultPages || []).length;
-  return n > 0 ? n : null;
-}
-function sessionsCount() {
-  const n = (store.campaignSessions || []).length;
-  return n > 0 ? n : null;
+export function ResizeHandle({ onMouseDown, onReset, side }) {
+  return html`<div class=${side === 'left' ? 'ck-resize-handle left' : 'ck-resize-handle'} onMouseDown=${onMouseDown} onDblClick=${onReset}
+    title=${onReset ? 'Drag to resize · double-click to reset' : 'Drag to resize'} />`;
 }
 
 // Flatten the atlas map hierarchy (parent links) into depth-annotated rows.
@@ -86,24 +67,19 @@ function mapTreeRows(maps) {
       walk(m.id, depth + 1);
     }
   };
-  walk('', 1);
+  walk('', 0);
   return rows;
 }
 
-function NavHead({ children }) {
-  return html`<div style=${{ padding: '14px 8px 4px', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${children}</div>`;
-}
-
-// Single source of truth for in-world destinations — the full Sidebar and the
-// compact icon row on the Codex/page screens both render from this list.
+// Single source of truth for in-world destinations (rail + palette).
 export const WORLD_NAV = [
   { key: 'overview', icon: 'compass', label: 'Overview', screen: 'campaign' },
-  { key: 'codex', icon: 'book', label: 'The Codex', screen: 'codex' },
+  { key: 'codex', icon: 'scroll', label: 'Codex', screen: 'codex' },
   { key: 'search', icon: 'search', label: 'Search', screen: 'search' },
   { key: 'atlas', icon: 'map', label: 'Atlas', screen: 'atlas' },
   { key: 'timeline', icon: 'time', label: 'Timeline', screen: 'timeline' },
   { key: 'graph', icon: 'link', label: 'Graph', screen: 'graph' },
-  { key: 'keeper', icon: 'feather', label: 'The Keeper', screen: 'keeper' },
+  { key: 'keeper', icon: 'feather', label: 'Keeper', screen: 'keeper' },
   { key: 'sessions', icon: 'mic', label: 'Sessions', screen: 'sessions' },
   { key: 'settings', icon: 'cog', label: 'Settings', screen: 'settings' },
 ];
@@ -112,91 +88,109 @@ export function navToWorldDest(dest, campaignId) {
   navigate(dest.screen, dest.key === 'settings' ? undefined : { id: campaignId });
 }
 
-// Reads the real Tauri bundle version so the sidebar tagline never drifts from
-// tauri.conf.json again; falls back to a static string in standalone/browser dev.
-function useAppVersion() {
-  const [version, setVersion] = useState('1.0.0');
-  useEffect(() => {
-    const tauri = window.__TAURI__;
-    if (!tauri?.app?.getVersion) return;
-    tauri.app.getVersion().then(setVersion).catch(() => {});
-  }, []);
-  return version;
+function RailItem({ icon, label, active, compact, onClick, onContextMenu, dot, title }) {
+  return html`<div class="ck-rail-item" role="button" tabIndex=${0} title=${title || label} onClick=${onClick} onContextMenu=${onContextMenu}
+    onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+    data-active=${active ? '1' : undefined}
+    style=${{
+      width: compact ? 40 : 60, padding: compact ? '9px 0' : '7px 0 6px', borderRadius: 6,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, cursor: 'pointer', position: 'relative',
+      background: active ? 'var(--surface)' : 'transparent',
+      border: active ? '1px solid var(--rule-soft)' : '1px solid transparent',
+      color: active ? 'var(--burgundy)' : 'var(--ink-soft)',
+    }}>
+    ${active && html`<span style=${{ position: 'absolute', left: -7, top: 9, bottom: 9, width: 3, borderRadius: 2, background: 'var(--burgundy)' }} />`}
+    <${Icon} name=${icon} size=${18} />
+    ${!compact && html`<span style=${{ fontSize: 11, fontWeight: active ? 600 : 500, lineHeight: 1.2 }}>${label}</span>`}
+    ${dot && html`<span style=${{ position: 'absolute', top: 5, right: compact ? 6 : 10, width: 7, height: 7, borderRadius: '50%', background: dot }} />`}
+  </div>`;
 }
 
-export function Sidebar({ variant = 'library', active, campaign }) {
-  const warn = store.providerStatus && store.providerStatus.ok === false ? store.providerStatus : null;
-  const update = store.updateInfo;
-  const [width, onResize] = useSidebarWidth('ck_sidebar_w');
-  const version = useAppVersion();
-  return html`<aside style=${{
-    background: 'var(--paper-deep)', borderRight: '1px solid var(--rule)',
-    padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 2,
-    width, flex: `0 0 ${width}px`, position: 'relative',
-  }}>
-    <${ResizeHandle} onMouseDown=${onResize} />
-    <div style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 6px 14px', borderBottom: '1px solid var(--rule-soft)', marginBottom: 4, cursor: 'pointer' }}
-      onClick=${() => navigate('library')}>
-      <${BrandMark} size=${30} />
-      <div style=${{ lineHeight: 1.15 }}>
-        <div style=${{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 500, letterSpacing: '-0.01em' }}>Chronicle Keeper</div>
-        <div style=${{ fontSize: 10, fontWeight: 500, color: 'var(--ink-faint)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 2 }}>v${version} · worldbuilding</div>
-      </div>
+// Sigil at the top of the rail = the world switcher.
+function WorldSwitcher({ campaign, compact }) {
+  const s = useStore();
+  const [open, setOpen] = useState(false);
+  const inWorld = !!campaign;
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = () => setOpen(false);
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  const worlds = s.campaigns || [];
+  return html`<div style=${{ position: 'relative', marginBottom: 10 }} onMouseDown=${(e) => e.stopPropagation()}>
+    <div class="ck-rail-item" role="button" tabIndex=${0} title=${inWorld ? 'Switch world' : 'All worlds'}
+      onClick=${() => (inWorld || worlds.length ? setOpen((o) => !o) : navigate('library'))}
+      style=${{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '2px 0', borderRadius: 6 }}>
+      ${inWorld ? html`<${Sigil} ch=${campaign.sigil || '?'} tone=${campaign.tone || 'burgundy'} />` : html`<${BrandMark} size=${32} />`}
+      ${!compact && html`<${Icon} name="chev-d" size=${10} className="ck-ink-muted" />`}
     </div>
-
-    ${variant === 'library' ? html`
-      <${NavHead}>Library</${NavHead}>
-      <${NavItem} icon="globe" label="Worlds" active=${active === 'campaigns' || active === 'worlds'} onClick=${() => navigate('library')} />
-    ` : html`
-      <${NavItem} icon="chev-l" label="All worlds" onClick=${() => navigate('library')} />
-      <div style=${{ margin: '10px 4px 6px', padding: '10px', background: 'var(--surface)', border: '1px solid var(--rule-soft)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <${Sigil} ch=${campaign?.sigil || '?'} tone=${campaign?.tone || 'burgundy'} />
-        <div style=${{ lineHeight: 1.2, minWidth: 0 }}>
-          <div style=${{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 500, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${campaign?.name || 'World'}</div>
-          <div style=${{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 2 }}>${campaign?.system || '—'}</div>
-        </div>
-      </div>
-      <${NavHead}>World</${NavHead}>
-      ${WORLD_NAV.filter((d) => d.key !== 'settings').map((d) => html`
-        <${NavItem} key=${d.key} icon=${d.icon} label=${d.label}
-          count=${d.key === 'codex' ? codexCount(campaign) : d.key === 'sessions' ? sessionsCount() : null}
-          active=${active === d.key}
-          onClick=${() => navToWorldDest(d, campaign?.campaign_id)} />
-        ${d.key === 'atlas' && active === 'atlas' && mapTreeRows(store.atlasMaps || []).map(({ map: m, depth }) => html`
-          <${NavItem} key=${m.id} indent=${depth} label=${m.name}
-            active=${(store.atlasMapId || store.route.params?.map) === m.id}
-            onClick=${() => navigate('atlas', { id: campaign?.campaign_id, map: m.id })} />`)}
-      `)}
-    `}
-
-    <div style=${{ flex: 1 }} />
-    <${NavItem} icon="cog" label="Settings" active=${active === 'settings'} onClick=${() => navigate('settings')} />
-    ${update && html`<div title="Open release page"
-      style=${{ margin: '8px 4px 0', padding: '10px 12px', background: 'var(--moss-50)', border: '1px solid rgba(74,93,58,.3)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--ink-soft)' }}>
-      <span style=${{ width: 8, height: 8, borderRadius: '50%', background: 'var(--moss)', flex: '0 0 auto' }} />
-      <div style=${{ lineHeight: 1.3, flex: 1, cursor: 'pointer' }}
-        onClick=${() => window.__TAURI__?.opener?.openUrl(update.url)}>
-        <div style=${{ color: 'var(--moss)', fontWeight: 600 }}>Update available</div>
-        <div>v${update.version} · download</div>
-      </div>
-      <button onClick=${() => dismissUpdate(update.tag)} title="Dismiss"
-        style=${{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-faint)', display: 'flex', padding: 2 }}>
-        <${Icon} name="x" size=${12} />
-      </button>
+    ${open && html`<div style=${{ position: 'fixed', left: 8, top: 56, zIndex: 120, width: 232, background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', borderRadius: 8, boxShadow: 'var(--shadow-raised)', padding: 4 }}>
+      <div class="ck-label" style=${{ padding: '6px 9px 4px' }}>Worlds</div>
+      ${worlds.map((w) => html`<div key=${w.campaign_id} class="ck-menu-row" onClick=${() => { setOpen(false); openCampaign(w.campaign_id); }}
+        style=${{ background: campaign?.campaign_id === w.campaign_id ? 'var(--paper-deep)' : undefined }}>
+        <${Sigil} ch=${(w.name || '?').slice(0, 1).toUpperCase()} tone=${w.tone || 'burgundy'} />
+        <span style=${{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${w.name}</span>
+      </div>`)}
+      <div style=${{ height: 1, background: 'var(--rule-soft)', margin: '4px 0' }} />
+      <div class="ck-menu-row" onClick=${() => { setOpen(false); navigate('library'); }}><${Icon} name="globe" size=${14} /><span>All worlds</span></div>
+      <div class="ck-menu-row" onClick=${() => { setOpen(false); navigate('newWorld'); }}><${Icon} name="plus" size=${14} /><span>New world</span></div>
     </div>`}
-    ${warn && html`<div onClick=${() => navigate('settings')} title="Open Settings"
-      style=${{ margin: '8px 4px 0', padding: '10px 12px', background: 'var(--ochre-50)', border: '1px solid rgba(168,115,40,.28)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--ink-soft)', cursor: 'pointer' }}>
-      <span style=${{ width: 8, height: 8, borderRadius: '50%', background: 'var(--ochre)', flex: '0 0 auto' }} />
-      <div style=${{ lineHeight: 1.3 }}>
-        <div style=${{ color: 'var(--ochre)', fontWeight: 600 }}>Needs attention</div>
-        <div>${warn.reason}</div>
-      </div>
-    </div>`}
+  </div>`;
+}
+
+// Contextual panel on the Atlas screen: the map hierarchy (was in the old sidebar).
+function AtlasMapsPanel({ campaign }) {
+  const rows = mapTreeRows(store.atlasMaps || []);
+  if (!rows.length) return null;
+  const cur = store.atlasMapId || store.route.params?.map;
+  return html`<aside style=${{ width: 200, flex: '0 0 200px', borderRight: '1px solid var(--rule)', background: 'var(--paper-deep)', padding: '14px 8px', overflow: 'auto' }}>
+    <div class="ck-label" style=${{ padding: '0 8px 8px' }}>Maps</div>
+    ${rows.map(({ map: m, depth }) => html`<div key=${m.id} class="ck-menu-row" onClick=${() => navigate('atlas', { id: campaign?.campaign_id, map: m.id })}
+      style=${{ paddingLeft: 9 + depth * 16, background: cur === m.id ? 'var(--surface)' : undefined, border: cur === m.id ? '1px solid var(--rule-soft)' : '1px solid transparent', fontWeight: cur === m.id ? 600 : 500 }}>
+      <span style=${{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${m.name}</span>
+    </div>`)}
   </aside>`;
 }
 
+// The one navigation rail: 72px icon + label, 52px compact (⌘⇧B, persisted).
+export function Rail({ variant = 'library', active, campaign }) {
+  const compact = useFlag(RAIL_COMPACT, false);
+  const warn = store.providerStatus && store.providerStatus.ok === false ? store.providerStatus : null;
+  const update = store.updateInfo;
+  const inWorld = variant === 'campaign' && campaign;
+  const nav = inWorld ? WORLD_NAV.filter((d) => d.key !== 'settings') : [{ key: 'worlds', icon: 'globe', label: 'Worlds', screen: 'library' }];
+  const isActive = (k) => active === k || (k === 'worlds' && (active === 'campaigns' || active === 'worlds'));
+  return html`<nav aria-label="Main" style=${{
+    width: compact ? 52 : 72, flex: `0 0 ${compact ? 52 : 72}px`, transition: 'width .18s', background: 'var(--paper-deep)',
+    borderRight: '1px solid var(--rule)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '12px 0', gap: 2,
+    position: 'relative', zIndex: 30,
+  }}>
+    <${WorldSwitcher} campaign=${inWorld ? campaign : null} compact=${compact} />
+    ${nav.map((d) => html`<${RailItem} key=${d.key} icon=${d.icon} label=${d.label} compact=${compact} active=${isActive(d.key)}
+      onClick=${() => (inWorld ? navToWorldDest(d, campaign.campaign_id) : navigate(d.screen))} />`)}
+    <div style=${{ flex: 1 }} />
+    ${update && html`<${RailItem} icon="download" label="Update" compact=${compact} dot="var(--moss)" title=${`Update v${update.version} available — click to download, right-click to dismiss`}
+      onClick=${() => window.__TAURI__?.opener?.openUrl(update.url)}
+      onContextMenu=${(e) => { e.preventDefault(); dismissUpdate(update.tag); }} />`}
+    <${RailItem} icon="cog" label="Settings" compact=${compact} active=${active === 'settings'} dot=${warn ? 'var(--ochre)' : null}
+      title=${warn ? `Settings — needs attention: ${warn.reason}` : 'Settings (⌘,)'} onClick=${() => navigate('settings')} />
+    <button class="ck-rail-item" title=${compact ? 'Expand sidebar (⌘⇧B)' : 'Collapse sidebar (⌘⇧B)'} aria-label="Toggle sidebar"
+      onClick=${() => toggleFlag(RAIL_COMPACT, false)}
+      style=${{ width: compact ? 40 : 60, height: 30, marginTop: 6, borderRadius: 6, color: 'var(--ink-muted)', fontSize: 14 }}>${compact ? '»' : '«'}</button>
+  </nav>`;
+}
+
+// Rail plus, on the Atlas screen, its contextual map list.
+export function Sidebar({ variant = 'library', active, campaign }) {
+  return html`<${Rail} variant=${variant} active=${active} campaign=${campaign} />
+    ${active === 'atlas' && variant === 'campaign' && html`<${AtlasMapsPanel} campaign=${campaign} />`}`;
+}
+
 function NavBtn({ icon, onClick, disabled, title }) {
-  return html`<button onClick=${onClick} disabled=${disabled} title=${title}
+  return html`<button onClick=${onClick} disabled=${disabled} title=${title} aria-label=${title}
     style=${{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26,
       background: 'none', border: 'none', borderRadius: 4, cursor: disabled ? 'default' : 'pointer',
       color: disabled ? 'var(--ink-faint)' : 'var(--ink-muted)', padding: 0, flexShrink: 0 }}
@@ -206,33 +200,40 @@ function NavBtn({ icon, onClick, disabled, title }) {
   </button>`;
 }
 
-export function Topbar({ crumbs = [], right }) {
+// Uniform topbar: title · centered ⌘K field · secondary actions · primary · Keeper.
+// `crumbs` is legacy: only the last entry is used as the title. `right` = legacy
+// action cluster; prefer `actions`, `primary`, `overflow` ({label,icon,onClick}[]).
+export function Topbar({ title, sub, crumbs, right, actions, primary, overflow, search = true, searchNode }) {
   const s = useStore();
+  const last = crumbs && crumbs.filter(Boolean).slice(-1)[0];
+  const heading = title ?? (typeof last === 'string' ? last : last?.label);
+  const hasWorld = !!s.campaign && s.route.name !== 'library' && s.route.name !== 'newWorld';
   return html`<div style=${{
-    padding: '0 24px', borderBottom: '1px solid var(--rule-soft)',
-    display: 'flex', alignItems: 'center', gap: 12, background: 'var(--paper)',
-    flex: '0 0 auto', height: 52,
+    padding: '0 20px', borderBottom: '1px solid var(--rule-soft)',
+    display: 'flex', alignItems: 'center', gap: 14, background: 'var(--paper)',
+    flex: '0 0 auto', height: 48,
   }}>
-    <div style=${{ display: 'flex', alignItems: 'center', gap: 2 }}>
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 2, flex: '0 0 auto' }}>
       <${NavBtn} icon="chev-l" onClick=${navigateBack} disabled=${!s.canNavBack} title="Go back (⌘[)" />
       <${NavBtn} icon="chev-r" onClick=${navigateForward} disabled=${!s.canNavFwd} title="Go forward (⌘])" />
     </div>
-    <div style=${{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-muted)' }}>
-      ${crumbs.filter(Boolean).map((c, i, arr) => {
-        const label = typeof c === 'string' ? c : c?.label;
-        const onClick = typeof c === 'object' ? c?.onClick : null;
-        const last = i === arr.length - 1;
-        return html`
-          ${i > 0 && html`<span style=${{ color: 'var(--ink-faint)' }}>›</span>`}
-          <span onClick=${onClick || undefined}
-            style=${{ color: last ? 'var(--ink)' : 'var(--ink-muted)', fontWeight: last ? 500 : 400, cursor: onClick ? 'pointer' : 'default' }}
-            onMouseEnter=${onClick ? (e) => { e.currentTarget.style.color = 'var(--burgundy)'; } : undefined}
-            onMouseLeave=${onClick ? (e) => { e.currentTarget.style.color = 'var(--ink-muted)'; } : undefined}>${label}</span>
-        `;
-      })}
+    <div style=${{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0, flex: '0 1 auto' }}>
+      <span style=${{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--ink)' }}>${heading}</span>
+      ${sub && html`<span style=${{ fontSize: 12, color: 'var(--ink-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${sub}</span>`}
     </div>
-    <div style=${{ flex: 1 }} />
-    ${right}
+    <div style=${{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 0 }}>
+      ${searchNode || (search && html`<${SearchField} value="" placeholder="Search or jump to…" hint="⌘K" onFocusOpen=${() => runCommand('palette')}
+        onKeyDown=${(e) => { if (e.key === 'Enter') runCommand('palette'); }}
+        style=${{ width: 'min(100%, 340px)' }} />`)}
+    </div>
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
+      ${actions ?? right}
+      ${overflow && html`<${Menu} items=${overflow} />`}
+      ${primary}
+      ${hasWorld && html`<button class="ck-rail-item" title="Ask the Keeper (⌘J)" aria-label="Ask the Keeper" onClick=${() => runCommand('keeper')}
+        style=${{ width: 32, height: 32, borderRadius: 6, border: '1px solid var(--rule)', background: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--burgundy)' }}>
+        <${Icon} name="feather" size=${14} /></button>`}
+    </div>
   </div>`;
 }
 

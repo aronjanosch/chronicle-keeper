@@ -5,6 +5,7 @@ import { deleteCampaign, generateRecap, revealPath, refreshCampaignSessions, bac
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Sigil, Btn, StagePill, Empty, Markdown, Menu } from '../ui.js';
 import { KINDS, iconForKind } from './codex.js';
+import { UnfinishedCard } from '../unfinished.js';
 
 // Collapsed height cap for the recap body. Tall recaps would otherwise push
 // the whole page down; we clamp + fade and offer an Expand toggle.
@@ -19,7 +20,7 @@ function StorySoFar({ campaign, sessions }) {
       <h3 style=${{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 500, color: 'var(--ink)' }}>The Story So Far</h3>
       <span style=${{ fontSize: 12, color: 'var(--ink-muted)' }}>· the whole arc at a glance</span>
       <span style=${{ flex: 1 }} />
-      ${recap && campaign.recap_updated_at && html`<span style=${{ fontSize: 11, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>updated ${fmtDateTime(campaign.recap_updated_at)}</span>`}
+      ${recap && campaign.recap_updated_at && html`<span style=${{ fontSize: 11, color: 'var(--ink-faint)', fontVariantNumeric: 'tabular-nums' }}>updated ${fmtDateTime(campaign.recap_updated_at)}</span>`}
       <${Btn} kind=${recap ? 'ghost' : 'primary'} size="sm" icon="sparkle" disabled=${!canBuild}
         title=${canBuild ? '' : 'Summarize at least one session first'}
         onClick=${generateRecap}>${recap ? 'Regenerate' : 'Generate'}</${Btn}>
@@ -63,7 +64,7 @@ function PartyMember({ player, onClick }) {
 
 function Stat({ value, label, italic }) {
   return html`<div>
-    <div style=${{ fontFamily: italic ? 'var(--font-display)' : 'var(--font-mono)', fontStyle: italic ? 'italic' : 'normal', fontSize: 22, fontWeight: 500, color: 'var(--ink)' }}>${value}</div>
+    <div style=${{ fontFamily: italic ? 'var(--font-display)' : 'var(--font-ui)', fontVariantNumeric: 'tabular-nums', fontStyle: italic ? 'italic' : 'normal', fontSize: 22, fontWeight: 500, color: 'var(--ink)' }}>${value}</div>
     <div style=${{ fontSize: 11, color: 'var(--ink-faint)', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600, marginTop: -2 }}>${label}</div>
   </div>`;
 }
@@ -107,7 +108,7 @@ function CodexTeaser({ campaign, vaultPages }) {
                 fontSize: 11.5, fontWeight: 500,
               }}>
                 <${Icon} name=${iconForKind(g.value)} size=${11} /> ${g.plural}
-                <span style=${{ fontFamily: 'var(--font-mono)', opacity: 0.7 }}>${g.n}</span>
+                <span style=${{ fontVariantNumeric: 'tabular-nums', opacity: 0.7 }}>${g.n}</span>
               </span>`;
             })}
           </div>
@@ -150,12 +151,12 @@ export function CampaignScreen({ store }) {
 
   return html`<${Shell}
     sidebar=${html`<${Sidebar} variant="campaign" active="overview" campaign=${c} />`}
-    topbar=${html`<${Topbar} crumbs=${[{ label: 'Worlds', onClick: () => navigate('library') }, c.name]} right=${html`
-      <div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <${Btn} kind="primary" icon="mic" onClick=${() => navigate('newSession', { id: c.campaign_id })}>New session</${Btn}>
-        <${Menu} items=${[
+    topbar=${html`<${Topbar} title=${c.name} sub="Overview"
+      primary=${html`<${Btn} kind="primary" icon="mic" onClick=${() => navigate('newSession', { id: c.campaign_id })}>New session</${Btn}>`}
+      overflow=${[
           { label: 'Edit world', icon: 'edit', onClick: () => openModal('campaign', { edit: c }) },
           { label: 'Apply a genre pack…', icon: 'book', hidden: !c.vault_path, onClick: () => openModal('genrePack') },
+          { label: 'Find and replace…', icon: 'search', hidden: !c.vault_path, onClick: () => openModal('replace') },
           { label: 'Reveal folder', icon: 'folder', hidden: !(window.__TAURI__ && c.vault_path), onClick: () => revealPath(c.vault_path) },
           { label: 'Export world…', icon: 'download', hidden: !c.vault_path, onClick: () => openModal('exportWorld') },
           { label: 'Export world pack…', icon: 'download', hidden: !c.vault_path, onClick: () => openModal('exportPack') },
@@ -171,14 +172,13 @@ export function CampaignScreen({ store }) {
               onConfirm: () => deleteCampaign(c.campaign_id),
             });
           } },
-        ]} />
-      </div>`} />`}
+        ]} />`}
   >
     <div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, padding: '24px 28px', display: 'flex', alignItems: 'flex-start', gap: 24, marginBottom: 24, position: 'relative', overflow: 'hidden' }}>
       <div style=${{ position: 'absolute', top: 0, right: 0, width: 220, height: '100%', background: 'radial-gradient(circle at 100% 0%, rgba(122,46,31,.07), transparent 60%)' }} />
       <${Sigil} ch=${c.sigil} tone=${c.tone} size="xl" />
       <div style=${{ flex: 1 }}>
-        <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--burgundy)', marginBottom: 4 }}>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)', marginBottom: 4 }}>
           Chronicle${c.system ? ` · ${c.system}` : ''}
         </div>
         <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, letterSpacing: '-0.015em', color: 'var(--ink)', lineHeight: 1.1 }}>${c.name}</h1>
@@ -192,11 +192,11 @@ export function CampaignScreen({ store }) {
         </div>
       </div>
       ${latest && html`<div style=${{ width: 260, padding: 16, borderRadius: 6, background: 'var(--paper)', border: '1px solid var(--rule-soft)' }}>
-        <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>Latest session</div>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>Latest session</div>
         <div style=${{ fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: 15, color: 'var(--ink)', lineHeight: 1.3 }}>
           ${latest.title || 'Untitled'}
         </div>
-        <div style=${{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 6, fontFamily: 'var(--font-mono)' }}>#${latest.session_number} · ${fmtDate(latest.date) || '—'}</div>
+        <div style=${{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 6, fontVariantNumeric: 'tabular-nums' }}>#${latest.session_number} · ${fmtDate(latest.date) || '—'}</div>
         <div style=${{ height: 1, background: 'var(--rule-soft)', margin: '10px 0' }} />
         <div style=${{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           <${StagePill} stage="upload" complete=${!!latest.has_tracks} current=${!latest.has_tracks} />
@@ -207,6 +207,8 @@ export function CampaignScreen({ store }) {
     </div>
 
     <${StorySoFar} campaign=${c} sessions=${sessions} />
+
+    ${c.vault_path && html`<${UnfinishedCard} campaign=${c} />`}
 
     <div style=${{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
       <div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden' }}>

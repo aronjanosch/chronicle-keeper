@@ -228,7 +228,11 @@ pub fn context_block(world_root: &Path, chat_id: &str, cfg: &WorldConfig) -> Str
             "page" => a
                 .path
                 .as_deref()
-                .and_then(|p| vault::read_page(&vault_root, p).ok().map(|pg| pg.content))
+                .and_then(|p| {
+                    vault::read_page(&vault_root, p)
+                        .ok()
+                        .map(|pg| crate::gm::annotate(&pg.content))
+                })
                 .unwrap_or_else(|| format!("[attached page {} no longer exists]", a.label)),
             "session" => a
                 .session
@@ -288,7 +292,7 @@ pub fn focus_block(world_root: &Path, chat_id: &str, cfg: &WorldConfig, focus: &
             focus.path,
         ));
     } else if let Ok(pg) = vault::read_page(&vault_root, &focus.path) {
-        let body = truncate_noted(&pg.content, MAX_ITEM_BYTES);
+        let body = truncate_noted(&crate::gm::annotate(&pg.content), MAX_ITEM_BYTES);
         out.push_str(&format!(
             "The user is viewing this page right now — treat it as the likely subject of their message.\n\
              \n### [open] {}\n```\n{}\n```\n",

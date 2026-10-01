@@ -1332,6 +1332,13 @@ fn structural_preview(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<Val
     }
 }
 
+fn gm_badge(vault_root: &std::path::Path, path: &str) -> &'static str {
+    vault::read_page(vault_root, path)
+        .ok()
+        .and_then(|p| crate::gm::badge(&p.content))
+        .unwrap_or("")
+}
+
 fn stem(p: &str) -> String {
     std::path::Path::new(p)
         .file_stem()
@@ -1433,9 +1440,10 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
                         format!("\n  summary: {summary}")
                     };
                     format!(
-                        "- {} ({}){summary}\n  …{}…",
+                        "- {} ({}){}{summary}\n  …{}…",
                         h.path,
                         h.title,
+                        gm_badge(&vault_root, &h.path),
                         strip_b(&h.snippet)
                     )
                 })
@@ -1446,7 +1454,7 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             let vault_root = ctx.cfg.codex_dir(ctx.world_root);
             let path = str_arg("path");
             match vault::read_page(&vault_root, &path) {
-                Ok(page) => Ok(page.content),
+                Ok(page) => Ok(crate::gm::annotate(&page.content)),
                 Err(_) => Err(not_found_with_suggestions(&vault_root, &path)),
             }
         }
@@ -1470,7 +1478,11 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
                     } else {
                         format!(" — {}", p.summary.trim())
                     };
-                    format!("- {}{kind}{summary}", p.path)
+                    format!(
+                        "- {}{kind}{}{summary}",
+                        p.path,
+                        gm_badge(&vault_root, &p.path)
+                    )
                 })
                 .collect();
             if lines.is_empty() {
@@ -1542,13 +1554,25 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             let n = int_arg("session").ok_or("missing 'session'")?;
             let dir = session_dir(ctx, n)?;
             let path = session_files::summary_md_path(&dir);
-            std::fs::read_to_string(&path).map_err(|_| format!("Session {n} has no summary yet."))
+            std::fs::read_to_string(&path)
+                .map(|s| crate::gm::annotate(&s))
+                .map_err(|_| format!("Session {n} has no summary yet."))
         }
         "read_prep" => {
             let n = int_arg("session").ok_or("missing 'session'")?;
             let dir = session_dir(ctx, n)?;
             let prep = crate::session_prep::read(&prep_ctx(ctx, &dir)).map_err(app_err)?;
-            Ok(render_prep(n, &prep))
+            let rendered = render_prep(n, &prep);
+            let vault_root = ctx.cfg.codex_dir(ctx.world_root);
+            let notice = prep
+                .page
+                .as_deref()
+                .and_then(|p| vault::read_page(&vault_root, p).ok())
+                .and_then(|p| crate::gm::notice(&p.content));
+            Ok(match notice {
+                Some(n) => format!("{n}\n\n{rendered}"),
+                None => rendered,
+            })
         }
         "search_summaries" => {
             let query = str_arg("query").to_lowercase();
@@ -1792,7 +1816,11 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
                     } else {
                         format!(" — {}", h.summary.trim())
                     };
-                    format!("- {}{kind}{summary}", h.path)
+                    format!(
+                        "- {}{kind}{}{summary}",
+                        h.path,
+                        gm_badge(&vault_root, &h.path)
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join("\n"))
@@ -1821,7 +1849,7 @@ pub fn dispatch(ctx: &ToolCtx<'_>, name: &str, args: &Value) -> Result<String, S
             if body.trim().is_empty() {
                 Err("No recap has been generated yet.".into())
             } else {
-                Ok(body)
+                Ok(crate::gm::annotate(&body))
             }
         }
         "create_page" => {

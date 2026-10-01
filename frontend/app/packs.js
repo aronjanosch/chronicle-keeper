@@ -101,8 +101,8 @@ function Plan({ plan, sel, setSel }) {
   const actionable = (it) => it.status !== 'unchanged' && it.status !== 'kept';
   return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 12 }}>
     ${GROUPS.filter(([s]) => by[s]).map(([s, title, blurb]) => html`<div key=${s}>
-      <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: s === 'conflict' ? 'var(--burgundy)' : 'var(--ink-faint)', marginBottom: 2 }}>
-        ${title} <span style=${{ fontFamily: 'var(--font-mono)' }}>${by[s].length}</span>
+      <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: s === 'conflict' ? 'var(--burgundy)' : 'var(--ink-faint)', marginBottom: 2 }}>
+        ${title} <span style=${{ fontVariantNumeric: 'tabular-nums' }}>${by[s].length}</span>
       </div>
       ${blurb && html`<div style=${{ fontSize: 11.5, color: 'var(--ink-faint)', marginBottom: 5 }}>${blurb}</div>`}
       <div style=${{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: s === 'unchanged' ? 90 : 170, overflow: 'auto' }}>
@@ -203,7 +203,7 @@ export function ImportPackModal() {
         </div>
       </${Field}>
       ${installed.length > 0 && html`<div>
-        <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>Installed packs</div>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 6 }}>Installed packs</div>
         ${installed.map((p) => html`<div key=${p.pack_id} style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', fontSize: 13 }}>
           <span style=${{ flex: 1 }}>${p.name} <span style=${{ color: 'var(--ink-faint)', fontSize: 11.5 }}>→ ${p.dest || 'Codex root'}</span></span>
           ${p.can_rollback && html`<${Btn} size="sm" kind="ghost" icon="undo" disabled=${busy} onClick=${() => rollback(p.pack_id)}>Roll back last import</${Btn}>`}

@@ -139,6 +139,17 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             "Toggle Side Panel",
             Some("CmdOrCtrl+Shift+K"),
         )?)
+        .item(&mi(
+            "toggle-sidebar",
+            "Toggle Sidebar",
+            Some("CmdOrCtrl+Shift+B"),
+        )?)
+        .item(&mi(
+            "toggle-panel",
+            "Toggle Vault Panel",
+            Some("CmdOrCtrl+\\"),
+        )?)
+        .item(&mi("keeper", "Ask the Keeper", Some("CmdOrCtrl+J"))?)
         .item(&mi("zen", "Zen Mode", None)?)
         .separator()
         .item(&mi("go-overview", "World Overview", None)?)

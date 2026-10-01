@@ -15,7 +15,7 @@ const TONE_SWATCHES = [
 ];
 
 const sectionLabel = {
-  fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase',
+  fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase',
   color: 'var(--burgundy)', marginBottom: 14,
 };
 const fieldLabel = {
@@ -90,7 +90,7 @@ function TreeRow({ depth, icon, name, note, dim }) {
   }}>
     <${Icon} name=${icon} size=${12} style=${{ color: dim ? 'var(--ink-faint)' : 'var(--ink-muted)' }} />
     <span>${name}</span>
-    ${note && html`<span style=${{ marginLeft: 'auto', fontFamily: 'var(--font-ui)', fontSize: 10.5, color: 'var(--ink-faint)' }}>${note}</span>`}
+    ${note && html`<span style=${{ marginLeft: 'auto', fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--ink-faint)' }}>${note}</span>`}
   </div>`;
 }
 
@@ -219,7 +219,7 @@ export function NewWorldScreen() {
     />`}
   >
     <div style=${{ maxWidth: 900, margin: '0 auto', paddingTop: 8 }}>
-      <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>
+      <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>
         A new chronicle begins
       </div>
       <h1 style=${{
@@ -352,7 +352,7 @@ export function NewWorldScreen() {
         <div>
           <div style=${{ position: 'sticky', top: 0 }}>
             <div style=${{
-              fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase',
+              fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase',
               color: 'var(--ink-faint)', marginBottom: 8,
             }}>What gets created</div>
             <${VaultPreview} f=${f} sniff=${sniff} />

@@ -107,6 +107,76 @@ fn final_turn(text: &str) -> AssistantTurn {
     }
 }
 
+#[test]
+fn read_page_marks_gm_only_content() {
+    let (state, root, cfg) = fixture_world("gmmark");
+    std::fs::write(
+        root.join("Codex/Mayor.md"),
+        "---\nkind: npc\ndebt: 400 gp\ngm_fields: [debt]\n---\nHi.\n\n> [!secret] x\n> cultist\n",
+    )
+    .unwrap();
+    let vault_root = cfg.codex_dir(&root);
+    let page = crate::vault::read_page(&vault_root, "Mayor.md").unwrap();
+    let out = crate::gm::annotate(&page.content);
+    assert!(out.starts_with("[GM ONLY") && out.contains("debt") && out.contains("cultist"));
+    let plain = crate::vault::read_page(&vault_root, "Thornhold.md").unwrap();
+    assert_eq!(crate::gm::annotate(&plain.content), plain.content);
+    drop(state);
+}
+
+#[test]
+fn list_and_search_paths_badge_gm_pages() {
+    let (state, root, cfg) = fixture_world("gmbadge");
+    std::fs::write(
+        root.join("Codex/Cultist.md"),
+        "---\nkind: npc\nsummary: secret cultist\ngm_only: true\n---\nThe hidden cultist lurks.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Codex/Mayor.md"),
+        "---\nkind: npc\nsummary: the mayor\n---\nMayor lurks.\n\n> [!secret] x\n> lurks too\n",
+    )
+    .unwrap();
+    let ctx = tools::ToolCtx {
+        state: &state,
+        world_root: &root,
+        cfg: &cfg,
+    };
+    let vault_root = cfg.codex_dir(&root);
+    for rel in ["Cultist.md", "Mayor.md"] {
+        crate::vault::write_page(
+            &vault_root,
+            rel,
+            &std::fs::read_to_string(root.join("Codex").join(rel)).unwrap(),
+        )
+        .unwrap();
+        tools::reindex(&ctx, &vault_root, rel);
+    }
+    let line = |out: &str, name: &str| {
+        out.lines()
+            .find(|l| l.starts_with("- ") && l.contains(name))
+            .unwrap_or_default()
+            .to_string()
+    };
+    let hits = tools::dispatch(&ctx, "search_pages", &json!({ "query": "lurks" })).unwrap();
+    assert!(
+        line(&hits, "Cultist.md").contains("[GM ONLY page]"),
+        "{hits}"
+    );
+    assert!(line(&hits, "Mayor.md").contains("[GM ONLY parts"), "{hits}");
+    let list = tools::dispatch(&ctx, "list_pages", &json!({})).unwrap();
+    assert!(line(&list, "Cultist.md").contains("[GM ONLY page]"));
+    assert!(!line(&list, "Thornhold.md").contains("GM ONLY"));
+    let q = tools::dispatch(
+        &ctx,
+        "query_world",
+        &json!({ "query": "LIST FROM kind:npc" }),
+    )
+    .unwrap();
+    assert!(line(&q, "Cultist.md").contains("[GM ONLY page]"), "{q}");
+    std::fs::remove_dir_all(&root).ok();
+}
+
 #[tokio::test]
 async fn loop_runs_tool_then_answers() {
     let (state, root, cfg) = fixture_world("happy");

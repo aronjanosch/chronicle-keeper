@@ -16,7 +16,7 @@
   --ink:             #1F1813;
   --ink-soft:        #3D3225;
   --ink-muted:       #6B5D4E;
-  --ink-faint:       #A89880;
+  --ink-faint:       #766853;
   --ink-ghost:       #C9BB9F;
 
   /* ── Rules / borders ──────────────────────────────────────────── */
@@ -81,7 +81,7 @@
 .ck .display     { font-family: var(--font-display); font-weight: 500; letter-spacing: -0.015em; line-height: 1.15; }
 .ck .display-i   { font-family: var(--font-display); font-style: italic; font-weight: 400; }
 .ck .label-sm    { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-muted); }
-.ck .label-xs    { font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
+.ck .label-xs    { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
 .ck .meta        { font-size: 12px; color: var(--ink-muted); }
 .ck .mono        { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0; }
 .ck .num         { font-variant-numeric: tabular-nums; }
@@ -192,7 +192,7 @@
   border-color: var(--burgundy-300);
   box-shadow: 0 0 0 3px rgba(122,46,31,.10);
 }
-.ck .input::placeholder { color: var(--ink-faint); }
+.ck .input::placeholder, .ck input::placeholder, .ck textarea::placeholder { color: var(--ink-muted); opacity: 1; }
 
 /* ── Avatar / sigil (initials in a square with a hair of color) ─── */
 .ck .sigil {
@@ -253,9 +253,8 @@
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
 }
 .ck .nav-brand .name { font-family: var(--font-display); font-size: 15px; font-weight: 500; letter-spacing: -0.01em; }
-.ck .nav-brand .name small { display: block; font-family: var(--font-ui); font-size: 10.5px; font-weight: 500; color: var(--ink-muted); letter-spacing: 0.06em; text-transform: uppercase; }
 
-.ck .nav-group { padding: 10px 8px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
+.ck .nav-group { padding: 10px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
 .ck .nav-item {
   display: flex; align-items: center; gap: 9px;
   padding: 7px 9px;
@@ -315,7 +314,7 @@
   font-size: 11px; font-weight: 500;
   color: var(--ink-muted);
 }
-.ck .src .sq { width: 12px; height: 12px; border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 9px; font-weight: 700; font-family: var(--font-mono); }
+.ck .src .sq { width: 14px; height: 14px; border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: 700; font-family: var(--font-mono); }
 .ck .src-obsidian .sq { background: #7C3AED; }
 .ck .src-notion .sq { background: #1F1813; color: white; }
 .ck .src-folder .sq { background: var(--ochre); }

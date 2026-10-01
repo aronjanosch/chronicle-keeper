@@ -53,7 +53,7 @@ pub struct Page {
 // where `Sessions/` holds `.md` session artifacts. Dot-dirs (`.ck`,
 // `.obsidian`, `.trash`) are excluded separately.
 pub(crate) fn is_reserved_dir(name: &str) -> bool {
-    name == "Sessions" || name == "_templates"
+    matches!(name, "Sessions" | "_templates" | "Exports" | "Backups")
 }
 
 fn require_dir(vault: &Path) -> AppResult<()> {

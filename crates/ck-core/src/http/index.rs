@@ -226,3 +226,39 @@ pub async fn tags(
         Ok(Json(json!({ "tags": tags })))
     })?
 }
+
+/// Overview "Unfinished" card: stubs, `[?]` markers, cold threads and broken
+/// links, from the signals the Keeper's digest already uses.
+pub async fn gaps(
+    State(state): State<AppState>,
+    Path(campaign_id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let root = vault_root(&state, &campaign_id)?;
+    let pages = crate::vault::list_pages(&root)?;
+    let (unresolved, fm) = state.with_index(&root, |conn| {
+        AppResult::Ok((
+            index::unresolved_links(conn)?,
+            index::all_frontmatter(conn)?,
+        ))
+    })??;
+    let open_threads: std::collections::HashSet<String> = fm
+        .into_iter()
+        .filter(|(_, _, kind, _)| kind.as_deref() == Some("thread"))
+        .filter(|(_, _, _, json)| {
+            let v: Value = serde_json::from_str(json).unwrap_or_default();
+            matches!(
+                v["status"].as_str().map(str::trim),
+                None | Some("") | Some("open")
+            )
+        })
+        .map(|(path, ..)| path)
+        .collect();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let rows = crate::gaps::compute(&pages, &unresolved, &open_threads, now);
+    Ok(Json(
+        json!({ "gaps": rows, "stale_days": crate::gaps::STALE_DAYS }),
+    ))
+}

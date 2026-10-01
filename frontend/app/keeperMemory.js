@@ -128,7 +128,7 @@ function memoryCard({ memories, open, setOpen, forget }) {
       return html`<div key=${m.name} style=${{ border: '1px solid var(--rule-soft)', borderRadius: 8, background: 'var(--surface)', padding: '10px 12px', marginBottom: 8 }}>
         <div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 600 }}>${m.name}</span>
-          <span style=${{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--ink-faint)', border: '1px solid var(--rule-soft)', borderRadius: 999, padding: '1px 7px' }}>${TYPE_LABEL[m.type] || m.type || 'note'}</span>
+          <span style=${{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--ink-faint)', border: '1px solid var(--rule-soft)', borderRadius: 999, padding: '1px 7px' }}>${TYPE_LABEL[m.type] || m.type || 'note'}</span>
           <span style=${{ flex: 1 }} />
           <button class="btn" style=${{ padding: '3px 7px', fontSize: 11.5 }} onClick=${() => setOpen((o) => ({ ...o, [m.name]: !o[m.name] }))}>${isOpen ? 'Hide' : 'Read'}</button>
           <span onClick=${() => forget(m.name)} title="Forget" style=${{ cursor: 'pointer', color: 'var(--ink-faint)', display: 'flex', padding: 3 }}><${Icon} name="trash" size=${12} /></span>

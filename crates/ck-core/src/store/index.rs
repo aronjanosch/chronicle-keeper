@@ -635,6 +635,16 @@ pub fn unresolved_count(conn: &Connection) -> AppResult<i64> {
     )?)
 }
 
+/// `(source_path, link_text)` for every wikilink that resolves to no page.
+pub fn unresolved_links(conn: &Connection) -> AppResult<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT source_path, link_text FROM page_links WHERE target_path IS NULL \
+         ORDER BY source_path, link_text",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    Ok(rows.filter_map(Result::ok).collect())
+}
+
 /// Pages with no inbound resolved link. (Session mentions not yet considered.)
 pub fn orphan_count(conn: &Connection) -> AppResult<i64> {
     Ok(conn.query_row(

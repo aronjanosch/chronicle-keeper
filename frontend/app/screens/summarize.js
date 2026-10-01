@@ -22,7 +22,7 @@ function PromptPreset({ active, name, desc, onClick }) {
   </div>`;
 }
 
-const Label = ({ children }) => html`<div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 8 }}>${children}</div>`;
+const Label = ({ children }) => html`<div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 8 }}>${children}</div>`;
 
 const STAGE_LABEL = { reading: 'Reading transcript…', writing: 'Writing…', metadata: 'Extracting tags…' };
 
@@ -106,7 +106,7 @@ export function SummarizeScreen({ store }) {
   >
     <div style=${{ display: 'grid', gridTemplateColumns: '420px 1fr', height: '100%' }}>
       <div style=${{ borderRight: '1px solid var(--rule-soft)', overflow: 'auto', padding: '22px 24px' }}>
-        <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 4 }}>Session ${cam.session_number || ''} · summarize</div>
+        <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 4 }}>Session ${cam.session_number || ''} · summarize</div>
         <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 500, letterSpacing: '-0.015em', color: 'var(--ink)', lineHeight: 1.15 }}>${cam.title || 'Untitled session'}</h1>
         <div style=${{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 4, fontFamily: 'var(--font-display)', fontStyle: 'italic' }}>Configure the model and prompt template, then generate.</div>
 
@@ -167,11 +167,11 @@ export function SummarizeScreen({ store }) {
       <div style=${{ overflow: 'auto', padding: '24px 36px', background: 'var(--paper)' }}>
         <div style=${{ maxWidth: 720, margin: '0 auto' }}>
           <div style=${{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-            <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${store.summaryStreaming ? 'Preview · live' : 'Preview · last run'}</div>
+            <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${store.summaryStreaming ? 'Preview · live' : 'Preview · last run'}</div>
             <span style=${{ flex: 1 }} />
             ${store.summaryStreaming
               ? html`<${StageChip} stage=${store.summaryStreaming.stage} />`
-              : store.summaries[0] && html`<span style=${{ fontSize: 11, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>${store.summaries[0].provider} · ${fmtDateTime(store.summaries[0].created_at)}</span>`}
+              : store.summaries[0] && html`<span style=${{ fontSize: 11, color: 'var(--ink-muted)', fontVariantNumeric: 'tabular-nums' }}>${store.summaries[0].provider} · ${fmtDateTime(store.summaries[0].created_at)}</span>`}
           </div>
           <div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, padding: '32px 44px', boxShadow: '0 1px 0 rgba(120,90,40,.06), 0 2px 8px rgba(60,40,10,.05)' }}>
             ${store.summaryStreaming

@@ -165,7 +165,7 @@ blockquote.ck-collapsed > .ck-callout-body { display: none; }
   border-radius: 0 6px 6px 0; padding: 10px 14px; margin: 0 0 14px; background: var(--surface-raised);
 }
 .ck-embed-src {
-  display: block; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em;
+  display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--ink-faint); margin-bottom: 6px;
 }
 span.ck-embed-src.ck-wikilink { border-bottom: none; color: var(--ink-faint); cursor: pointer; }
@@ -180,7 +180,7 @@ span.ck-embed-src.ck-wikilink:hover { color: var(--burgundy); }
   border-radius: 0 6px 6px 0; padding: 10px 14px; margin: 0 0 14px; background: var(--surface-raised);
 }
 .ck-query-head {
-  font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--ink-faint); font-family: var(--font-mono); margin-bottom: 6px;
 }
 .ck-query ul { margin: 0; padding-left: 18px; }
@@ -245,21 +245,21 @@ span.ck-embed-src.ck-wikilink:hover { color: var(--burgundy); }
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 .ck-rail-card { background: var(--surface); border: 1px solid var(--rule-soft); border-radius: 8px; padding: 12px 14px; }
-.ck-rail-head { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 9px; cursor: pointer; user-select: none; }
+.ck-rail-head { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 9px; cursor: pointer; user-select: none; }
 .ck-rail-head:hover { color: var(--ink-muted); }
 .ck-rail-head .ck-rail-right { margin-left: auto; font-weight: 400; letter-spacing: 0; text-transform: none; font-family: var(--font-mono); }
 .ck-rail-chev { margin-left: auto; opacity: 0.6; }
 .ck-rail-right + .ck-rail-chev { margin-left: 0; }
 .ck-rail-card.collapsed .ck-rail-head { margin-bottom: 0; }
 .ck-infobox-row { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 12px; }
-.ck-infobox-key { width: 72px; flex: 0 0 auto; color: var(--ink-faint); font-family: var(--font-mono); font-size: 10.5px; }
+.ck-infobox-key { width: 72px; flex: 0 0 auto; color: var(--ink-faint); font-family: var(--font-mono); font-size: 11px; }
 .ck-rail-summary { font-family: var(--font-display); font-style: italic; font-size: 13.5px; color: var(--ink); line-height: 1.5; cursor: text; border-radius: 4px; }
 .ck-rail-summary:hover { background: var(--paper-deep); }
 .ck-rail-summary-edit { width: 100%; border: 1px solid var(--rule); border-radius: 4px; background: var(--paper); font-family: var(--font-display); font-style: italic; font-size: 13.5px; color: var(--ink); line-height: 1.5; padding: 4px 6px; resize: none; overflow: hidden; }
 .ck-rail-hint { font-size: 11px; color: var(--ink-faint); line-height: 1.45; margin-top: 8px; }
 .ck-rail-link { display: flex; align-items: center; gap: 7px; padding: 4px 6px; margin: 0 -6px; border-radius: 4px; cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--ink); }
 .ck-rail-link:hover { background: var(--paper-deep); }
-.ck-rail-foot { font-size: 10.5px; color: var(--ink-faint); text-align: center; font-family: var(--font-mono); padding: 0 8px; }
+.ck-rail-foot { font-size: 11px; color: var(--ink-faint); text-align: center; font-family: var(--font-mono); padding: 0 8px; }
 
 /* files-as-truth provenance line */
 .ck-provenance { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ink-faint); font-family: var(--font-mono); }
@@ -268,13 +268,13 @@ span.ck-embed-src.ck-wikilink:hover { color: var(--burgundy); }
 
 /* [[ wikilink autocomplete popover */
 .ck-ac { position: fixed; width: 264px; background: var(--surface-raised); border: 1px solid var(--rule-strong); border-radius: 8px; box-shadow: var(--shadow-raised); overflow: hidden; z-index: 50; }
-.ck-ac-head { padding: 7px 11px; font-size: 10.5px; color: var(--ink-faint); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; border-bottom: 1px solid var(--rule-soft); }
+.ck-ac-head { padding: 7px 11px; font-size: 11px; color: var(--ink-faint); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; border-bottom: 1px solid var(--rule-soft); }
 .ck-ac-item { display: flex; align-items: center; gap: 9px; padding: 7px 11px; cursor: pointer; }
 .ck-ac-item.on, .ck-ac-item:hover { background: var(--burgundy-50); }
 .ck-ac-glyph { width: 22px; height: 22px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; border-radius: 5px; background: var(--paper-deep); color: var(--ink-muted); }
 .ck-ac-name { font-size: 12.5px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ck-ac-sub { font-size: 10.5px; color: var(--ink-faint); }
-.ck-ac-kbd { font-family: var(--font-mono); font-size: 10px; color: var(--burgundy); border: 1px solid var(--burgundy-300); border-radius: 3px; padding: 0 4px; }
+.ck-ac-sub { font-size: 11px; color: var(--ink-faint); }
+.ck-ac-kbd { font-family: var(--font-mono); font-size: 11px; color: var(--burgundy); border: 1px solid var(--burgundy-300); border-radius: 3px; padding: 0 4px; }
 .ck-ac-create { border-top: 1px solid var(--rule-soft); font-size: 11.5px; color: var(--ink-muted); }
 
 /* Monospace transcript block */
@@ -350,3 +350,61 @@ span.ck-embed-src.ck-wikilink:hover { color: var(--burgundy); }
 .ck-findbar button:hover { background: var(--paper-deep); color: var(--ink); }
 ::highlight(ck-find) { background: var(--gilt-50); color: var(--ink); }
 ::highlight(ck-find-cur) { background: var(--gilt); color: #FBF6E9; }
+
+/* ── SearchField (ui.js) ───────────────────────────────────────── */
+.ck .ck-search {
+  display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 8px 0 10px;
+  background: var(--surface-raised); border: 1px solid var(--rule); border-radius: 6px;
+  color: var(--ink-muted); min-width: 0; transition: border-color .14s, box-shadow .14s;
+}
+.ck .ck-search:focus-within { border-color: var(--burgundy-300); box-shadow: 0 0 0 3px rgba(122,46,31,.10); }
+.ck .ck-search input {
+  flex: 1; min-width: 0; height: 100%; border: none; outline: none; background: transparent;
+  font-size: 13px; color: var(--ink);
+}
+.ck .ck-search-hint, .ck .ck-search-count {
+  font-size: 11px; color: var(--ink-muted); font-variant-numeric: tabular-nums; flex: 0 0 auto; white-space: nowrap;
+}
+.ck .ck-search-hint { border: 1px solid var(--rule); border-radius: 4px; padding: 0 5px; line-height: 16px; }
+.ck .ck-search-clear {
+  display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+  border-radius: 4px; color: var(--ink-muted); flex: 0 0 auto;
+}
+.ck .ck-search-clear:hover { background: rgba(120,90,40,.12); color: var(--ink); }
+.ck .ck-ink-muted { color: var(--ink-muted); }
+
+/* ── Rail / menus / eyebrow ────────────────────────────────────── */
+.ck .ck-rail-item:hover { background: rgba(120,90,40,.08); }
+.ck .ck-rail-item[data-active="1"]:hover { background: var(--surface); }
+.ck .ck-menu-row {
+  display: flex; align-items: center; gap: 9px; padding: 6px 9px; border-radius: 6px;
+  font-size: 13px; font-weight: 500; color: var(--ink); cursor: pointer; border: 1px solid transparent;
+}
+.ck .ck-menu-row:hover { background: var(--paper-deep); }
+.ck .ck-menu-row .ck-sigil-sm, .ck .ck-menu-row > div:first-child { flex: 0 0 auto; }
+.ck .ck-label {
+  font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted);
+}
+.ck .ck-num { font-variant-numeric: tabular-nums; }
+
+/* GM-only marks (infobox fields, pages) */
+.ck-gm-badge { font-size: 9.5px; font-weight: 600; letter-spacing: .06em; padding: 1px 5px; border-radius: 3px; background: var(--paper-deep); border: 1px solid var(--rule); color: var(--ink-muted); white-space: nowrap; flex: 0 0 auto; }
+.ck-infobox-row .ck-infobox-more { margin-left: auto; opacity: 0; color: var(--ink-faint); cursor: pointer; padding: 0 2px; border-radius: 3px; display: flex; align-self: center; }
+.ck-infobox-row:hover .ck-infobox-more, .ck-infobox-more:focus-visible { opacity: 1; }
+.ck-infobox-more:hover { color: var(--burgundy); }
+.ck-infobox-row.gm .ck-prop-tag { background: var(--paper-deep); border-style: dashed; }
+
+/* Pinned / Recent sections in the vault panel */
+.ck-pin-row.drop-before { box-shadow: inset 0 2px 0 var(--burgundy-300); }
+.ck-pin-row.drop-after { box-shadow: inset 0 -2px 0 var(--burgundy-300); }
+
+/* Overview "Unfinished" card */
+.ck-gap-row { display: flex; align-items: center; gap: 10px; padding: 9px 16px; border-top: 1px solid var(--rule-soft); }
+.ck-gap-row:hover { background: var(--paper); }
+.ck-gap-row .ck-gap-x { opacity: 0; color: var(--ink-faint); cursor: pointer; display: flex; padding: 2px; border-radius: 3px; }
+.ck-gap-row:hover .ck-gap-x { opacity: 1; }
+.ck-gap-row .ck-gap-x:hover { color: var(--burgundy); }
+
+/* ── Keeper skills / transcript ────────────────────────────────── */
+.ck .ck-skill-row:hover { background: rgba(120,90,40,.05); }
+.ck .chip:focus-within { border-color: var(--burgundy-300); box-shadow: 0 0 0 3px rgba(122,46,31,.10); }

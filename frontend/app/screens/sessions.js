@@ -34,7 +34,7 @@ function SessionRow({ s, onClick }) {
     style=${{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 18px', borderBottom: '1px solid var(--rule-soft)', cursor: 'pointer' }}
     onMouseEnter=${(e) => { e.currentTarget.style.background = 'var(--paper)'; }}
     onMouseLeave=${(e) => { e.currentTarget.style.background = 'transparent'; }}>
-    <div style=${{ width: 38, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-faint)' }}>
+    <div style=${{ width: 38, textAlign: 'center', fontSize: 11, color: 'var(--ink-muted)' }} class="ck-num">
       <div style=${{ fontSize: 16, color: 'var(--ink)', fontWeight: 500 }}>${String(s.session_number || 0).padStart(2, '0')}</div>
       <div style=${{ marginTop: -2 }}>session</div>
     </div>
@@ -62,14 +62,12 @@ export function SessionsScreen({ store }) {
 
   return html`<${Shell}
     sidebar=${html`<${Sidebar} variant="campaign" active="sessions" campaign=${c} />`}
-    topbar=${html`<${Topbar} crumbs=${[{ label: 'Worlds', onClick: () => navigate('library') }, c.name, 'Sessions']} right=${html`
-      <div style=${{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <${Btn} kind="primary" icon="edit" onClick=${() => navigate('newSession', { id: c.campaign_id, intent: 'prepare' })}>Prepare a session</${Btn}>
-        <${Btn} kind="secondary" icon="mic" onClick=${() => navigate('newSession', { id: c.campaign_id, intent: 'record' })}>Add a past session</${Btn}>
-      </div>`} />`}
+    topbar=${html`<${Topbar} title="Sessions" sub=${c.name}
+      actions=${html`<${Btn} kind="secondary" icon="mic" onClick=${() => navigate('newSession', { id: c.campaign_id, intent: 'record' })}>Add a past session</${Btn}>`}
+      primary=${html`<${Btn} kind="primary" icon="edit" onClick=${() => navigate('newSession', { id: c.campaign_id, intent: 'prepare' })}>Prepare a session</${Btn}>`} />`}
   >
     <div style=${{ marginBottom: 20 }}>
-      <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>The play that feeds the world</div>
+      <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)' }}>The play that feeds the world</div>
       <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, letterSpacing: '-0.02em', lineHeight: 1.1, color: 'var(--ink)', marginTop: 3 }}>Sessions</h1>
     </div>
 

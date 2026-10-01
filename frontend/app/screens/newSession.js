@@ -51,7 +51,7 @@ function TrackCard({ track, index, sp, roster, onChange }) {
     ${!assigned && roster.length ? html`<div style=${{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--ink-muted)', flexWrap: 'wrap' }}>
       <${Icon} name="sparkle" size=${11} /> <span>From roster:</span>
       ${roster.slice(0, 5).map((p, i) => html`<button key=${i} onClick=${() => onChange({ ...sp, player_name: p.player_name || '', character_name: p.character_name || '', pronouns: p.pronouns || '' })} style=${{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 9px 4px 4px', background: p.is_gm ? 'var(--ochre-50)' : 'var(--paper-deep)', border: `1px solid ${p.is_gm ? 'rgba(168,115,40,.3)' : 'var(--rule)'}`, borderRadius: 999, fontSize: 11.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
-        <span style=${{ width: 16, height: 16, borderRadius: '50%', background: `var(--${toneFor(p.player_name)}-50)`, color: `var(--${toneFor(p.player_name)})`, fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>${(p.character_name || p.player_name || '?')[0].toUpperCase()}</span>
+        <span style=${{ width: 16, height: 16, borderRadius: '50%', background: `var(--${toneFor(p.player_name)}-50)`, color: `var(--${toneFor(p.player_name)})`, fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>${(p.character_name || p.player_name || '?')[0].toUpperCase()}</span>
         ${p.is_gm ? `GM · ${p.player_name}` : `${p.player_name}${p.character_name ? ` · ${p.character_name}` : ''}`}
       </button>`)}
     </div>` : ''}
@@ -199,7 +199,7 @@ export function NewSessionScreen({ store }) {
     <datalist id="ck-roster">${roster.map((p, i) => html`<option key=${i} value=${p.player_name} />`)}</datalist>
 
     <div style=${{ marginBottom: 18 }}>
-      <div style=${{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${attachId ? 'Add recording' : preparing ? 'Prepare a session' : 'New session'} · ${c?.name}</div>
+      <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>${attachId ? 'Add recording' : preparing ? 'Prepare a session' : 'New session'} · ${c?.name}</div>
       <h1 style=${{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, letterSpacing: '-0.015em', color: 'var(--ink)', lineHeight: 1.15, marginTop: 2 }}>
         Session <span style=${{ color: 'var(--ink-muted)', fontStyle: 'italic' }}>#${number === '' || number == null ? '…' : number}</span>
       </h1>
@@ -229,7 +229,7 @@ export function NewSessionScreen({ store }) {
             <div style=${{ width: 36, height: 36, borderRadius: 8, background: 'var(--moss)', color: '#FBF6E9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><${Icon} name="check" size=${14} /></div>
             <div style=${{ flex: 1 }}>
               <div style=${{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 500, color: 'var(--moss)' }}>Recording received</div>
-              <div style=${{ fontSize: 12, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>${tracks.length} track${tracks.length === 1 ? '' : 's'} extracted</div>
+              <div style=${{ fontSize: 12, color: 'var(--ink-muted)', fontVariantNumeric: 'tabular-nums', marginTop: 1 }}>${tracks.length} track${tracks.length === 1 ? '' : 's'} extracted</div>
             </div>
             <${Btn} kind="ghost" size="sm" onClick=${() => fileRef.current?.click()}>Replace</${Btn}>
             <input ref=${fileRef} type="file" accept=".zip,.flac,.wav,.mp3,.m4a,.ogg" style=${{ display: 'none' }} onChange=${onFile} />

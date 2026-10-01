@@ -264,6 +264,97 @@ pub async fn delete_skill(
 }
 
 #[derive(Deserialize)]
+pub struct SkillBody {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub kinds: Vec<String>,
+    pub body: Option<String>,
+}
+
+fn clean_kinds(kinds: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for k in kinds {
+        let k = k.trim().to_lowercase().replace([',', '[', ']'], "");
+        if !k.is_empty() && !out.contains(&k) {
+            out.push(k);
+        }
+    }
+    out
+}
+
+pub async fn get_skill(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> AppResult<Json<Value>> {
+    let root = agent::skills::skills_root(&state);
+    agent::skills::get_one(&root, &slug)
+        .map(Json)
+        .map_err(AppError::NotFound)
+}
+
+pub async fn create_skill(
+    State(state): State<AppState>,
+    Json(req): Json<SkillBody>,
+) -> AppResult<Json<Value>> {
+    let root = agent::skills::skills_root(&state);
+    let slug = agent::skills::create_new(
+        &root,
+        &req.name,
+        &req.description,
+        &clean_kinds(&req.kinds),
+        req.body.as_deref().filter(|b| !b.trim().is_empty()),
+    )
+    .map_err(AppError::BadRequest)?;
+    agent::skills::get_one(&root, &slug)
+        .map(Json)
+        .map_err(AppError::BadRequest)
+}
+
+pub async fn update_skill(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Json(req): Json<SkillBody>,
+) -> AppResult<Json<Value>> {
+    let root = agent::skills::skills_root(&state);
+    let slug = agent::skills::update(
+        &root,
+        &slug,
+        &req.name,
+        &req.description,
+        &clean_kinds(&req.kinds),
+        req.body.as_deref().unwrap_or(""),
+    )
+    .map_err(AppError::BadRequest)?;
+    agent::skills::get_one(&root, &slug)
+        .map(Json)
+        .map_err(AppError::BadRequest)
+}
+
+pub async fn duplicate_skill(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> AppResult<Json<Value>> {
+    let root = agent::skills::skills_root(&state);
+    let new = agent::skills::duplicate(&root, &slug).map_err(AppError::BadRequest)?;
+    agent::skills::get_one(&root, &new)
+        .map(Json)
+        .map_err(AppError::BadRequest)
+}
+
+pub async fn restore_skill(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> AppResult<Json<Value>> {
+    let root = agent::skills::skills_root(&state);
+    agent::skills::restore(&root, &slug).map_err(AppError::BadRequest)?;
+    agent::skills::get_one(&root, &slug)
+        .map(Json)
+        .map_err(AppError::BadRequest)
+}
+
+#[derive(Deserialize)]
 pub struct SkillEnabled {
     pub enabled: bool,
 }

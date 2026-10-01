@@ -5,6 +5,7 @@
 import { store, navigate, navigateBack, navigateForward, openModal, closeModal,
   activePagePath, closeTab, reopenClosedTab, cycleTab, jumpToTab } from './core.js';
 import { createVaultFolder } from './actions.js';
+import { toggleFlag, RAIL_COMPACT, PANEL_OPEN } from './layoutPrefs.js';
 
 function worldId() { return store.campaign?.campaign_id || null; }
 
@@ -50,6 +51,16 @@ const COMMANDS = {
   'go-keeper': goWorld('keeper'),
   'go-library': () => navigate('library'),
   'toggle-rail': broadcast('toggle-rail'),
+  'toggle-sidebar': () => toggleFlag(RAIL_COMPACT, false),
+  'toggle-panel': () => toggleFlag(PANEL_OPEN, true),
+  'keeper': () => {
+    const id = worldId();
+    if (!id) return;
+    if (store.modal) closeModal();
+    if (store.route.name === 'page') window.dispatchEvent(new CustomEvent('ck:cmd', { detail: 'show-chat' }));
+    else if (store.route.name !== 'keeper') navigate('keeper', { id });
+  },
+  'new-session': () => { const id = worldId(); if (id) { if (store.modal) closeModal(); navigate('newSession', { id, intent: 'prepare' }); } },
   'zen': broadcast('zen'),
   'save': broadcast('save'),
   'find': broadcast('find'),

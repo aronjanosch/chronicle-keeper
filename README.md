@@ -1,3 +1,5 @@
+
+
 # Chronicle Keeper
 
 ![Chronicle Keeper — world overview](docs/screenshots/SCR-20260614-ndhu.png)
@@ -69,8 +71,7 @@ setup (Ollama + getting API keys), the full workflow, and FAQ.
 
 ## Download & install
 
-Grab the installer for your OS
-[**Releases**](https://github.com/aronjanosch/chronicle-keeper/releases) page.
+Grab the installer for your OS from the [**Releases**](https://github.com/aronjanosch/chronicle-keeper/releases) page.
 
 > **Heads up:** the app isn't code-signed yet (signing is planned), so your OS will show a
 > one-time "unknown developer" warning on first launch.
@@ -97,7 +98,7 @@ Open **Settings** and pick one:
 
 - **Local (free):** install [Ollama](https://ollama.com) and the app pulls the default model
   (`gemma4:e2b`) for you — Settings → LLM providers → Ollama → **Pull now**. Or from a terminal:
-  `ollama pull gemma4:e2b`. On a 16&nbsp;GB+ machine, `gemma4:e4b` gives noticeably better
+  `ollama pull gemma4:e2b`. On a 16 GB+ machine, `gemma4:e4b` gives noticeably better
   summaries. The app auto-sizes the context to your full session, so local summaries are
   complete but take a few minutes.
 - **Cloud:** paste an Anthropic or any OpenAI-compatible API key. Keys stay on your machine. Faster, pay per use.

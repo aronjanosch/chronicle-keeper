@@ -4,6 +4,29 @@ use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 mod menu;
 
+/// Tiling compositors (Hyprland, sway, i3, niri, river) never frame windows,
+/// so GTK's own title bar would just be a dead strip with min/max/close
+/// buttons. `CK_DECORATIONS=1`/`0` overrides the detection.
+fn tiling_compositor() -> bool {
+    if !cfg!(target_os = "linux") {
+        return false;
+    }
+    if let Ok(v) = std::env::var("CK_DECORATIONS") {
+        return v == "0";
+    }
+    let has = |k: &str| std::env::var_os(k).is_some();
+    if has("HYPRLAND_INSTANCE_SIGNATURE") || has("SWAYSOCK") || has("I3SOCK") || has("NIRI_SOCKET")
+    {
+        return true;
+    }
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_lowercase();
+    ["hyprland", "sway", "i3", "niri", "river"]
+        .iter()
+        .any(|wm| desktop.split(':').any(|d| d == *wm))
+}
+
 /// Launch the embedded ck-core API on an ephemeral loopback port, then open the
 /// webview with the chosen base URL + a per-launch auth token injected before
 /// the page scripts run. The server is an in-process tokio task (no sidecar).
@@ -68,6 +91,7 @@ pub fn run() {
                 .title("Chronicle Keeper")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(800.0, 600.0)
+                .decorations(!tiling_compositor())
                 .initialization_script(&init_script)
                 .build()?;
             Ok(())

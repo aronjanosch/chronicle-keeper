@@ -182,6 +182,7 @@ pub async fn list_tree(
     Ok(Json(json!({
         "folders": vault::list_folders(&root)?,
         "pages": pages_json(&state, &root)?,
+        "assets": vault::list_assets(&root)?,
     })))
 }
 

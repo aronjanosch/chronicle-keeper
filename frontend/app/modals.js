@@ -7,6 +7,8 @@ import { kindForFolder } from './folderKinds.js';
 import { loadPrep, prepOps } from './prep.js';
 import { ExportPackModal, ImportPackModal } from './packs.js';
 import { ExportPagesModal } from './exportDialog.js';
+import { LightboxModal } from './lightbox.js';
+import { FolderIconModal } from './folderIconPicker.js';
 import {
   createCampaign, updateCampaign, saveSessionMetadata, loadSession,
   runExport,
@@ -1377,6 +1379,8 @@ export function ModalHost({ modal }) {
     case 'importPack': return html`<${ImportPackModal} />`;
     case 'genrePack': return html`<${GenrePackModal} />`;
     case 'replace': return html`<${ReplaceModal} />`;
+    case 'lightbox': return html`<${LightboxModal} ...${modal.props} />`;
+    case 'folderIcon': return html`<${FolderIconModal} ...${modal.props} />`;
     default: return null;
   }
 }

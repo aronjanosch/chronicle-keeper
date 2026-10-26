@@ -4,13 +4,15 @@ import { navigate, openModal, useStore, setOp, store, setState, openInNewTab, fm
 import { TabStrip, openPageEvt } from '../tabs.js';
 import { Shell, Rail, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
 import { useFlag, setFlag, PANEL_OPEN } from '../layoutPrefs.js';
-import { Btn, Empty, Icon, Markdown, Input, Select, SearchField, openContextMenu } from '../ui.js';
+import { Btn, Empty, Icon, Markdown, Input, Select, SearchField, openContextMenu, useAsset, toneGlyph } from '../ui.js';
 import { openCampaign,
   loadVaultTree, createVaultFolder, moveVaultEntry,
   deleteVaultPage, deleteVaultFolder, duplicateVaultPage, copyText, attachVault, pickVaultFolder,
   searchVault, loadVaultTags, loadVaultDiagnostics, sniffVault, importVaultFolder, enhanceVaultPages, watchVault,
-  bulkVault, saveTemplate, togglePin } from '../actions.js';
+  bulkVault, saveTemplate, togglePin, loadPrefs, folderIcons } from '../actions.js';
 import { kindForFolder } from '../folderKinds.js';
+import { folderGlyph } from '../folderIcons.js';
+import { openLightbox, isImagePath } from '../lightbox.js';
 import { PinnedRecent, startPageDrag } from '../pinnedPanel.js';
 import { openExport } from '../exportDialog.js';
 
@@ -94,21 +96,23 @@ export const baseName = (p) => { const i = p.lastIndexOf('/'); return i < 0 ? p 
 
 const agoLabel = (secs) => (secs ? fmtDate(secs) : '');
 
-// Nest the flat folder + page lists into a tree of { name, path, folders:Map, pages:[] }.
-export function buildTree(folders, pages) {
-  const root = { name: '', path: '', folders: new Map(), pages: [] };
+// Nest the flat folder + page + media lists into a tree of
+// { name, path, folders:Map, pages:[], assets:[] }.
+export function buildTree(folders, pages, assets = store.vaultAssets) {
+  const root = { name: '', path: '', folders: new Map(), pages: [], assets: [] };
   const ensure = (relDir) => {
     if (!relDir) return root;
     let node = root, acc = '';
     for (const part of relDir.split('/')) {
       acc = acc ? `${acc}/${part}` : part;
-      if (!node.folders.has(part)) node.folders.set(part, { name: part, path: acc, folders: new Map(), pages: [] });
+      if (!node.folders.has(part)) node.folders.set(part, { name: part, path: acc, folders: new Map(), pages: [], assets: [] });
       node = node.folders.get(part);
     }
     return node;
   };
   (folders || []).forEach(ensure);
   (pages || []).forEach((p) => ensure(dirOf(p.path)).pages.push(p));
+  (assets || []).forEach((a) => ensure(dirOf(a.path)).assets.push(a));
   return root;
 }
 function nodeAt(root, path) {
@@ -127,13 +131,34 @@ function countPages(node) {
 }
 
 function glyphFor(kind, size = 16) {
-  const tone = toneForKind(kind);
-  const col = tone === 'ink-blue' ? 'var(--ink-blue)' : `var(--${tone})`;
-  return html`<div style=${{
-    width: size, height: size, borderRadius: 4, flex: '0 0 auto',
-    background: kind ? `var(--${tone}-50)` : 'var(--paper-deep)', color: kind ? col : 'var(--ink-muted)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(0,0,0,.06)',
-  }}><${Icon} name=${iconForKind(kind)} size=${Math.round(size * 0.6)} /></div>`;
+  return toneGlyph(iconForKind(kind), kind ? toneForKind(kind) : null, size);
+}
+
+// What a folder shows: its custom icon, one guessed from its name, its kind's
+// icon, or (null) the plain folder glyph.
+function folderLook(node) {
+  const kind = kindForFolder(node.name);
+  return folderGlyph({ path: node.path, name: node.name, custom: folderIcons(), kind, kindIcon: kind && iconForKind(kind), kindTone: kind && toneForKind(kind) });
+}
+
+function changeFolderIcon(node) {
+  const look = folderLook(node);
+  openModal('folderIcon', { node, current: folderIcons()[node.path] || null, auto: look });
+}
+
+// Images of one folder, for the viewer's ←/→.
+function openAsset(asset, siblings) {
+  if (!isImagePath(asset.path)) { copyText(`![[${baseName(asset.path)}]]`, 'Embed copied'); return; }
+  const imgs = (siblings || [asset]).filter((a) => isImagePath(a.path));
+  openLightbox(imgs.map((a) => ({ asset: a.path })), imgs.findIndex((a) => a.path === asset.path));
+}
+
+function assetMenu(asset, siblings) {
+  return (e) => openContextMenu(e, [
+    ...(isImagePath(asset.path) ? [{ label: 'View', icon: 'eye', onClick: () => openAsset(asset, siblings) }] : []),
+    { label: 'Copy embed', icon: 'copy', onClick: () => copyText(`![[${baseName(asset.path)}]]`, 'Embed copied') },
+    { label: 'Copy path', icon: 'link', onClick: () => copyText(asset.path, 'Path copied') },
+  ]);
 }
 
 // One row in the tree (page leaf or folder), with hover action icons.
@@ -201,6 +226,7 @@ function folderMenu(node, { act, ren }) {
     { label: 'New subfolder', icon: 'folder', onClick: () => act.newFolder(node.path) },
     '-',
     { label: 'Rename', icon: 'edit', onClick: () => (ren ? ren.start(node.path) : act.renameFolder(node)) },
+    { label: 'Change icon…', icon: 'image', onClick: () => changeFolderIcon(node) },
     { label: 'Export folder…', icon: 'export', onClick: () => openExport({ folderPath: node.path }) },
     '-',
     { label: 'Move to trash', icon: 'trash', danger: true, onClick: () => act.deleteFolder(node) },
@@ -235,9 +261,18 @@ function PageLeaf({ page, depth, active, onOpen, act, ren, dnd }) {
   </div>`;
 }
 
+function AssetLeaf({ asset, siblings, depth }) {
+  return html`<div onClick=${() => openAsset(asset, siblings)} onContextMenu=${assetMenu(asset, siblings)}
+    onMouseEnter=${rowHover(true)} onMouseLeave=${rowHover(false)} title=${asset.path}
+    style=${{ display: 'flex', alignItems: 'center', gap: 7, padding: '4px 8px', paddingLeft: 27 + depth * 14, borderRadius: 5, cursor: 'pointer', color: 'var(--ink-muted)' }}>
+    <span style=${{ width: 16, display: 'flex', justifyContent: 'center' }}><${Icon} name=${isImagePath(asset.path) ? 'image' : 'doc'} size=${12} /></span>
+    <span style=${{ flex: 1, fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${baseName(asset.path)}</span>
+  </div>`;
+}
+
 function FolderNode({ node, depth, openSet, toggle, active, onOpen, act, ren, dnd }) {
   const open = openSet.has(node.path);
-  const kind = kindForFolder(node.name);
+  const look = folderLook(node);
   const renaming = ren && ren.path === node.path;
   const children = [...node.folders.values()].sort((a, b) => a.name.localeCompare(b.name));
   const dragging = dnd && dnd.draggingPath === node.path;
@@ -256,7 +291,7 @@ function FolderNode({ node, depth, openSet, toggle, active, onOpen, act, ren, dn
         background: dropOver ? 'var(--burgundy-50)' : 'transparent',
         boxShadow: dropOver ? 'inset 0 0 0 1px var(--burgundy-300)' : 'none' }}>
       <${Icon} name=${open ? 'chev-d' : 'chev-r'} size=${11} className="ck-ink-faint" />
-      ${kind ? glyphFor(kind, 16) : html`<${Icon} name="folder" size=${13} className="ck-burgundy" />`}
+      ${look ? toneGlyph(look.icon, look.tone, 16) : html`<${Icon} name="folder" size=${13} className="ck-burgundy" />`}
       ${renaming
         ? html`<${RenameInput} initial=${node.name} onCommit=${(v) => ren.commit(node.path, true, v)} onCancel=${ren.cancel} />`
         : html`<span style=${{ flex: 1, fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${node.name}</span>
@@ -270,6 +305,7 @@ function FolderNode({ node, depth, openSet, toggle, active, onOpen, act, ren, dn
     ${open && html`<div>
       ${children.map((c) => html`<${FolderNode} key=${c.path} node=${c} depth=${depth + 1} openSet=${openSet} toggle=${toggle} active=${active} onOpen=${onOpen} act=${act} ren=${ren} dnd=${dnd} />`)}
       ${node.pages.map((p) => html`<${PageLeaf} key=${p.path} page=${p} depth=${depth + 1} active=${active} onOpen=${(e) => onOpen(p, e)} act=${act} ren=${ren} dnd=${dnd} />`)}
+      ${node.assets.map((a) => html`<${AssetLeaf} key=${a.path} asset=${a} siblings=${node.assets} depth=${depth + 1} />`)}
     </div>`}
   </div>`;
 }
@@ -511,14 +547,14 @@ function PageCard({ page, onOpen, picked }) {
   </div>`;
 }
 
-function FolderCard({ node, onOpen }) {
-  const kind = kindForFolder(node.name);
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+function FolderCard({ node, onOpen, onMenu }) {
+  const look = folderLook(node);
   const subN = node.folders.size;
-  const sub = subN ? `${subN} folder${subN === 1 ? '' : 's'} · ${countPages(node)} page${countPages(node) === 1 ? '' : 's'}` : `${countPages(node)} page${countPages(node) === 1 ? '' : 's'}`;
-  return html`<div onClick=${onOpen} style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, padding: '13px 15px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', boxShadow: 'var(--shadow-soft)' }}>
-    ${kind ? glyphFor(kind, 36) : html`<div style=${{ width: 36, height: 36, borderRadius: 7, flex: '0 0 auto', background: 'var(--paper-deep)', color: 'var(--ink-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <${Icon} name="folder" size=${16} />
-    </div>`}
+  const sub = [subN && plural(subN, 'folder'), plural(countPages(node), 'page'), node.assets.length && plural(node.assets.length, 'file')].filter(Boolean).join(' · ');
+  return html`<div onClick=${onOpen} onContextMenu=${onMenu} style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, padding: '13px 15px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', boxShadow: 'var(--shadow-soft)' }}>
+    ${toneGlyph(look ? look.icon : 'folder', look && look.tone, 36)}
     <div style=${{ flex: 1, minWidth: 0 }}>
       <div style=${{ fontFamily: 'var(--font-display)', fontSize: 14.5, fontWeight: 500, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${node.name}</div>
       <div class="ck-num" style=${{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 1 }}>${sub}</div>
@@ -527,16 +563,30 @@ function FolderCard({ node, onOpen }) {
   </div>`;
 }
 
-function FolderRow({ node, onOpen }) {
-  const kind = kindForFolder(node.name);
+function FolderRow({ node, onOpen, onMenu }) {
+  const look = folderLook(node);
   const n = countPages(node);
-  return html`<div onClick=${onOpen} onMouseEnter=${(e) => { e.currentTarget.style.background = 'var(--paper-deep)'; }} onMouseLeave=${(e) => { e.currentTarget.style.background = 'transparent'; }}
+  return html`<div onClick=${onOpen} onContextMenu=${onMenu} onMouseEnter=${(e) => { e.currentTarget.style.background = 'var(--paper-deep)'; }} onMouseLeave=${(e) => { e.currentTarget.style.background = 'transparent'; }}
     style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', height: 36, borderBottom: '1px solid var(--rule-soft)', cursor: 'pointer' }}>
-    ${kind ? glyphFor(kind, 20) : html`<${Icon} name="folder" size=${15} className="ck-ink-muted" />`}
+    ${look ? toneGlyph(look.icon, look.tone, 20) : html`<${Icon} name="folder" size=${15} className="ck-ink-muted" />`}
     <span style=${{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 500, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${node.name}</span>
     ${node.folders.size > 0 && html`<span class="ck-num" style=${{ fontSize: 12, color: 'var(--ink-muted)' }}>${node.folders.size} folder${node.folders.size === 1 ? '' : 's'}</span>`}
     <span class="ck-num" style=${{ fontSize: 12, color: 'var(--ink-muted)', minWidth: 56, textAlign: 'right' }}>${n} page${n === 1 ? '' : 's'}</span>
     <${Icon} name="chev-r" size=${12} className="ck-ink-muted" />
+  </div>`;
+}
+
+function AssetCard({ asset, siblings, campaignId }) {
+  const image = isImagePath(asset.path);
+  const url = useAsset(campaignId, image ? asset.path : null);
+  return html`<div onClick=${() => openAsset(asset, siblings)} onContextMenu=${assetMenu(asset, siblings)} title=${asset.path}
+    style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden', cursor: image ? 'zoom-in' : 'pointer', boxShadow: 'var(--shadow-soft)', display: 'flex', flexDirection: 'column' }}>
+    <div style=${{ aspectRatio: '4 / 3', background: 'var(--surface-inset)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-faint)' }}>
+      ${url
+        ? html`<img src=${url} alt=${baseName(asset.path)} loading="lazy" style=${{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />`
+        : html`<${Icon} name=${image ? 'image' : 'doc'} size=${22} />`}
+    </div>
+    <div style=${{ padding: '7px 10px', fontSize: 12, color: 'var(--ink-soft)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${baseName(asset.path)}</div>
   </div>`;
 }
 
@@ -615,6 +665,7 @@ function VaultView({ campaign }) {
   const [picked, setPicked] = useState(() => new Set());
 
   useEffect(() => { loadVaultTree(campaign.campaign_id); loadVaultDiagnostics(campaign.campaign_id); }, [campaign.campaign_id, store.dirty_vault]);
+  useEffect(() => { loadPrefs(campaign.campaign_id); }, [campaign.campaign_id]);
   useEffect(() => { if (view === 'tags') loadVaultTags(campaign.campaign_id); }, [view, campaign.campaign_id, store.dirty_vault]);
   // Tag jump target from the command palette (navigate('codex', { tag })).
   const routeTag = store.route.params?.tag;
@@ -627,7 +678,7 @@ function VaultView({ campaign }) {
 
   const pages = store.vaultPages || [];
   const folders = store.vaultFolders || [];
-  const tree = buildTree(folders, pages);
+  const tree = buildTree(folders, pages, store.vaultAssets);
   const cur = nodeAt(tree, sel) || tree;
 
   function openPage(p, e) { openPageEvt(p.path, e); }
@@ -749,12 +800,12 @@ function VaultView({ campaign }) {
               </div>`}
               ${folderLayout === 'list'
                 ? html`<div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, overflow: 'hidden' }}>
-                    ${subFolders.map((n) => html`<${FolderRow} key=${n.path} node=${n} onOpen=${() => setSel(n.path)} />`)}
-                    <div onClick=${() => newFolder(sel)} style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', height: 36, color: 'var(--ink-muted)', cursor: 'pointer', fontSize: 13 }}><${Icon} name="plus" size=${14} />New folder</div>
+                    ${subFolders.map((n) => html`<${FolderRow} key=${n.path} node=${n} onOpen=${() => setSel(n.path)} onMenu=${folderMenu(n, { act })} />`)}
+                    <div onClick=${() => act.newFolder(sel)} style=${{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', height: 36, color: 'var(--ink-muted)', cursor: 'pointer', fontSize: 13 }}><${Icon} name="plus" size=${14} />New folder</div>
                   </div>`
                 : html`<div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(228px, 1fr))', gap: 10 }}>
-                    ${subFolders.map((n) => html`<${FolderCard} key=${n.path} node=${n} onOpen=${() => setSel(n.path)} />`)}
-                    <div onClick=${() => newFolder(sel)} style=${{ border: '1.5px dashed var(--rule-strong)', borderRadius: 8, padding: '13px 15px', display: 'flex', alignItems: 'center', gap: 12, color: 'var(--ink-muted)', cursor: 'pointer' }}>
+                    ${subFolders.map((n) => html`<${FolderCard} key=${n.path} node=${n} onOpen=${() => setSel(n.path)} onMenu=${folderMenu(n, { act })} />`)}
+                    <div onClick=${() => act.newFolder(sel)} style=${{ border: '1.5px dashed var(--rule-strong)', borderRadius: 8, padding: '13px 15px', display: 'flex', alignItems: 'center', gap: 12, color: 'var(--ink-muted)', cursor: 'pointer' }}>
                       <div style=${{ width: 36, height: 36, borderRadius: 7, flex: '0 0 auto', background: 'var(--paper-deep)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-muted)' }}><${Icon} name="plus" size=${16} /></div>
                       <div style=${{ fontFamily: 'var(--font-display)', fontSize: 14, color: 'var(--ink-soft)' }}>New folder</div>
                     </div>
@@ -764,6 +815,13 @@ function VaultView({ campaign }) {
                 <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-muted)', margin: '24px 0 10px' }}>${sel ? 'Pages here' : 'Pages at the root'}</div>
                 <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
                   ${cur.pages.map((p) => html`<${PageCard} key=${p.path} ...${cardProps(p)} />`)}
+                </div>
+              </div>`}
+
+              ${cur.assets.length > 0 && html`<div>
+                <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-muted)', margin: '24px 0 10px' }}>${sel ? 'Files here' : 'Files at the root'} <span class="ck-num" style=${{ color: 'var(--ink-faint)' }}>${cur.assets.length}</span></div>
+                <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+                  ${cur.assets.map((a) => html`<${AssetCard} key=${a.path} asset=${a} siblings=${cur.assets} campaignId=${campaign.campaign_id} />`)}
                 </div>
               </div>`}
             </div>`}

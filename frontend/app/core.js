@@ -19,6 +19,7 @@ export const store = {
   campaignSessions: [],   // sessions of current campaign
   vaultPages: [],
   vaultFolders: [],
+  vaultAssets: [],
   atlasMaps: [],          // [{id, name, kind, seed, parent, page, pins[]}]
   atlasMapId: null,       // map currently shown on the Atlas stage (sidebar selection)
   currentPage: null,

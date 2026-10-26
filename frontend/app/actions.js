@@ -2,6 +2,7 @@
 // Ported 1:1 from the legacy app.js so the backend contract is unchanged.
 import { store, setState, setOp, bump, navigate, apiFetch, apiJson, apiText, apiStream, apiUrl, slugify, toneFor, initials, loadWorldTabs, remapTabs, pruneTabs } from './core.js';
 import { togglePinned, movePinned, remapPaths } from './worldPrefs.js';
+import { remapFolderIcons } from './folderIcons.js';
 
 // ── Campaigns ─────────────────────────────────────────────────────
 export async function loadCampaigns() {
@@ -290,7 +291,7 @@ export async function loadVaultTree(campaignId) {
     failed = true;
     return { folders: [], pages: [] };
   });
-  setState({ vaultFolders: r.folders || [], vaultPages: r.pages || [] });
+  setState({ vaultFolders: r.folders || [], vaultPages: r.pages || [], vaultAssets: r.assets || [] });
   if (!failed && id === store.campaign?.campaign_id) pruneTabs(r.pages || []);
   loadVaultLinks(id);
   return r;
@@ -454,6 +455,8 @@ export async function deleteVaultPage(path) {
 export async function deleteVaultFolder(path) {
   const id = store.campaign.campaign_id;
   await apiFetch(`/campaigns/${id}/vault/folders/${encodeURI(path)}`, { method: 'DELETE' });
+  const icons = remapFolderIcons(folderIcons(), path, null);
+  if (Object.keys(icons).length !== Object.keys(folderIcons()).length) patchPrefs({ folder_icons: icons });
   await loadVaultTree(id);
 }
 
@@ -1223,7 +1226,21 @@ export async function pinAt(path, index) {
 function remapPins(from, to) {
   const cur = pinnedPaths();
   const next = remapPaths(cur, from, to);
-  if (JSON.stringify(cur) !== JSON.stringify(next)) patchPrefs({ pinned: next });
+  const icons = remapFolderIcons(folderIcons(), from, to);
+  const patch = {};
+  if (JSON.stringify(cur) !== JSON.stringify(next)) patch.pinned = next;
+  if (JSON.stringify(icons) !== JSON.stringify(folderIcons())) patch.folder_icons = icons;
+  if (Object.keys(patch).length) patchPrefs(patch);
+}
+
+export const folderIcons = () => store.worldPrefs?.folder_icons || {};
+
+// `value` is { icon, tone }; null restores the automatic icon.
+export async function setFolderIcon(path, value) {
+  await loadPrefs();
+  const next = { ...folderIcons() };
+  if (value) next[path] = value; else delete next[path];
+  return patchPrefs({ folder_icons: next });
 }
 
 export async function dismissGap(key) {

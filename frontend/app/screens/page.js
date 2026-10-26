@@ -7,6 +7,7 @@
 import { html, useState, useEffect, useRef, useMemo, useCallback } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, useStore, openModal, setState, store as globalStore, splitPageRef, fmtDateTime } from '../core.js';
 import { Shell, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
+import { openLightbox } from '../lightbox.js';
 import { Empty, Icon, PageBody, WikilinkHoverCard, splitDoc, joinDoc, parseProps, openContextMenu, useAsset, bannerAsset } from '../ui.js';
 import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault, uploadVaultAsset, loadSnippets, loadRelations, loadSkills, copyText, togglePin, loadPrefs } from '../actions.js';
 import { mountEditor, gotoHeading } from '../cm.js';
@@ -616,7 +617,8 @@ function ReadView({ page, path, pages, campaignId, onBroken, scrollRef }) {
   return html`<div style=${{ flex: 1, position: 'relative', display: 'flex', minWidth: 0, minHeight: 0 }}>
     ${findTick > 0 && html`<${FindBar} scrollRef=${scrollRef} doc=${page.content} focusTick=${findTick} onClose=${() => setFindTick(0)} />`}
     <div ref=${scrollRef} style=${{ flex: 1, overflow: 'auto', background: 'var(--paper)', padding: '0 0 64px', minWidth: 0 }}>
-      ${bannerUrl && html`<img class="ck-page-banner" src=${bannerUrl} alt="" />`}
+      ${bannerUrl && html`<img class="ck-page-banner" src=${bannerUrl} alt="" style=${{ cursor: 'zoom-in' }}
+        onClick=${() => openLightbox([{ asset: bannerAsset(props) }])} />`}
       <div style=${{ maxWidth: 680, margin: '0 auto', padding: `${bannerUrl ? 24 : 34}px 52px 0` }}>
         <${Provenance} path=${path} />
         <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)', marginTop: 16 }}>${eyebrow}</div>

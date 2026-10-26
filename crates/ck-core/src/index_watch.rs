@@ -137,9 +137,10 @@ fn process(
         return;
     }
     if abs.extension().and_then(|e| e.to_str()) != Some("md") {
-        // Folder created/renamed/deleted (or unknown deleted path): nothing to
-        // index, but the Explorer tree changed — signal the frontend.
-        if abs.is_dir() || !abs.exists() {
+        // Folder or media file created/renamed/deleted (or unknown deleted
+        // path): nothing to index, but the Explorer tree changed — signal the
+        // frontend.
+        if abs.is_dir() || !abs.exists() || crate::vault::is_asset(abs) {
             seq.fetch_add(1, Ordering::Relaxed);
         }
         return;

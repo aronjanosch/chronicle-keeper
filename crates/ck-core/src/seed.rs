@@ -183,7 +183,6 @@ When you're done exploring, create your own world from the library. You can dele
         "People/Mayor Teller Oren.md",
         r#"---
 kind: npc
-image: "[[Teller Oren.svg]]"
 summary: Anxious mayor of Cinderhold who hired the party.
 aliases: [Oren, the Mayor]
 tags: [npc/cinderhold]

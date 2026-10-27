@@ -7,7 +7,7 @@
 import { html, useState, useEffect, useRef, useMemo, useCallback } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, useStore, openModal, setState, store as globalStore, splitPageRef, fmtDateTime } from '../core.js';
 import { Shell, Topbar, useSidebarWidth, ResizeHandle } from '../shell.js';
-import { openLightbox } from '../lightbox.js';
+import { openLightbox, isImagePath } from '../lightbox.js';
 import { Empty, Icon, PageBody, WikilinkHoverCard, splitDoc, joinDoc, parseProps, openContextMenu, useAsset, bannerAsset } from '../ui.js';
 import { readVaultPage, saveVaultPage, openCampaign, loadVaultTree, loadKindSchemas, loadAtlasMaps, createVaultPage, watchVault, uploadVaultAsset, loadSnippets, loadRelations, loadSkills, copyText, togglePin, loadPrefs } from '../actions.js';
 import { mountEditor, gotoHeading } from '../cm.js';
@@ -32,13 +32,33 @@ function schemaFor(schemas, kind) {
 
 const CHECKED = new Set(['true', 'yes', 'x', '✓', '1']);
 
-function FieldVal({ type, values, pages }) {
+const WIKI_VALUE = /^!?\[\[([^\]|]+)(?:\|([^\]]+))?\]\]$/;
+const imageOf = (v) => {
+  const m = WIKI_VALUE.exec(String(v).trim());
+  return m && isImagePath(m[1].trim()) ? m[1].trim() : null;
+};
+
+function FieldImage({ campaignId, name, siblings }) {
+  const url = useAsset(campaignId, name);
+  const open = (e) => {
+    e.stopPropagation();
+    openLightbox(siblings.map((asset) => ({ asset })), siblings.indexOf(name));
+  };
+  return html`<button class="ck-prop-image" title=${name} onClick=${open}>
+    ${url ? html`<img src=${url} alt=${name} />` : html`<span class="ck-prop-tag">${name}</span>`}
+  </button>`;
+}
+
+function FieldVal({ type, values, pages, campaignId }) {
   if (type === 'checkbox') {
     const on = CHECKED.has(String(values[0] || '').toLowerCase());
     return html`<span class="ck-prop-tag" style=${{ color: on ? 'var(--moss)' : 'var(--ink-faint)' }}>${on ? '✓ yes' : '— no'}</span>`;
   }
+  const images = values.map(imageOf).filter(Boolean);
   return values.map((v, i) => {
-    const m = /^\[\[([^\]|]+)(?:\|([^\]]+))?\]\]$/.exec(String(v).trim());
+    const img = imageOf(v);
+    if (img) return html`<${FieldImage} key=${i} campaignId=${campaignId} name=${img} siblings=${images} />`;
+    const m = WIKI_VALUE.exec(String(v).trim());
     if (!m) return html`<span class="ck-prop-tag" key=${i}>${v}</span>`;
     const name = m[1].split('#')[0].trim();
     const label = (m[2] || m[1]).trim();
@@ -109,7 +129,7 @@ function RailCard({ icon, title, right, children }) {
 // Infobox: the page kind's frontmatter fields (design page.jsx right rail).
 // Each field's ⋯ menu marks it GM-only (`gm_fields:` frontmatter): tinted,
 // badged, and left out of exports that skip GM content.
-function InfoboxCard({ fm, kind, schemas, pages, page, onSave }) {
+function InfoboxCard({ fm, kind, schemas, pages, page, campaignId, onSave }) {
   const fields = schemaFor(schemas, kind);
   const gmKeys = gmFieldList(fm);
   const rows = infoboxRows(parseProps(fm), fields).filter((r) => r.values.length);
@@ -126,7 +146,7 @@ function InfoboxCard({ fm, kind, schemas, pages, page, onSave }) {
       const isGm = gmKeys.includes(r.key);
       return html`<div class="ck-infobox-row ${isGm ? 'gm' : ''}" key=${r.key} onContextMenu=${menu(r.key, isGm)}>
         <span class="ck-infobox-key">${r.key}</span>
-        <span class="ck-prop-vals"><${FieldVal} type=${r.type} values=${r.values} pages=${pages} /></span>
+        <span class="ck-prop-vals"><${FieldVal} type=${r.type} values=${r.values} pages=${pages} campaignId=${campaignId} /></span>
         ${isGm && html`<span class="ck-gm-badge" title="GM-only field">■ GM</span>`}
         <span class="ck-infobox-more" tabindex="0" role="button" title="Field options" onClick=${menu(r.key, isGm)}><${Icon} name="dots" size=${13} /></span>
       </div>`;
@@ -659,7 +679,7 @@ function PageRail({ page, path, pages, links, relations, schemas, atlasMaps, cam
     </div>
     ${railTab === 'info'
       ? html`<div style=${{ flex: 1, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <${InfoboxCard} fm=${fm} kind=${page.kind} schemas=${schemas} pages=${pages} page=${page} onSave=${onSave} />
+          <${InfoboxCard} fm=${fm} kind=${page.kind} schemas=${schemas} pages=${pages} page=${page} campaignId=${campaignId} onSave=${onSave} />
           ${showThreadStatus && html`<${ThreadStatusCard} page=${page} onSave=${onSave} />`}
           <${SummaryCard} page=${page} onSave=${onSave} />
           <${TagsCard} tags=${meta?.tags} />

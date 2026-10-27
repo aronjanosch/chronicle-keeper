@@ -148,12 +148,20 @@ pub(crate) fn split_frontmatter(content: &str) -> (Vec<(String, Vec<String>)>, &
         }
         if let Some((k, v)) = line.split_once(':') {
             let v = v.trim();
-            let vals = match v.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            // An unquoted `[[Page]]` (or a comma run of them) is a wikilink,
+            // not a YAML flow list.
+            let links = wikilink_run(v);
+            let flow = match links {
+                Some(_) => None,
+                None => v.strip_prefix('[').and_then(|s| s.strip_suffix(']')),
+            };
+            let vals = match flow {
                 Some(inner) => inner
                     .split(',')
                     .map(|s| s.trim().trim_matches(['"', '\'']).to_string())
                     .filter(|s| !s.is_empty())
                     .collect(),
+                None if links.is_some() => links.unwrap_or_default(),
                 None => {
                     let v = v.trim_matches(['"', '\'']);
                     if v.is_empty() {
@@ -167,6 +175,27 @@ pub(crate) fn split_frontmatter(content: &str) -> (Vec<(String, Vec<String>)>, &
         }
     }
     (map, body)
+}
+
+/// `[[A]]`, `![[map.png]]` or `[[A]], [[B|b]]` → each link as written.
+fn wikilink_run(v: &str) -> Option<Vec<String>> {
+    let mut links = Vec::new();
+    let mut rest = v.trim();
+    loop {
+        let start = rest.strip_prefix('!').unwrap_or(rest);
+        let inner = start.strip_prefix("[[")?;
+        let close = inner.find("]]")?;
+        if close == 0 || inner[..close].contains('[') {
+            return None;
+        }
+        let len = rest.len() - inner.len() + close + 2;
+        links.push(rest[..len].to_string());
+        rest = rest[len..].trim_start();
+        if rest.is_empty() {
+            return Some(links);
+        }
+        rest = rest.strip_prefix(',')?.trim_start();
+    }
 }
 
 pub(crate) fn fm_get<'a>(fm: &'a [(String, Vec<String>)], key: &str) -> Option<&'a str> {
@@ -1554,6 +1583,21 @@ mod tests {
         assert!(fm_get(&fm, "missing").is_none());
         assert!(fm_list(&fm, "missing").is_empty());
         assert!(body.starts_with("# Aragorn"));
+    }
+
+    #[test]
+    fn frontmatter_keeps_unicode_keys_and_unquoted_wikilinks() {
+        let raw = "---\ntípus: város\nvezető: [[Ödön]]\nszövetségesek: [[Ilona]], [[Béla|a kovács]]\nrokon: [[Smith, John]]\ntérkép: ![[Főváros.png]]\nlista: [[[Ödön]], \"[[Ilona]]\"]\n---\nBody";
+        let (fm, _) = split_frontmatter(raw);
+        assert_eq!(fm_get(&fm, "típus"), Some("város"));
+        assert_eq!(fm_list(&fm, "vezető"), ["[[Ödön]]"]);
+        assert_eq!(
+            fm_list(&fm, "szövetségesek"),
+            ["[[Ilona]]", "[[Béla|a kovács]]"]
+        );
+        assert_eq!(fm_list(&fm, "rokon"), ["[[Smith, John]]"]);
+        assert_eq!(fm_get(&fm, "térkép"), Some("![[Főváros.png]]"));
+        assert_eq!(fm_list(&fm, "lista"), ["[[Ödön]]", "[[Ilona]]"]);
     }
 
     #[test]

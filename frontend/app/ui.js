@@ -997,15 +997,23 @@ export function joinDoc(fm, body) {
 
 // Parse flat-YAML frontmatter into [{ key, list, values }] for the Properties strip.
 // Supports `k: v`, inline `k: [a, b]`, and block lists (`k:` then `- item` lines).
+// An unquoted `[[Page]]` is a wikilink, not a YAML flow list, and so is a
+// comma-separated run of them; `[[[a]], [[b]]]` is still a list.
+const WIKI_RUN = /^!?\[\[[^\]]+\]\](\s*,\s*!?\[\[[^\]]+\]\])*$/;
+
 export function parseProps(fm) {
   const lines = (fm || '').replace(/\r\n/g, '\n').split('\n');
   const props = [];
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    // Any key that isn't a list item, comment or indented line, so `típus:` counts.
+    const m = lines[i].match(/^([^\s#:-][^:]*?):\s*(.*)$/);
     if (!m) continue;
-    const key = m[1];
+    const key = m[1].trim();
     let rest = m[2].trim();
-    if (rest.startsWith('[') && rest.endsWith(']')) {
+    if (WIKI_RUN.test(rest)) {
+      const values = rest.match(/!?\[\[[^\]]+\]\]/g);
+      props.push({ key, list: values.length > 1, values });
+    } else if (rest.startsWith('[') && rest.endsWith(']')) {
       const values = rest.slice(1, -1).split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
       props.push({ key, list: true, values });
     } else if (!rest) {

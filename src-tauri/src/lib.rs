@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_window_state::StateFlags;
 
 mod menu;
 
@@ -82,7 +83,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         // Phase 14F: windows remember size/position across launches.
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Decorations follow the compositor, not the last session: a restored
+        // `decorated: true` would bring the title bar back on tiling WMs.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(StateFlags::all() & !StateFlags::DECORATIONS)
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![menu::set_format_enabled])
         .on_menu_event(menu::on_menu_event)
         .setup(move |app| {

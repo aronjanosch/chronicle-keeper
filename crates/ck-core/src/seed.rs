@@ -91,6 +91,15 @@ fn seed_inner(conn: &Connection) -> AppResult<()> {
     for (rel, content) in DEMO_PAGES {
         vault::write_page(&vault_path, rel, content)?;
     }
+    for (rel, bytes) in DEMO_ASSETS {
+        let path = vault_path.join(rel);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("create dir: {e}")))?;
+        }
+        std::fs::write(path, bytes)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("write asset: {e}")))?;
+    }
 
     // One session, already recorded, transcribed and summarized so the user sees
     // the whole pipeline as "complete" — tracks + speakers + both artifacts.
@@ -153,13 +162,16 @@ Click [[Mayor Teller Oren]]. Every `[[name]]` is a link, and pages know what lin
 ## 2 · Edit a page
 Top right: **Read / Edit**. In Edit mode, type `[[` to link another page and `/` for quick inserts and Keeper commands. ⌘S saves.
 
-## 3 · Meet the Keeper
+## 3 · Browse the Codex
+Pages live in folders, and each folder picks an icon from its name. Right-click a folder → **Change icon…** to choose your own. Images sit next to the pages that use them — see *Assets*. Click any picture, like the map on [[Cinderhold]], to view it full screen: scroll or click to zoom, drag to pan, ←/→ for the next one.
+
+## 4 · Meet the Keeper
 **The Keeper** in the sidebar is this world's AI librarian. Try asking: *“Who is Mayor Oren, and what is he hiding?”* It reads your pages to answer — and it can edit them for you, but it always asks before changing anything.
 
-## 4 · See a finished session
+## 5 · See a finished session
 **Sessions** holds *Session 1: The Cold Stones*, a sample with the whole pipeline already done: recording → transcript → AI summary. When you're ready, upload your own Craig recording from there.
 
-## 5 · Make it yours
+## 6 · Make it yours
 - **⌘K** — jump to any page, run any command
 - **⌘N** — new page · **⌘⇧J** — quick capture
 - **Settings** — pick your LLM: local via Ollama (default model `gemma4:e2b`, no account needed) or bring any cloud API key.
@@ -168,9 +180,10 @@ When you're done exploring, create your own world from the library. You can dele
 "#,
     ),
     (
-        "Mayor Teller Oren.md",
+        "People/Mayor Teller Oren.md",
         r#"---
 kind: npc
+image: "[[Teller Oren.svg]]"
 summary: Anxious mayor of Cinderhold who hired the party.
 aliases: [Oren, the Mayor]
 tags: [npc/cinderhold]
@@ -179,12 +192,15 @@ The elected head of [[Cinderhold]], a soft-handed merchant out of his depth. He 
 
 ## Secrets
 He is hiding how little coin the town actually has left — [[Vesh]] caught the lie in session one.
+
+![[Teller Oren.svg]]
 "#,
     ),
     (
-        "Cinderhold.md",
+        "Places/Cinderhold.md",
         r#"---
 kind: place
+image: "[[Embermarch.svg]]"
 summary: Walled frontier town built into a dead caldera.
 tags: [place/embermarch]
 ---
@@ -192,10 +208,18 @@ The last settled town before the ash plains. Its homes are cut into the inner wa
 
 ## History
 Founded by the first settlers of [[The Ashfall Compact|the Compact]]. Trade has dried up since the eastern road closed. [[The Ember Wardens]] still walk the rim, mostly ignored.
+
+## Map
+![[Embermarch.svg]]
+
+## Handouts
+A rubbing the party took from one of the dead rim stones:
+
+![[Warding Stone Rubbing.svg]]
 "#,
     ),
     (
-        "The Ember Wardens.md",
+        "Factions/The Ember Wardens.md",
         r#"---
 kind: faction
 summary: Old order sworn to keep the fire below bound.
@@ -206,7 +230,7 @@ A dwindling order that maintains the warding stones around [[Cinderhold]] and re
 "#,
     ),
     (
-        "The Ashfall Compact.md",
+        "Lore/The Ashfall Compact.md",
         r#"---
 kind: lore
 summary: The ancient pact that bound the fire beneath Embermarch.
@@ -217,7 +241,7 @@ A centuries-old binding between the first settlers and something deep undergroun
 "#,
     ),
     (
-        "Brannik's Tuning Hammer.md",
+        "Items/Brannik's Tuning Hammer.md",
         r#"---
 kind: item
 summary: Dwarven hammer that rings true near live ward-stone.
@@ -225,6 +249,23 @@ tags: [item]
 ---
 A family heirloom of Brannik Stonebellow. When struck near an active warding stone it hums a clear note; near a dead one it falls silent. The party used it to map which stones around [[Cinderhold]] have failed.
 "#,
+    ),
+];
+
+// Original artwork for the demo, so the Codex shows media folders, banners and
+// the image viewer out of the box. Embeds resolve by file name.
+const DEMO_ASSETS: [(&str, &str); 3] = [
+    (
+        "Assets/Maps/Embermarch.svg",
+        include_str!("seed_assets/embermarch-map.svg"),
+    ),
+    (
+        "Assets/Portraits/Teller Oren.svg",
+        include_str!("seed_assets/teller-oren.svg"),
+    ),
+    (
+        "Assets/Handouts/Warding Stone Rubbing.svg",
+        include_str!("seed_assets/warding-stone-rubbing.svg"),
     ),
 ];
 
@@ -308,12 +349,25 @@ mod tests {
         assert_eq!(pages.len(), 6);
         let tour = vault::read_page(&vault, "Start Here.md").unwrap();
         assert!(tour.content.contains("[[Mayor Teller Oren]]"));
-        let oren = vault::read_page(&vault, "Mayor Teller Oren.md").unwrap();
+        let oren = vault::read_page(&vault, "People/Mayor Teller Oren.md").unwrap();
         assert_eq!(
             oren.summary,
             "Anxious mayor of Cinderhold who hired the party."
         );
         assert!(oren.content.contains("[[Cinderhold]]"));
+        let assets: Vec<_> = vault::list_assets(&vault)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.path)
+            .collect();
+        assert_eq!(
+            assets,
+            [
+                "Assets/Handouts/Warding Stone Rubbing.svg",
+                "Assets/Maps/Embermarch.svg",
+                "Assets/Portraits/Teller Oren.svg",
+            ]
+        );
 
         let sessions = crate::store::sessions::list_campaign_sessions(&conn, CAMPAIGN_ID).unwrap();
         assert_eq!(sessions.len(), 1);

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" font-family="Georgia, serif">
+  <rect width="800" height="600" fill="#f1e6cf"/>
+  <path d="M40 40h720v520H40z" fill="#e6d6b4" stroke="#8a6a48" stroke-width="2" stroke-dasharray="3 5"/>
+  <g transform="translate(400 280)" fill="none" stroke="#2b1d12" stroke-width="6" opacity=".85">
+    <circle r="170"/>
+    <circle r="120" stroke-width="3"/>
+    <path d="M0-120L104 60H-104z"/>
+    <path d="M0-170V-120M0 120V170M-147 85l43-25M147 85l-43-25M-147-85l43 25M147-85l-43 25" stroke-width="4"/>
+    <circle r="26" fill="#8f2f24" stroke="none"/>
+  </g>
+  <g fill="#3a2414" font-size="22" text-anchor="middle" font-style="italic">
+    <text x="400" y="510">“What sleeps below is bound while the stones remember.”</text>
+  </g>
+  <text x="70" y="80" font-size="18" fill="#5b3a22">Rubbing — rim stone VII, Cinderhold</text>
+</svg>

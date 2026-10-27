@@ -230,6 +230,8 @@ span.ck-embed-src.ck-wikilink:hover { color: var(--burgundy); }
 .ck-prop-tag.mono { font-family: var(--font-mono); }
 .ck-prop-tag.ck-prop-link { color: var(--burgundy); cursor: pointer; }
 .ck-prop-tag.ck-prop-link:hover { border-color: var(--burgundy); }
+.ck-prop-image { flex: 1 1 100%; padding: 0; border: 1px solid var(--rule-soft); border-radius: 4px; background: var(--paper-deep); cursor: zoom-in; overflow: hidden; }
+.ck-prop-image img { display: block; width: 100%; height: auto; max-height: 160px; object-fit: contain; }
 .ck-prop-empty { color: var(--ink-faint); font-size: 12px; display: flex; align-items: center; gap: 5px; }
 .ck-prop-blank { color: var(--ink-faint); font-size: 11px; }
 
@@ -254,7 +256,7 @@ span.ck-embed-src.ck-wikilink:hover { color: var(--burgundy); }
 .ck-rail-right + .ck-rail-chev { margin-left: 0; }
 .ck-rail-card.collapsed .ck-rail-head { margin-bottom: 0; }
 .ck-infobox-row { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 12px; }
-.ck-infobox-key { width: 72px; flex: 0 0 auto; color: var(--ink-faint); font-family: var(--font-mono); font-size: 11px; }
+.ck-infobox-key { width: 72px; flex: 0 0 auto; color: var(--ink-faint); font-family: var(--font-mono); font-size: 11px; overflow-wrap: anywhere; }
 .ck-rail-summary { font-family: var(--font-display); font-style: italic; font-size: 13.5px; color: var(--ink); line-height: 1.5; cursor: text; border-radius: 4px; }
 .ck-rail-summary:hover { background: var(--paper-deep); }
 .ck-rail-summary-edit { width: 100%; border: 1px solid var(--rule); border-radius: 4px; background: var(--paper); font-family: var(--font-display); font-style: italic; font-size: 13.5px; color: var(--ink); line-height: 1.5; padding: 4px 6px; resize: none; overflow: hidden; }

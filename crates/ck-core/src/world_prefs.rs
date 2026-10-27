@@ -1,6 +1,8 @@
-//! Per-world UI state that should travel with the folder: pinned pages and
-//! dismissed "Unfinished" rows. Lives in `.ck/prefs.json` (unknown keys kept).
+//! Per-world UI state that should travel with the folder: pinned pages,
+//! dismissed "Unfinished" rows and custom folder icons. Lives in
+//! `.ck/prefs.json` (unknown keys kept).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -15,8 +17,18 @@ pub struct WorldPrefs {
     pub pinned: Vec<String>,
     #[serde(default)]
     pub gaps_dismissed: Vec<String>,
+    /// Folder path → icon the user picked in the Codex.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub folder_icons: BTreeMap<String, FolderIcon>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FolderIcon {
+    pub icon: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<String>,
 }
 
 fn file(world_root: &Path) -> PathBuf {
@@ -42,6 +54,12 @@ fn clean(list: Vec<String>) -> Vec<String> {
 pub fn write(world_root: &Path, mut prefs: WorldPrefs) -> AppResult<WorldPrefs> {
     prefs.pinned = clean(prefs.pinned);
     prefs.gaps_dismissed = clean(prefs.gaps_dismissed);
+    prefs.folder_icons = std::mem::take(&mut prefs.folder_icons)
+        .into_iter()
+        .map(|(path, icon)| (path.trim().trim_matches('/').to_string(), icon))
+        .filter(|(path, icon)| !path.is_empty() && !icon.icon.trim().is_empty())
+        .take(MAX_ITEMS)
+        .collect();
     let dir = world_root.join(".ck");
     std::fs::create_dir_all(&dir)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("create .ck: {e}")))?;
@@ -74,6 +92,26 @@ mod tests {
         assert_eq!(back.pinned, w.pinned);
         assert_eq!(back.gaps_dismissed, vec!["page:X.md"]);
         assert!(back.extra.contains_key("future"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn folder_icons_trim_paths_and_drop_blank_entries() {
+        let root = std::env::temp_dir().join(format!("ck-prefs-icons-{}", std::process::id()));
+        std::fs::remove_dir_all(&root).ok();
+        let mut p = WorldPrefs::default();
+        let icon = |i: &str| FolderIcon {
+            icon: i.into(),
+            tone: Some("moss".into()),
+        };
+        p.folder_icons
+            .insert("/Places/Taverns/".into(), icon("mug"));
+        p.folder_icons.insert("Rules".into(), icon(" "));
+        p.folder_icons.insert("".into(), icon("skull"));
+        write(&root, p).unwrap();
+        let back = read(&root);
+        assert_eq!(back.folder_icons.len(), 1);
+        assert_eq!(back.folder_icons["Places/Taverns"], icon("mug"));
         std::fs::remove_dir_all(&root).ok();
     }
 }

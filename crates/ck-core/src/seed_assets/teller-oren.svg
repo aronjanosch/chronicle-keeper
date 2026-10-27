@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800" font-family="Georgia, serif">
+  <rect width="600" height="800" fill="#e7d7b8"/>
+  <rect x="30" y="30" width="540" height="740" rx="8" fill="#d9c39c" stroke="#5b3a22" stroke-width="4"/>
+  <ellipse cx="300" cy="330" rx="190" ry="230" fill="#ecdcbc" stroke="#5b3a22" stroke-width="3"/>
+  <path d="M150 560c20-90 80-120 150-120s130 30 150 120v90H150z" fill="#6e2a22"/>
+  <path d="M250 450l50 60 50-60" fill="none" stroke="#c9a24a" stroke-width="8"/>
+  <circle cx="300" cy="520" r="14" fill="#c9a24a"/>
+  <ellipse cx="300" cy="330" rx="88" ry="110" fill="#c79f7a"/>
+  <path d="M212 300c10-80 166-80 176 0-30-30-146-30-176 0z" fill="#6b5a4a"/>
+  <g fill="#2b1d12"><ellipse cx="268" cy="335" rx="8" ry="6"/><ellipse cx="332" cy="335" rx="8" ry="6"/></g>
+  <path d="M252 314q16-10 32 0M316 314q16-10 32 0" stroke="#2b1d12" stroke-width="4" fill="none"/>
+  <path d="M276 395q24 10 48 0" stroke="#5b3a22" stroke-width="4" fill="none"/>
+  <path d="M366 360c14 4 16 22 2 28" fill="none" stroke="#8a5f42" stroke-width="3"/>
+  <circle cx="378" cy="300" r="5" fill="#8ab0c8" opacity=".8"/>
+  <text x="300" y="720" text-anchor="middle" font-size="34" fill="#3a2414">Mayor Teller Oren</text>
+</svg>

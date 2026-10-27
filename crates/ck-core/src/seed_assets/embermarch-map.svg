@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" font-family="Georgia, serif">
+  <defs>
+    <radialGradient id="ash" cx="50%" cy="45%" r="70%">
+      <stop offset="0" stop-color="#efe2c6"/>
+      <stop offset="1" stop-color="#cdb68d"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="800" fill="url(#ash)"/>
+  <rect x="24" y="24" width="1152" height="752" fill="none" stroke="#5b3a22" stroke-width="4"/>
+  <rect x="36" y="36" width="1128" height="728" fill="none" stroke="#5b3a22" stroke-width="1.5"/>
+  <g fill="none" stroke="#8a6a48" stroke-width="2" opacity=".55">
+    <path d="M80 640c120-30 210 10 330-20s200-80 330-60 240 70 380 40"/>
+    <path d="M80 690c140-20 250 20 380-10s220-60 340-40 210 40 320 20"/>
+    <path d="M90 150c110 30 220-10 320 20s190 60 300 40"/>
+  </g>
+  <g fill="#7c5a3c" stroke="#4a2e1a" stroke-width="2">
+    <path d="M760 250l40-70 40 70z"/><path d="M820 270l50-90 50 90z"/><path d="M890 245l38-64 38 64z"/>
+    <path d="M950 300l44-76 44 76z"/><path d="M200 300l36-62 36 62z"/><path d="M250 320l44-76 44 76z"/>
+  </g>
+  <g transform="translate(560 420)">
+    <ellipse rx="150" ry="110" fill="#b48a62" stroke="#4a2e1a" stroke-width="3"/>
+    <ellipse rx="95" ry="66" fill="#8f2f24" opacity=".25"/>
+    <ellipse rx="95" ry="66" fill="none" stroke="#4a2e1a" stroke-width="2" stroke-dasharray="6 6"/>
+    <g fill="#4a2e1a">
+      <rect x="-22" y="-14" width="14" height="14"/><rect x="0" y="-22" width="18" height="18"/><rect x="24" y="-10" width="12" height="12"/>
+      <rect x="-12" y="8" width="16" height="12"/>
+    </g>
+    <g fill="#e9d9b6" stroke="#4a2e1a" stroke-width="2">
+      <circle cx="-150" cy="0" r="7"/><circle cx="150" cy="0" r="7"/><circle cx="0" cy="-110" r="7"/>
+      <circle cx="0" cy="110" r="7"/><circle cx="-106" cy="-78" r="7"/><circle cx="106" cy="78" r="7"/>
+    </g>
+    <g fill="#2b1d12"><circle cx="106" cy="-78" r="7"/><circle cx="-106" cy="78" r="7"/></g>
+  </g>
+  <path d="M710 420C820 420 900 380 1060 360" fill="none" stroke="#5b3a22" stroke-width="3" stroke-dasharray="10 8"/>
+  <path d="M1000 330l40 60M1040 330l-40 60" stroke="#8f2f24" stroke-width="4"/>
+  <path d="M410 430C320 450 220 480 90 470" fill="none" stroke="#5b3a22" stroke-width="3" stroke-dasharray="10 8"/>
+  <g fill="#3a2414" text-anchor="middle">
+    <text x="600" y="90" font-size="44" letter-spacing="6">EMBERMARCH</text>
+    <text x="560" y="575" font-size="26">Cinderhold</text>
+    <text x="870" y="160" font-size="20" font-style="italic">The Dead Cones</text>
+    <text x="1020" y="420" font-size="18" font-style="italic">eastern road (closed)</text>
+    <text x="250" y="370" font-size="20" font-style="italic">Greyback Hills</text>
+    <text x="600" y="700" font-size="20" font-style="italic">the ash plains</text>
+  </g>
+  <g transform="translate(1090 660)" stroke="#3a2414" stroke-width="2" fill="none">
+    <circle r="40"/><path d="M0-52V52M-52 0H52"/><path d="M0-40l9 30H-9z" fill="#8f2f24"/>
+    <text y="-58" text-anchor="middle" font-size="18" fill="#3a2414" stroke="none">N</text>
+  </g>
+</svg>

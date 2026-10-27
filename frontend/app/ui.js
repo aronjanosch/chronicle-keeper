@@ -1,7 +1,7 @@
 // Shared atoms ported from the design's atoms.jsx + a few form/primitive helpers.
 import { html, useState, useEffect, useLayoutEffect, useRef, useCallback } from '../vendor/htm-preact-standalone.mjs';
 import { marked } from '../vendor/marked.esm.js';
-import { navigate, store, apiBlob, apiFetch, openInNewTab } from './core.js';
+import { navigate, store, apiBlob, apiFetch, openInNewTab, openModal } from './core.js';
 
 // ── Icon — monoline 16-grid SVGs ──────────────────────────────────
 const PATHS = {
@@ -64,6 +64,28 @@ const PATHS = {
   ruin:     'M5 14V7M11 14V4.5M3.5 14h9M3.5 7h3M9.5 4.5h3',
   ruler:    'M2 11.5 11.5 2 14 4.5 4.5 14 2 11.5ZM5 8.5l1.5 1.5M7.5 6l1.2 1.2M10 3.5l1.5 1.5',
   bridge:   'M1.5 11h13M3 11V8M13 11V8M3 8c1.5-3.5 8.5-3.5 10 0M1.5 13.5h13',
+  // folder glyphs (Codex folder icon picker)
+  potion:   'M6.5 2h3M7 2v3.5l-3.3 5.6A2 2 0 0 0 5.4 14h5.2a2 2 0 0 0 1.7-2.9L9 5.5V2M4.6 10h6.8',
+  crown:    'M2.5 12.5h11M3 12.5 2 5l3.5 3L8 3l2.5 5L14 5l-1 7.5',
+  chest:    'M2.5 7.5h11V13a.5.5 0 0 1-.5.5H3a.5.5 0 0 1-.5-.5V7.5ZM2.5 7.5V6a3 3 0 0 1 3-3h5a3 3 0 0 1 3 3v1.5M7 7.5v2h2v-2',
+  mug:      'M3 5h7v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5ZM10 6.5h1.5A1.5 1.5 0 0 1 13 8v1.5a1.5 1.5 0 0 1-1.5 1.5H10M5.2 7.5v4M7.8 7.5v4M2.5 5c0-1.6 1.3-2.8 4-2.8s4 1.2 4 2.8',
+  temple:   'M2 6 8 2.5 14 6H2ZM4 6v6M6.7 6v6M9.3 6v6M12 6v6M2.5 12h11M1.5 14h13',
+  tomb:     'M4 14V6a4 4 0 0 1 8 0v8M2.5 14h11M8 6v4.5M6.3 7.7h3.4',
+  moon:     'M12.5 10A5.5 5.5 0 0 1 6 3.5a5.5 5.5 0 1 0 6.5 6.5Z',
+  star:     'm8 2 1.8 3.9 4.2.5-3.1 2.9.8 4.2L8 11.4l-3.7 2.1.8-4.2L2 6.4l4.2-.5L8 2Z',
+  d20:      'M8 1.5 13.5 4.7v6.6L8 14.5l-5.5-3.2V4.7L8 1.5ZM8 1.5 5 9.5h6L8 1.5ZM2.5 4.7 5 9.5M13.5 4.7 11 9.5M5 9.5l3 5 3-5M2.5 11.3 5 9.5M13.5 11.3 11 9.5',
+  claws:    'M4 2.5c1.2 3.5 1 7.5-1.5 11M8 2c1.2 4 1 8-1.5 12M12 2.5c1.2 3.5 1 7.5-1.5 11',
+  hammer:   'M3 14 8.5 8.5M6.5 5.5l3-3 4 4-3 3-4-4ZM8 4l4 4',
+  wand:     'M2.5 13.5 9 7M11.5 1.5v2.5M10.25 2.75h2.5M13.5 6v2M12.5 7h2M8 3.5v1.5M7.25 4.25h1.5',
+  hourglass:'M4 2h8M4 14h8M5 2v1.5c0 2 3 3 3 4.5s-3 2.5-3 4.5V14M11 2v1.5c0 2-3 3-3 4.5s3 2.5 3 4.5V14',
+  mask:     'M2 4.5c2-.8 4-1 6-1s4 .2 6 1c0 4.5-2 8-6 8s-6-3.5-6-8ZM4.5 7.2c.6-.6 1.6-.6 2.2 0M9.3 7.2c.6-.6 1.6-.6 2.2 0M6.5 10c1 .5 2 .5 3 0',
+  ship:     'M2 10.5h12l-2 3H4l-2-3ZM8 2v8.5M8 3l4.5 6H8M8 4.5 5 9h3',
+  leaf:     'M3 13C3 7 6.5 3 13 3c0 6.5-4 10-10 10ZM3 13l6-6',
+  door:     'M3.5 14V6a4.5 4.5 0 0 1 9 0v8M2 14h12M8 1.5V14M6.5 9v1M9.5 9v1',
+  scales:   'M8 2v12M5 14h6M3 4.5h10M3 4.5 1.5 9a1.5 1.5 0 0 0 3 0L3 4.5ZM13 4.5 11.5 9a1.5 1.5 0 0 0 3 0L13 4.5Z',
+  swords:   'M2.5 2.5 11 11M13.5 2.5 5 11M2.5 2.5h2.5M2.5 2.5V5M13.5 2.5H11M13.5 2.5V5M9.5 12.5l3-3M6.5 12.5l-3-3M12 12l1.5 1.5M4 12l-1.5 1.5',
+  heart:    'M8 13.5S2 10 2 6a3 3 0 0 1 6-1 3 3 0 0 1 6 1c0 4-6 7.5-6 7.5Z',
+  bow:      'M4 2c5.5 1 9 4.5 10 10M4 2l10 10M3 13l6-6M3 13v-2.5M3 13h2.5',
 };
 // icons needing extra geometry (circles/rects)
 function customIcon(name, p) {
@@ -94,6 +116,13 @@ function customIcon(name, p) {
     case 'eye':     return html`<svg ...${p}><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="1.8"/></svg>`;
     case 'archive': return html`<svg ...${p}><rect x="2" y="3" width="12" height="3"/><path d="M3 6v7.5a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5V6M6.5 9h3"/></svg>`;
     case 'sun':     return html`<svg ...${p}><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5 13 13M3 13l1.5-1.5M11.5 4.5 13 3"/></svg>`;
+    case 'skull':   return html`<svg ...${p}><path d="M8 1.8a5.2 5.2 0 0 0-5.2 5.2c0 1.8.9 3 2.2 3.7v2.8h6v-2.8c1.3-.7 2.2-1.9 2.2-3.7A5.2 5.2 0 0 0 8 1.8ZM7 13.5v-1.7M9 13.5v-1.7"/><circle cx="6" cy="7.3" r="1.1"/><circle cx="10" cy="7.3" r="1.1"/></svg>`;
+    case 'coins':   return html`<svg ...${p}><ellipse cx="8" cy="4.5" rx="5" ry="2"/><path d="M3 4.5v3.5c0 1.1 2.2 2 5 2s5-.9 5-2V4.5M3 8v3.5c0 1.1 2.2 2 5 2s5-.9 5-2V8"/></svg>`;
+    case 'key':     return html`<svg ...${p}><circle cx="4.8" cy="8" r="2.6"/><path d="M7.4 8h6.6M12.2 8v2.6M10 8v2"/></svg>`;
+    case 'ring':    return html`<svg ...${p}><circle cx="8" cy="9.5" r="4.5"/><path d="M6.4 3.6 8 1.6l1.6 2L8 5.2 6.4 3.6Z"/></svg>`;
+    case 'paw':     return html`<svg ...${p}><path d="M8 8.5c-2.2 0-4 2.2-4 3.8 0 1.2 1 1.7 2 1.7.8 0 1.3-.4 2-.4s1.2.4 2 .4c1 0 2-.5 2-1.7 0-1.6-1.8-3.8-4-3.8Z"/><circle cx="3.3" cy="7" r="1.2"/><circle cx="6" cy="4" r="1.3"/><circle cx="10" cy="4" r="1.3"/><circle cx="12.7" cy="7" r="1.2"/></svg>`;
+    case 'music':   return html`<svg ...${p}><path d="M6 12V3.5L13 2v8.5"/><circle cx="4.5" cy="12" r="1.5"/><circle cx="11.5" cy="10.5" r="1.5"/></svg>`;
+    case 'image':   return html`<svg ...${p}><rect x="2" y="3" width="12" height="10" rx="1"/><circle cx="5.5" cy="6.5" r="1.2"/><path d="m2.5 12 4-4 3 3 1.5-1.5 2.5 2.5"/></svg>`;
     case 'globe':   return html`<svg ...${p}><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2 2 3 4 3 6s-1 4-3 6c-2-2-3-4-3-6s1-4 3-6Z"/></svg>`;
     default:        return html`<svg ...${p}><circle cx="8" cy="8" r="4"/></svg>`;
   }
@@ -109,6 +138,15 @@ export function Icon({ name, size = 14, className = '', style = {} }) {
   const d = PATHS[name];
   if (d) return html`<svg ...${p}><path d=${d} /></svg>`;
   return customIcon(name, p);
+}
+
+// Tinted square with a glyph — the look of kind icons in the Codex.
+export function toneGlyph(icon, tone, size = 16) {
+  return html`<div style=${{
+    width: size, height: size, borderRadius: 4, flex: '0 0 auto',
+    background: tone ? `var(--${tone}-50)` : 'var(--paper-deep)', color: tone ? `var(--${tone})` : 'var(--ink-muted)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(0,0,0,.06)',
+  }}><${Icon} name=${icon} size=${Math.round(size * 0.6)} /></div>`;
 }
 
 // ── Sigil — initials in a tinted square ───────────────────────────
@@ -895,6 +933,17 @@ export function WikilinkHoverCard({ path, pages, x, y }) {
   </div>`;
 }
 
+// Click on a rendered image → full-screen viewer over every image in `root`.
+function openImageFrom(e, root) {
+  const img = e.target && e.target.closest && e.target.closest('img');
+  if (!img || !root || img.closest('a') || img.classList.contains('ck-embed-img--missing')) return false;
+  const imgs = [...root.querySelectorAll('img')].filter((i) => !i.classList.contains('ck-embed-img--missing') && !i.closest('a'));
+  const items = imgs.map((i) => (i.dataset.ckAsset ? { asset: i.dataset.ckAsset } : { src: i.getAttribute('src'), label: i.getAttribute('alt') || '' }));
+  e.preventDefault();
+  openModal('lightbox', { items, index: Math.max(0, imgs.indexOf(img)) });
+  return true;
+}
+
 export function PageBody({ text, pages, onBroken }) {
   const ref = useRef(null);
   const [hover, setHover] = useState(null);
@@ -923,7 +972,7 @@ export function PageBody({ text, pages, onBroken }) {
     setHover((h) => (h?.path === path ? h : { path, x: e.clientX, y: e.clientY }));
   }, []);
   return html`<div style=${{ position: 'relative' }}>
-    <div ref=${ref} class="ck-prose" onClick=${wikilinkClick(onBroken)}
+    <div ref=${ref} class="ck-prose" onClick=${(e) => { if (!openImageFrom(e, ref.current)) wikilinkClick(onBroken)(e); }}
       onContextMenu=${(e) => wikilinkContextMenu(e)}
       onMouseOver=${onMouseOver} onMouseLeave=${() => setHover(null)}
       dangerouslySetInnerHTML=${{ __html: htmlStr }} />

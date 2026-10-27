@@ -1283,6 +1283,31 @@ pub(crate) fn is_asset(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+#[derive(Debug, Serialize)]
+pub struct AssetEntry {
+    pub path: String,
+    pub size: u64,
+    pub modified: Option<u64>,
+}
+
+/// Every media file in the vault (vault-relative, sorted) so the Explorer can
+/// show images and other embeddable files next to the pages.
+pub fn list_assets(vault: &Path) -> AppResult<Vec<AssetEntry>> {
+    require_dir(vault)?;
+    let mut files = Vec::new();
+    collect_files(vault, &mut files, &is_asset);
+    let mut out: Vec<AssetEntry> = files
+        .iter()
+        .map(|abs| AssetEntry {
+            path: rel_of(vault, abs),
+            size: abs.metadata().map(|m| m.len()).unwrap_or(0),
+            modified: mtime_secs(abs),
+        })
+        .collect();
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(out)
+}
+
 pub fn count_assets(dir: &Path) -> usize {
     let mut files = Vec::new();
     collect_files(dir, &mut files, &is_asset);
@@ -1497,6 +1522,24 @@ mod tests {
         assert!(find_asset(&dir, "Assets/shot.png").is_ok());
         assert!(find_asset(&dir, "Shot 2.png").is_ok()); // bare name, case-insensitive
         assert!(find_asset(&dir, "missing.png").is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn list_assets_finds_media_in_any_folder_but_skips_reserved_and_pages() {
+        let dir = std::env::temp_dir().join(format!("ck-vault-list-assets-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("Assets/NPC")).unwrap();
+        std::fs::create_dir_all(dir.join("Sessions")).unwrap();
+        std::fs::write(dir.join("Assets/NPC/Renusz.WEBP"), b"img").unwrap();
+        std::fs::write(dir.join("map.png"), b"png!").unwrap();
+        std::fs::write(dir.join("Assets/NPC/Renusz.md"), b"# page").unwrap();
+        std::fs::write(dir.join("Sessions/audio.mp3"), b"x").unwrap();
+        std::fs::write(dir.join(".hidden.png"), b"x").unwrap();
+        let assets = list_assets(&dir).unwrap();
+        let paths: Vec<&str> = assets.iter().map(|a| a.path.as_str()).collect();
+        assert_eq!(paths, vec!["Assets/NPC/Renusz.WEBP", "map.png"]);
+        assert_eq!(assets[1].size, 4);
         std::fs::remove_dir_all(&dir).ok();
     }
 

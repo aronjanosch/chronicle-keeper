@@ -216,6 +216,8 @@ pub async fn move_entry(
     let (world_root, _) = world_cfg(&state, &campaign_id)?;
     if req.from.ends_with(".md") && req.to.ends_with(".md") {
         move_page_cascade(&state, &root, &world_root, &req.from, &req.to)?;
+    } else if vault::is_asset(std::path::Path::new(&req.from)) {
+        move_asset_cascade(&state, &root, &world_root, &req.from, &req.to)?;
     } else {
         vault::move_entry(&root, &req.from, &req.to)?;
         history::move_history(&world_root, &req.from, &req.to);
@@ -250,6 +252,44 @@ fn move_page_cascade(
     rewrite_links_after_rename(state, world_root, root, from, to, sources);
     reindex_remove(state, root, from);
     reindex_page(state, root, to);
+    Ok(())
+}
+
+// Media files resolve by filename anywhere in the vault, so a rename must not
+// collide with another file of that name; every page embedding the old name
+// or path is rewritten afterwards.
+fn move_asset_cascade(
+    state: &AppState,
+    root: &std::path::Path,
+    world_root: &std::path::Path,
+    from: &str,
+    to: &str,
+) -> AppResult<()> {
+    if !vault::is_asset(std::path::Path::new(to)) {
+        return Err(AppError::BadRequest(format!(
+            "Keep the media file extension: {to}"
+        )));
+    }
+    let file = |p: &str| p.rsplit('/').next().unwrap_or(p).to_lowercase();
+    if file(from) != file(to) && vault::find_asset(root, &file(to)).is_ok() {
+        return Err(AppError::BadRequest(format!(
+            "A file named {} already exists",
+            to.rsplit('/').next().unwrap_or(to)
+        )));
+    }
+    vault::move_entry(root, from, to)?;
+    state.note_vault_write(root, to);
+    for page in vault::list_pages(root)? {
+        let Ok(doc) = vault::read_page(root, &page.path) else {
+            continue;
+        };
+        if let Some(updated) = crate::store::index::rewrite_asset_embeds(&doc.content, from, to) {
+            let _ = history::record(world_root, root, &page.path, "user");
+            if vault::write_page(root, &page.path, &updated).is_ok() {
+                reindex_page(state, root, &page.path);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -304,6 +344,20 @@ pub async fn delete_page(
     let (world_root, _) = world_cfg(&state, &campaign_id)?;
     trash::trash_paths(&world_root, &root, &[(page.clone(), false)])?;
     reindex_remove(&state, &root, &page);
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn delete_asset(
+    State(state): State<AppState>,
+    Path((campaign_id, rel)): Path<(String, String)>,
+) -> AppResult<Json<Value>> {
+    if !vault::is_asset(std::path::Path::new(&rel)) {
+        return Err(AppError::BadRequest(format!("Not a media file: {rel}")));
+    }
+    let root = vault_root(&state, &campaign_id)?;
+    let (world_root, _) = world_cfg(&state, &campaign_id)?;
+    trash::trash_paths(&world_root, &root, &[(rel.clone(), false)])?;
+    state.note_vault_write(&root, &rel);
     Ok(Json(json!({ "ok": true })))
 }
 

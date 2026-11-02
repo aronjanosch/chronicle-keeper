@@ -452,6 +452,12 @@ export async function deleteVaultPage(path) {
   await loadVaultTree(id);
 }
 
+export async function deleteVaultAsset(path) {
+  const id = store.campaign.campaign_id;
+  await apiFetch(`/campaigns/${id}/vault/assets/${encodeURI(path)}`, { method: 'DELETE' });
+  await loadVaultTree(id);
+}
+
 export async function deleteVaultFolder(path) {
   const id = store.campaign.campaign_id;
   await apiFetch(`/campaigns/${id}/vault/folders/${encodeURI(path)}`, { method: 'DELETE' });

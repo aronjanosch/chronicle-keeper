@@ -15,7 +15,7 @@ const PRUNE_DAYS: u64 = 30;
 pub struct TrashItem {
     /// Vault-relative path of the deleted page or folder.
     pub rel: String,
-    /// "page" | "folder"
+    /// "page" | "folder" | "file" (a media asset)
     pub kind: String,
     /// Pages inside a deleted folder (1 for a page).
     pub pages: usize,
@@ -113,8 +113,10 @@ pub fn trash_paths(
             rel: rel.clone(),
             kind: if *is_folder {
                 "folder".into()
-            } else {
+            } else if rel.ends_with(".md") {
                 "page".into()
+            } else {
+                "file".into()
             },
             pages,
         });

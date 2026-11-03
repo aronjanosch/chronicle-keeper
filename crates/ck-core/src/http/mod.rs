@@ -135,7 +135,10 @@ pub fn router(state: AppState) -> Router {
             put(vault::save_template).delete(vault::delete_template),
         )
         .route("/campaigns/:id/vault/assets", post(vault::upload_asset))
-        .route("/campaigns/:id/vault/assets/*name", get(vault::asset_bytes))
+        .route(
+            "/campaigns/:id/vault/assets/*name",
+            get(vault::asset_bytes).delete(vault::delete_asset),
+        )
         .route(
             "/campaigns/:id/vault/pages",
             get(vault::list_pages).post(vault::create_page),

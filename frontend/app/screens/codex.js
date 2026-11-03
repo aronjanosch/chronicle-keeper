@@ -7,7 +7,7 @@ import { useFlag, setFlag, PANEL_OPEN } from '../layoutPrefs.js';
 import { Btn, Empty, Icon, Markdown, Input, Select, SearchField, openContextMenu, useAsset, toneGlyph } from '../ui.js';
 import { openCampaign,
   loadVaultTree, createVaultFolder, moveVaultEntry,
-  deleteVaultPage, deleteVaultFolder, duplicateVaultPage, copyText, attachVault, pickVaultFolder,
+  deleteVaultPage, deleteVaultFolder, deleteVaultAsset, duplicateVaultPage, copyText, attachVault, pickVaultFolder,
   searchVault, loadVaultTags, loadVaultDiagnostics, sniffVault, importVaultFolder, enhanceVaultPages, watchVault,
   bulkVault, saveTemplate, togglePin, loadPrefs, folderIcons } from '../actions.js';
 import { kindForFolder } from '../folderKinds.js';
@@ -153,11 +153,43 @@ function openAsset(asset, siblings) {
   openLightbox(imgs.map((a) => ({ asset: a.path })), imgs.findIndex((a) => a.path === asset.path));
 }
 
+// Rename keeps the extension; the server rewrites embeds in every page.
+function renameAsset(asset) {
+  const name = baseName(asset.path);
+  const dot = name.lastIndexOf('.');
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+  openModal('textPrompt', {
+    title: 'Rename file', label: 'New name', initial: stem, confirmLabel: 'Rename',
+    onSubmit: (v) => moveVaultEntry(asset.path, dirOf(asset.path) ? `${dirOf(asset.path)}/${v}${ext}` : `${v}${ext}`),
+  });
+}
+
+function moveAsset(asset) {
+  openModal('movePage', {
+    name: baseName(asset.path), folders: store.vaultFolders || [], current: dirOf(asset.path),
+    onSubmit: (dest) => moveVaultEntry(asset.path, dest ? `${dest}/${baseName(asset.path)}` : baseName(asset.path)),
+  });
+}
+
+function deleteAsset(asset) {
+  openModal('confirm', {
+    title: 'Move file to trash',
+    message: html`Move ${html`<strong>${baseName(asset.path)}</strong>`} to the world's trash? Pages embedding it show a missing file until you restore it from the Trash view (kept 30 days).`,
+    confirmLabel: 'Move to trash', onConfirm: () => deleteVaultAsset(asset.path),
+  });
+}
+
 function assetMenu(asset, siblings) {
   return (e) => openContextMenu(e, [
     ...(isImagePath(asset.path) ? [{ label: 'View', icon: 'eye', onClick: () => openAsset(asset, siblings) }] : []),
+    '-',
+    { label: 'Rename', icon: 'edit', onClick: () => renameAsset(asset) },
+    { label: 'Move to folder…', icon: 'arrow-r', onClick: () => moveAsset(asset) },
+    '-',
     { label: 'Copy embed', icon: 'copy', onClick: () => copyText(`![[${baseName(asset.path)}]]`, 'Embed copied') },
     { label: 'Copy path', icon: 'link', onClick: () => copyText(asset.path, 'Path copied') },
+    '-',
+    { label: 'Move to trash', icon: 'trash', danger: true, onClick: () => deleteAsset(asset) },
   ]);
 }
 
@@ -513,11 +545,11 @@ export function FileTree({ campaign, tree, active, onOpen, act }) {
         <${Icon} name="chev-r" size=${12} /></button>`}`;
 }
 
-function PageCard({ page, onOpen, picked }) {
+function PageCard({ page, onOpen, onMenu, picked }) {
   const tone = toneForKind(page.kind);
   const folder = dirOf(page.path);
   const border = picked ? 'var(--burgundy)' : 'var(--rule)';
-  return html`<div onClick=${onOpen} style=${{
+  return html`<div onClick=${onOpen} onContextMenu=${onMenu} style=${{
     background: picked ? 'var(--burgundy-50)' : 'var(--surface)', border: `1px solid ${border}`, borderRadius: 8,
     padding: 14, display: 'flex', flexDirection: 'column', gap: 9, cursor: 'pointer', boxShadow: 'var(--shadow-soft)',
     position: 'relative',
@@ -694,6 +726,7 @@ function VaultView({ campaign }) {
   const cardProps = (p) => ({
     page: p,
     onOpen: (e) => (picking ? togglePick(p.path) : openPage(p, e)),
+    onMenu: picking ? null : pageMenu(p, { onOpen: () => openPage(p), act }),
     picked: picking ? picked.has(p.path) : null,
   });
   const reportBulk = (r, verb) =>

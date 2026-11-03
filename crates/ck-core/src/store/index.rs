@@ -1399,6 +1399,49 @@ pub fn rewrite_link_names(content: &str, old_name: &str, new_name: &str) -> Opti
     changed.then_some(out)
 }
 
+/// Point every `[[…]]` reference to a moved media file at its new location:
+/// bare filenames (`![[map.png|300]]`) get the new filename, vault-relative
+/// paths (`![[Assets/map.png]]`) the new path. `None` when nothing matched.
+pub fn rewrite_asset_embeds(content: &str, from: &str, to: &str) -> Option<String> {
+    let file = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
+    let (old_path, old_file) = (normalize_name(from), normalize_name(&file(from)));
+    let new_file = file(to);
+    let mut out = String::with_capacity(content.len() + 16);
+    let mut changed = false;
+    let mut rest = content;
+    while let Some(start) = rest.find("[[") {
+        let (before, after) = rest.split_at(start + 2);
+        out.push_str(before);
+        let Some(end) = after.find("]]") else {
+            rest = after;
+            break;
+        };
+        let inner = &after[..end];
+        let name_end = inner.find(['#', '|']).unwrap_or(inner.len());
+        let (name, tail) = inner.split_at(name_end);
+        let norm = normalize_name(name);
+        let replacement = if norm == old_file {
+            Some(new_file.as_str())
+        } else if norm == old_path {
+            Some(to)
+        } else {
+            None
+        };
+        match replacement {
+            Some(r) if normalize_name(r) != norm => {
+                out.push_str(r);
+                out.push_str(tail);
+                changed = true;
+            }
+            _ => out.push_str(inner),
+        }
+        out.push_str("]]");
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    changed.then_some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1842,6 +1885,23 @@ mod tests {
         );
         assert!(rewrite_link_names("no links here", "Aragorn", "Elessar").is_none());
         assert!(rewrite_link_names("[[Gandalf]]", "Aragorn", "Elessar").is_none());
+    }
+
+    #[test]
+    fn asset_embeds_follow_rename_and_move() {
+        let content = "![[Map.png|300]] ![[Assets/map.png]] [[map.png]] ![[Other.png]]\n";
+        let out = rewrite_asset_embeds(content, "Assets/map.png", "Art/Vale.png").unwrap();
+        assert_eq!(
+            out,
+            "![[Vale.png|300]] ![[Art/Vale.png]] [[Vale.png]] ![[Other.png]]\n"
+        );
+        // Folder-only move: bare filenames still resolve, only paths change.
+        let out = rewrite_asset_embeds(content, "Assets/map.png", "Art/map.png").unwrap();
+        assert_eq!(
+            out,
+            "![[Map.png|300]] ![[Art/map.png]] [[map.png]] ![[Other.png]]\n"
+        );
+        assert!(rewrite_asset_embeds("![[Map.png]]", "Assets/x.png", "Assets/y.png").is_none());
     }
 
     #[test]

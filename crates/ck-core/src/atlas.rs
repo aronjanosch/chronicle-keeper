@@ -2,7 +2,8 @@
 //! Files-as-truth — one JSON document per map in `<world>/Atlas/`, with the
 //! map art copied alongside it, portable with the world folder. Pins carry
 //! normalised (0..1) coordinates over the image; a pin's `page` is a
-//! Codex-relative `.md` path, its `to` a child map id.
+//! Codex-relative `.md` path, its `to` the id of the map it leads into (a
+//! child map or any other map, e.g. the next dungeon level). Regions too.
 
 use std::path::{Path, PathBuf};
 
@@ -81,6 +82,8 @@ pub struct Region {
     pub page: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
 }
 
 /// A preview card pinned open over the map: screen-space px inside the stage.
@@ -508,16 +511,17 @@ pub fn delete_map(world_root: &Path, id: &str) -> AppResult<()> {
         }
     }
     // heal references: children move up to the deleted map's parent, pins
-    // pointing at it lose their gateway
+    // and regions pointing at it lose their gateway
     for mut m in list_maps(world_root)? {
         let mut changed = false;
         if m.parent.as_deref() == Some(id) {
             m.parent = doc.parent.clone();
             changed = true;
         }
-        for p in &mut m.pins {
-            if p.to.as_deref() == Some(id) {
-                p.to = None;
+        let gateways = m.pins.iter_mut().map(|p| &mut p.to);
+        for to in gateways.chain(m.regions.iter_mut().map(|r| &mut r.to)) {
+            if to.as_deref() == Some(id) {
+                *to = None;
                 changed = true;
             }
         }
@@ -844,7 +848,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_heals_children_and_pin_links() {
+    fn delete_heals_children_pin_and_region_links() {
         let dir = temp_world("heal");
         let src = fake_png(&dir, "a.png");
         let root = create_map(&dir, "World", &src, None, None).unwrap();
@@ -862,6 +866,10 @@ mod tests {
             icon: None,
             label: None,
         });
+        r.regions.push(Region {
+            to: Some(mid.id.clone()),
+            ..region("r1", None)
+        });
         write_map(&dir, &r).unwrap();
 
         delete_map(&dir, &mid.id).unwrap();
@@ -870,7 +878,9 @@ mod tests {
             read_map(&dir, &leaf.id).unwrap().parent.as_deref(),
             Some(root.id.as_str())
         );
-        assert!(read_map(&dir, &root.id).unwrap().pins[0].to.is_none());
+        let healed = read_map(&dir, &root.id).unwrap();
+        assert!(healed.pins[0].to.is_none());
+        assert!(healed.regions[0].to.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1145,6 +1155,7 @@ mod tests {
             points: vec![[0.1, 0.1], [0.5, 0.1], [0.3, 0.6]],
             page: page.map(Into::into),
             color: None,
+            to: None,
         }
     }
 
@@ -1316,6 +1327,7 @@ mod tests {
             points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
             page: None,
             color: None,
+            to: None,
         });
         assert_eq!(
             find_endpoint(&doc, "keep"),

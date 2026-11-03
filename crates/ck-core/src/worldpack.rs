@@ -564,6 +564,12 @@ pub fn resolve(
             pin.to = pin.to.take().map(|t| id_map.get(&t).cloned().unwrap_or(t));
             pin.page = pin.page.take().map(|p| prefix_page_ref(&p, &dest));
         }
+        for region in &mut doc.regions {
+            region.to = region
+                .to
+                .take()
+                .map(|t| id_map.get(&t).cloned().unwrap_or(t));
+        }
         let json = serde_json::to_vec_pretty(&doc).map_err(|e| internal("map json", e))?;
         push(format!("Atlas/{new_id}.json"), Role::AtlasMap, json);
     }

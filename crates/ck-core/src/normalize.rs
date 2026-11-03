@@ -3,7 +3,7 @@ use serde_json::{json, Map, Value};
 pub const METADATA_CATEGORIES: [&str; 5] = ["characters", "locations", "events", "items", "tags"];
 
 /// Normalize arbitrary player input (list of objects, list of strings, or a
-/// comma string) into `[{player_name, character_name}]`. Mirrors the Python
+/// comma string) into `[{player_name, character_name, pronouns, is_gm, image}]`. Mirrors the Python
 /// `_normalize_players`.
 pub fn normalize_players(value: &Value) -> Value {
     let raw: Vec<Value> = match value {
@@ -13,7 +13,7 @@ pub fn normalize_players(value: &Value) -> Value {
     };
     let mut out = Vec::new();
     for item in raw {
-        let (player, character, pronouns, is_gm) = match &item {
+        let (player, character, pronouns, is_gm, image) = match &item {
             Value::Object(o) => {
                 let get = |k| {
                     o.get(k)
@@ -27,9 +27,16 @@ pub fn normalize_players(value: &Value) -> Value {
                     get("character_name"),
                     get("pronouns"),
                     o.get("is_gm").and_then(Value::as_bool).unwrap_or(false),
+                    get("image"),
                 )
             }
-            Value::String(s) => (s.trim().to_string(), String::new(), String::new(), false),
+            Value::String(s) => (
+                s.trim().to_string(),
+                String::new(),
+                String::new(),
+                false,
+                String::new(),
+            ),
             _ => continue,
         };
         if player.is_empty() && character.is_empty() {
@@ -40,6 +47,7 @@ pub fn normalize_players(value: &Value) -> Value {
             "character_name": character,
             "pronouns": pronouns,
             "is_gm": is_gm,
+            "image": image,
         }));
     }
     Value::Array(out)

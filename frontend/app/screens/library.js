@@ -4,7 +4,7 @@ import { useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal } from '../core.js';
 import { openCampaign, refreshOnboarding, dismissOnboarding, EXAMPLE_CAMPAIGN_ID } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
-import { Icon, Sigil, Btn, Spinner, Empty, SearchField } from '../ui.js';
+import { Icon, Avatar, Btn, Spinner, Empty, SearchField } from '../ui.js';
 
 function PartyAvatars({ players = [] }) {
   const cols = ['#E8DAA8', '#E5C4B5', '#C9D4B5', '#B9C7D6', '#E2C0A8'];
@@ -81,7 +81,7 @@ function CampaignCard({ c }) {
     onMouseLeave=${(e) => { e.currentTarget.style.borderColor = 'var(--rule)'; }}>
     <div style=${{ position: 'absolute', left: 0, top: 14, bottom: 14, width: 3, background: `var(--${c.tone})`, borderRadius: '0 2px 2px 0', opacity: 0.85 }} />
     <div style=${{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-      <${Sigil} ch=${c.sigil} tone=${c.tone} size="lg" />
+      <${Avatar} cid=${c.campaign_id} image=${c.image} ch=${c.sigil} tone=${c.tone} size="lg" />
       <div style=${{ flex: 1, minWidth: 0 }}>
         <div style=${{ fontFamily: 'var(--font-display)', fontSize: 19, fontWeight: 500, color: 'var(--ink)', lineHeight: 1.2, letterSpacing: '-0.01em', height: '2.4em', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>${c.name}</div>
         <div title=${[c.system, c.setting].filter(Boolean).join(' · ')} style=${{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

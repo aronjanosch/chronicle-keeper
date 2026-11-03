@@ -3,7 +3,7 @@
 import { html, useState, useEffect } from '../vendor/htm-preact-standalone.mjs';
 import { navigate, navigateBack, navigateForward, openModal, store, useStore } from './core.js';
 import { dismissUpdate, openCampaign } from './actions.js';
-import { Icon, Sigil, BrandMark, Menu, SearchField } from './ui.js';
+import { Icon, Avatar, BrandMark, Menu, SearchField } from './ui.js';
 import { useFlag, toggleFlag, RAIL_COMPACT } from './layoutPrefs.js';
 import { runCommand } from './commands.js';
 
@@ -124,14 +124,14 @@ function WorldSwitcher({ campaign, compact }) {
     <div class="ck-rail-item" role="button" tabIndex=${0} title=${inWorld ? 'Switch world' : 'All worlds'}
       onClick=${() => (inWorld || worlds.length ? setOpen((o) => !o) : navigate('library'))}
       style=${{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '2px 0', borderRadius: 6 }}>
-      ${inWorld ? html`<${Sigil} ch=${campaign.sigil || '?'} tone=${campaign.tone || 'burgundy'} />` : html`<${BrandMark} size=${32} />`}
+      ${inWorld ? html`<${Avatar} cid=${campaign.campaign_id} image=${campaign.image} ch=${campaign.sigil || '?'} tone=${campaign.tone || 'burgundy'} />` : html`<${BrandMark} size=${32} />`}
       ${!compact && html`<${Icon} name="chev-d" size=${10} className="ck-ink-muted" />`}
     </div>
     ${open && html`<div style=${{ position: 'fixed', left: 8, top: 56, zIndex: 120, width: 232, background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', borderRadius: 8, boxShadow: 'var(--shadow-raised)', padding: 4 }}>
       <div class="ck-label" style=${{ padding: '6px 9px 4px' }}>Worlds</div>
       ${worlds.map((w) => html`<div key=${w.campaign_id} class="ck-menu-row" onClick=${() => { setOpen(false); openCampaign(w.campaign_id); }}
         style=${{ background: campaign?.campaign_id === w.campaign_id ? 'var(--paper-deep)' : undefined }}>
-        <${Sigil} ch=${(w.name || '?').slice(0, 1).toUpperCase()} tone=${w.tone || 'burgundy'} />
+        <${Avatar} cid=${w.campaign_id} image=${w.image} ch=${(w.name || '?').slice(0, 1).toUpperCase()} tone=${w.tone || 'burgundy'} />
         <span style=${{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${w.name}</span>
       </div>`)}
       <div style=${{ height: 1, background: 'var(--rule-soft)', margin: '4px 0' }} />

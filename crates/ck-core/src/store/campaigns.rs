@@ -121,6 +121,7 @@ fn players_value(players: &[PlayerEntry]) -> Value {
             "character_name": p.character_name,
             "pronouns": p.pronouns,
             "is_gm": p.is_gm,
+            "image": p.image,
         }))
         .collect::<Vec<_>>())
 }
@@ -147,6 +148,7 @@ fn players_entries(v: &Value) -> Vec<PlayerEntry> {
                         .unwrap_or("")
                         .into(),
                     is_gm: p.get("is_gm").and_then(Value::as_bool).unwrap_or(false),
+                    image: p.get("image").and_then(Value::as_str).unwrap_or("").into(),
                 })
                 .collect()
         })
@@ -171,6 +173,7 @@ fn detail_from(root: &Path, cfg: &WorldConfig, fallback_lang: &str) -> CampaignD
         },
         players: players_value(&cfg.players),
         extra_info: cfg.extra_info.clone(),
+        image: cfg.image.clone(),
         recap,
         recap_updated_at,
         vault_path: Some(cfg.codex_dir(root).to_string_lossy().to_string()),
@@ -319,6 +322,9 @@ pub fn update_campaign(
     }
     if let Some(v) = &req.extra_info {
         cfg.extra_info = v.clone();
+    }
+    if let Some(v) = &req.image {
+        cfg.image = v.trim().to_string();
     }
     if let Some(n) = req.next_session_number {
         cfg.start_session_number = n;

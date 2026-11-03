@@ -3,7 +3,7 @@ import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mj
 import { navigate, openModal, fmtDate, fmtDateTime, toneFor } from '../core.js';
 import { deleteCampaign, generateRecap, revealPath, refreshCampaignSessions, backupWorld } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
-import { Icon, Sigil, Btn, StagePill, Empty, Markdown, Menu } from '../ui.js';
+import { Icon, Avatar, Btn, StagePill, Empty, Markdown, Menu } from '../ui.js';
 import { KINDS, iconForKind } from './codex.js';
 import { UnfinishedCard } from '../unfinished.js';
 
@@ -51,10 +51,10 @@ function StorySoFar({ campaign, sessions }) {
   </div>`;
 }
 
-function PartyMember({ player, onClick }) {
+function PartyMember({ player, cid }) {
   const ch = player.character_name || '—';
   return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--rule-soft)', borderRadius: 6 }}>
-    <${Sigil} ch=${(ch[0] || '?').toUpperCase()} tone=${toneFor(player.player_name || ch)} size="lg" />
+    <${Avatar} cid=${cid} image=${player.image} ch=${(ch[0] || '?').toUpperCase()} tone=${toneFor(player.player_name || ch)} size="lg" />
     <div style=${{ flex: 1, minWidth: 0 }}>
       <div style=${{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 500, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${ch}</div>
       <div style=${{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 1 }}>${player.player_name || '—'}${player.pronouns ? ` · ${player.pronouns}` : ''}</div>
@@ -176,7 +176,7 @@ export function CampaignScreen({ store }) {
   >
     <div style=${{ background: 'var(--surface)', border: '1px solid var(--rule)', borderRadius: 8, padding: '24px 28px', display: 'flex', alignItems: 'flex-start', gap: 24, marginBottom: 24, position: 'relative', overflow: 'hidden' }}>
       <div style=${{ position: 'absolute', top: 0, right: 0, width: 220, height: '100%', background: 'radial-gradient(circle at 100% 0%, rgba(122,46,31,.07), transparent 60%)' }} />
-      <${Sigil} ch=${c.sigil} tone=${c.tone} size="xl" />
+      <${Avatar} cid=${c.campaign_id} image=${c.image} ch=${c.sigil} tone=${c.tone} size="xl" />
       <div style=${{ flex: 1 }}>
         <div style=${{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--burgundy)', marginBottom: 4 }}>
           Chronicle${c.system ? ` · ${c.system}` : ''}
@@ -220,7 +220,7 @@ export function CampaignScreen({ store }) {
         </div>
         <div style=${{ padding: 14, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           ${players.length
-            ? players.map((p, i) => html`<${PartyMember} key=${i} player=${p} />`)
+            ? players.map((p, i) => html`<${PartyMember} key=${i} player=${p} cid=${c.campaign_id} />`)
             : html`<div style=${{ gridColumn: 'span 2' }}><${Empty} icon="users" title="No players yet">Add the company that will tell this story.</${Empty}></div>`}
         </div>
       </div>

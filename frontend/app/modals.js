@@ -1,7 +1,7 @@
 // Overlay forms: campaign editor, session editor, transcribe, export, provider, viewer.
-import { html, useState, useEffect } from '../vendor/htm-preact-standalone.mjs';
-import { store, closeModal, navigate, setOp, openModal, apiFetch, fmtDateTime } from './core.js';
-import { Icon, Btn, Field, Input, Textarea, Select, Spinner } from './ui.js';
+import { html, useState, useEffect, useRef } from '../vendor/htm-preact-standalone.mjs';
+import { store, closeModal, navigate, setOp, openModal, apiFetch, fmtDateTime, toneFor, initials } from './core.js';
+import { Icon, Btn, Field, Input, Textarea, Select, Spinner, Avatar } from './ui.js';
 import { CommandPalette } from './screens/palette.js';
 import { kindForFolder } from './folderKinds.js';
 import { loadPrep, prepOps } from './prep.js';
@@ -20,7 +20,7 @@ import {
   createVaultPage, saveVaultPage, promoteVaultPage,
   loadPageHistory, readPageVersion, restorePageVersion, loadWorldHistory,
   loadTrash, restoreTrash, emptyTrash,
-  loadGenrePacks, applyGenrePack, replaceInWorld, undoReplace,
+  loadGenrePacks, applyGenrePack, replaceInWorld, undoReplace, uploadVaultAsset,
 } from './actions.js';
 
 const PRONOUNS = ['she/her', 'he/him', 'they/them'];
@@ -70,10 +70,39 @@ function PronounSelect({ value, onChange }) {
   </select>`;
 }
 
-function PlayerRows({ players, onChange }) {
+// Click the avatar to pick an image: it is copied into the world's Codex
+// (Assets/) and referenced by path, so it travels with the world folder.
+function ImagePick({ cid, image, ch, tone, size = 'md', title, onChange }) {
+  const input = useRef(null);
+  const [busy, setBusy] = useState(false);
+  async function pick(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    try { const r = await uploadVaultAsset(file.name, file, cid); onChange(r.path); }
+    catch (err) { setOp(`Image upload failed: ${err.message}`, 'err'); }
+    setBusy(false);
+  }
+  return html`<div style=${{ position: 'relative', flex: '0 0 auto', display: 'flex', alignItems: 'center' }}>
+    <button type="button" title=${title} disabled=${busy} onClick=${() => input.current?.click()}
+      style=${{ padding: 0, border: 'none', background: 'none', cursor: 'pointer', borderRadius: 6, opacity: busy ? 0.5 : 1 }}>
+      <${Avatar} cid=${cid} image=${image} ch=${ch} tone=${tone} size=${size} />
+    </button>
+    ${image && html`<button type="button" title="Remove image" onClick=${() => onChange('')}
+      style=${{ position: 'absolute', top: -5, right: -5, width: 16, height: 16, borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', color: 'var(--ink-muted)', cursor: 'pointer' }}><${Icon} name="x" size=${9} /></button>`}
+    <input ref=${input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" style=${{ display: 'none' }} onChange=${pick} />
+  </div>`;
+}
+
+function PlayerRows({ players, onChange, cid }) {
   const upd = (i, k, v) => onChange(players.map((p, j) => j === i ? { ...p, [k]: v } : p));
   return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-    ${players.map((p, i) => html`<div key=${i} style=${{ display: 'flex', gap: 6 }}>
+    ${players.map((p, i) => html`<div key=${i} style=${{ display: 'flex', gap: 6, alignItems: 'center' }}>
+      ${cid && html`<${ImagePick} cid=${cid} image=${p.image} title="Portrait — click to choose an image"
+        ch=${((p.character_name || p.player_name || '?')[0] || '?').toUpperCase()} tone=${toneFor(p.player_name || p.character_name)}
+        onChange=${(v) => upd(i, 'image', v)} />`}
       <${Input} value=${p.player_name} placeholder="Player" onInput=${(v) => upd(i, 'player_name', v)} />
       <${Input} value=${p.character_name} placeholder="Character" onInput=${(v) => upd(i, 'character_name', v)} />
       <${PronounSelect} value=${p.pronouns} onChange=${(v) => upd(i, 'pronouns', v)} />
@@ -88,7 +117,7 @@ function CampaignModal({ edit }) {
   const [f, setF] = useState(() => edit ? {
     name: edit.name || '', system: edit.system || '', setting: edit.setting || '',
     default_language: edit.default_language || '', gm: edit.gm || '', gm_pronouns: edit.gm_pronouns || '',
-    players: edit.players?.length ? edit.players : [], extra_info: edit.extra_info || '', start: edit.next_session_number ?? 1,
+    players: edit.players?.length ? edit.players : [], extra_info: edit.extra_info || '', image: edit.image || '', start: edit.next_session_number ?? 1,
   } : { name: '', system: '', setting: '', default_language: '', gm: '', gm_pronouns: '', players: [{ player_name: '', character_name: '', pronouns: '' }], extra_info: '', start: 0 });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -99,7 +128,7 @@ function CampaignModal({ edit }) {
     setBusy(true); setErr(null);
     const players = f.players.filter((p) => p.player_name.trim() || p.character_name.trim());
     try {
-      if (edit) await updateCampaign({ name: f.name.trim(), system: f.system.trim(), setting: f.setting.trim(), default_language: f.default_language.trim(), gm: f.gm.trim(), gm_pronouns: f.gm_pronouns, players, extra_info: f.extra_info.trim() });
+      if (edit) await updateCampaign({ name: f.name.trim(), system: f.system.trim(), setting: f.setting.trim(), default_language: f.default_language.trim(), gm: f.gm.trim(), gm_pronouns: f.gm_pronouns, players, extra_info: f.extra_info.trim(), image: f.image });
       else await createCampaign({ ...f, name: f.name.trim(), players });
       closeModal();
     } catch (e) { setErr(e.message); setBusy(false); }
@@ -109,7 +138,11 @@ function CampaignModal({ edit }) {
     <${Btn} kind="ghost" onClick=${closeModal}>Cancel</${Btn}>
     <${Btn} kind="primary" disabled=${busy} onClick=${save}>${busy ? 'Saving…' : (edit ? 'Save changes' : 'Create world')}</${Btn}>`}>
     ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
-    <${Field} label="World name"><${Input} value=${f.name} onInput=${(v) => set('name', v)} placeholder="The Iron Crown" /></${Field}>
+    <div style=${{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
+      ${edit && html`<div style=${{ marginBottom: 2 }}><${ImagePick} cid=${edit.campaign_id} image=${f.image} size="lg" title="World image — click to choose"
+        ch=${(initials(f.name) || '?').slice(0, 1)} tone=${edit.tone} onChange=${(v) => set('image', v)} /></div>`}
+      <div style=${{ flex: 1 }}><${Field} label="World name"><${Input} value=${f.name} onInput=${(v) => set('name', v)} placeholder="The Iron Crown" /></${Field}></div>
+    </div>
     <div style=${{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
       <${Field} label="System"><${Input} value=${f.system} onInput=${(v) => set('system', v)} placeholder="D&D 5e" /></${Field}>
       <${Field} label="Setting"><${Input} value=${f.setting} onInput=${(v) => set('setting', v)} placeholder="Forgotten Realms" /></${Field}>
@@ -120,7 +153,7 @@ function CampaignModal({ edit }) {
       <${Field} label="Default language"><${Input} value=${f.default_language} onInput=${(v) => set('default_language', v)} placeholder="en" mono /></${Field}>
     </div>
     ${!edit && html`<${Field} label="Start session #" hint="First session number for this world."><${Input} type="number" value=${f.start} onInput=${(v) => set('start', v)} style=${{ width: 120 }} /></${Field}>`}
-    <${Field} label="Players" hint="Tick GM for a co-GM or guest GM — their voice counts as narration, not player dialogue."><${PlayerRows} players=${f.players} onChange=${(p) => set('players', p)} /></${Field}>
+    <${Field} label="Players" hint="Tick GM for a co-GM or guest GM — their voice counts as narration, not player dialogue."><${PlayerRows} players=${f.players} cid=${edit?.campaign_id} onChange=${(p) => set('players', p)} /></${Field}>
     <${Field} label="Additional information" hint="World frame or special notes."><${Textarea} value=${f.extra_info} onInput=${(v) => set('extra_info', v)} rows=${3} /></${Field}>
   </${ModalShell}>`;
 }

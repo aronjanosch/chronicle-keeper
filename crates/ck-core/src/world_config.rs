@@ -21,6 +21,9 @@ pub struct PlayerEntry {
     /// tracks are GM narration, not player dialogue. `gm` above is the primary.
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_gm: bool,
+    /// Portrait: a media file in the world's Codex (`Assets/Bea.png`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub image: String,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -43,6 +46,9 @@ pub struct WorldConfig {
     pub default_language: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub extra_info: String,
+    /// World emblem shown instead of the initial; a media file in the Codex.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub image: String,
     #[serde(default = "default_start", skip_serializing_if = "is_default_start")]
     pub start_session_number: i64,
     /// Where Codex pages live, relative to the world root. `""`/`"Codex"` =
@@ -243,6 +249,26 @@ pub fn write(world_root: &Path, cfg: &WorldConfig) -> AppResult<()> {
         .map_err(|e| AppError::Internal(anyhow::anyhow!("write {}: {e}", path.display())))
 }
 
+/// Follow a moved Codex media file: world and player images that pointed at
+/// `from` point at `to`. Best-effort, like the page embed cascade.
+pub fn rewrite_image_refs(world_root: &Path, from: &str, to: &str) {
+    let Ok(Some(mut cfg)) = read(world_root) else {
+        return;
+    };
+    let mut changed = false;
+    let images =
+        std::iter::once(&mut cfg.image).chain(cfg.players.iter_mut().map(|p| &mut p.image));
+    for image in images {
+        if image == from {
+            *image = to.to_string();
+            changed = true;
+        }
+    }
+    if changed {
+        let _ = write(world_root, &cfg);
+    }
+}
+
 // ── Recap (.ck/recap.md) ──────────────────────────────────────────
 
 pub fn recap_path(world_root: &Path) -> PathBuf {
@@ -284,6 +310,36 @@ mod tests {
     }
 
     #[test]
+    fn moved_images_are_followed() {
+        let root = tmp_root("images");
+        let cfg = WorldConfig {
+            id: "w-1".into(),
+            name: "Ashfall".into(),
+            image: "Assets/World.png".into(),
+            players: vec![
+                PlayerEntry {
+                    player_name: "Bea".into(),
+                    image: "Assets/World.png".into(),
+                    ..Default::default()
+                },
+                PlayerEntry {
+                    player_name: "Cle".into(),
+                    image: "Assets/Cle.png".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        write(&root, &cfg).unwrap();
+        rewrite_image_refs(&root, "Assets/World.png", "Art/Emblem.png");
+        let back = read(&root).unwrap().unwrap();
+        assert_eq!(back.image, "Art/Emblem.png");
+        assert_eq!(back.players[0].image, "Art/Emblem.png");
+        assert_eq!(back.players[1].image, "Assets/Cle.png");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn roundtrip_full() {
         let root = tmp_root("full");
         let cfg = WorldConfig {
@@ -295,12 +351,14 @@ mod tests {
             gm_pronouns: "he/him".into(),
             default_language: "de".into(),
             extra_info: "line one\nline \"two\"\n".into(),
+            image: "Assets/Ashfall.png".into(),
             start_session_number: 5,
             players: vec![PlayerEntry {
                 player_name: "Aron".into(),
                 character_name: "Lyra".into(),
                 pronouns: "she/her".into(),
                 is_gm: false,
+                image: "Assets/Lyra.png".into(),
             }],
             codex_root: String::new(),
             kinds: BTreeMap::new(),

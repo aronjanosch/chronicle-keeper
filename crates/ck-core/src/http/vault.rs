@@ -279,6 +279,7 @@ fn move_asset_cascade(
     }
     vault::move_entry(root, from, to)?;
     state.note_vault_write(root, to);
+    crate::world_config::rewrite_image_refs(world_root, from, to);
     for page in vault::list_pages(root)? {
         let Ok(doc) = vault::read_page(root, &page.path) else {
             continue;

@@ -1,7 +1,7 @@
 // Shared atoms ported from the design's atoms.jsx + a few form/primitive helpers.
 import { html, useState, useEffect, useLayoutEffect, useRef, useCallback } from '../vendor/htm-preact-standalone.mjs';
 import { marked } from '../vendor/marked.esm.js';
-import { navigate, store, apiBlob, apiFetch, openInNewTab, openModal } from './core.js';
+import { navigate, store, apiBlob, apiFetch, openInNewTab, openModal, setOp } from './core.js';
 
 // ── Icon — monoline 16-grid SVGs ──────────────────────────────────
 const PATHS = {
@@ -174,6 +174,32 @@ function sigilTone(t) {
 }
 export function Sigil({ ch, tone = 'default', size = 'md' }) {
   return html`<div style=${{ ...SIGIL_SIZE[size], ...sigilTone(tone) }}>${ch}</div>`;
+}
+
+// Click the avatar to choose an image file; `onPick(file)` stores it (the
+// callers copy it into the world's Codex Assets/ so it travels with the world).
+export function ImagePick({ cid, image, ch, tone, size = 'md', title, onPick, onClear }) {
+  const input = useRef(null);
+  const [busy, setBusy] = useState(false);
+  async function pick(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    try { await onPick(file); }
+    catch (err) { setOp(`Image upload failed: ${err.message}`, 'err'); }
+    setBusy(false);
+  }
+  return html`<div class="ck-image-pick" style=${{ position: 'relative', flex: '0 0 auto', display: 'flex', alignItems: 'center' }}>
+    <button type="button" title=${title} disabled=${busy} onClick=${() => input.current?.click()}
+      style=${{ padding: 0, border: 'none', background: 'none', cursor: 'pointer', borderRadius: 6, opacity: busy ? 0.5 : 1 }}>
+      <${Avatar} cid=${cid} image=${image} ch=${ch} tone=${tone} size=${size} />
+    </button>
+    ${image && onClear && html`<button type="button" title="Remove image" onClick=${onClear}
+      style=${{ position: 'absolute', top: -5, right: -5, width: 16, height: 16, borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', color: 'var(--ink-muted)', cursor: 'pointer' }}><${Icon} name="x" size=${9} /></button>`}
+    <input ref=${input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" style=${{ display: 'none' }} onChange=${pick} />
+  </div>`;
 }
 
 // A world's or player's chosen image (a Codex media file), else the Sigil.

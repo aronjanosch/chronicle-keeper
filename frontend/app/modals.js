@@ -1,7 +1,7 @@
 // Overlay forms: campaign editor, session editor, transcribe, export, provider, viewer.
-import { html, useState, useEffect } from '../vendor/htm-preact-standalone.mjs';
+import { html, useState, useEffect, useRef } from '../vendor/htm-preact-standalone.mjs';
 import { store, closeModal, navigate, setOp, openModal, apiFetch, fmtDateTime, toneFor, initials } from './core.js';
-import { Icon, Btn, Field, Input, Textarea, Select, Spinner, ImagePick } from './ui.js';
+import { Icon, Btn, Field, Input, Textarea, Select, Spinner, Avatar } from './ui.js';
 import { CommandPalette } from './screens/palette.js';
 import { kindForFolder } from './folderKinds.js';
 import { loadPrep, prepOps } from './prep.js';
@@ -70,13 +70,39 @@ function PronounSelect({ value, onChange }) {
   </select>`;
 }
 
+// Click the avatar to pick an image: it is copied into the world's Codex
+// (Assets/) and referenced by path, so it travels with the world folder.
+function ImagePick({ cid, image, ch, tone, size = 'md', title, onChange }) {
+  const input = useRef(null);
+  const [busy, setBusy] = useState(false);
+  async function pick(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    try { const r = await uploadVaultAsset(file.name, file, cid); onChange(r.path); }
+    catch (err) { setOp(`Image upload failed: ${err.message}`, 'err'); }
+    setBusy(false);
+  }
+  return html`<div style=${{ position: 'relative', flex: '0 0 auto', display: 'flex', alignItems: 'center' }}>
+    <button type="button" title=${title} disabled=${busy} onClick=${() => input.current?.click()}
+      style=${{ padding: 0, border: 'none', background: 'none', cursor: 'pointer', borderRadius: 6, opacity: busy ? 0.5 : 1 }}>
+      <${Avatar} cid=${cid} image=${image} ch=${ch} tone=${tone} size=${size} />
+    </button>
+    ${image && html`<button type="button" title="Remove image" onClick=${() => onChange('')}
+      style=${{ position: 'absolute', top: -5, right: -5, width: 16, height: 16, borderRadius: '50%', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'var(--surface-raised)', border: '1px solid var(--rule-strong)', color: 'var(--ink-muted)', cursor: 'pointer' }}><${Icon} name="x" size=${9} /></button>`}
+    <input ref=${input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" style=${{ display: 'none' }} onChange=${pick} />
+  </div>`;
+}
+
 function PlayerRows({ players, onChange, cid }) {
   const upd = (i, k, v) => onChange(players.map((p, j) => j === i ? { ...p, [k]: v } : p));
   return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 6 }}>
     ${players.map((p, i) => html`<div key=${i} style=${{ display: 'flex', gap: 6, alignItems: 'center' }}>
       ${cid && html`<${ImagePick} cid=${cid} image=${p.image} title="Portrait — click to choose an image"
         ch=${((p.character_name || p.player_name || '?')[0] || '?').toUpperCase()} tone=${toneFor(p.player_name || p.character_name)}
-        onPick=${async (file) => upd(i, 'image', (await uploadVaultAsset(file.name, file, cid)).path)} onClear=${() => upd(i, 'image', '')} />`}
+        onChange=${(v) => upd(i, 'image', v)} />`}
       <${Input} value=${p.player_name} placeholder="Player" onInput=${(v) => upd(i, 'player_name', v)} />
       <${Input} value=${p.character_name} placeholder="Character" onInput=${(v) => upd(i, 'character_name', v)} />
       <${PronounSelect} value=${p.pronouns} onChange=${(v) => upd(i, 'pronouns', v)} />
@@ -114,8 +140,7 @@ function CampaignModal({ edit }) {
     ${err && html`<div style=${{ color: 'var(--burgundy-700)', fontSize: 13 }}>${err}</div>`}
     <div style=${{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
       ${edit && html`<div style=${{ marginBottom: 2 }}><${ImagePick} cid=${edit.campaign_id} image=${f.image} size="lg" title="World image — click to choose"
-        ch=${(initials(f.name) || '?').slice(0, 1)} tone=${edit.tone}
-        onPick=${async (file) => set('image', (await uploadVaultAsset(file.name, file, edit.campaign_id)).path)} onClear=${() => set('image', '')} /></div>`}
+        ch=${(initials(f.name) || '?').slice(0, 1)} tone=${edit.tone} onChange=${(v) => set('image', v)} /></div>`}
       <div style=${{ flex: 1 }}><${Field} label="World name"><${Input} value=${f.name} onInput=${(v) => set('name', v)} placeholder="The Iron Crown" /></${Field}></div>
     </div>
     <div style=${{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

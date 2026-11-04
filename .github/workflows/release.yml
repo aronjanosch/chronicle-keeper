@@ -6,7 +6,8 @@ name: Release
 # i.e. this workflow IS the "does it build on Windows?" spike.
 #
 # Triggers:
-#   - tag v*        → builds all targets AND publishes a GitHub Release with the installers.
+#   - tag v*        → builds all targets into a draft Release, then publishes it as Latest
+#                     once every target succeeded.
 #   - workflow_dispatch (manual) → builds all targets, uploads installers as run artifacts,
 #                                  no Release. Use this to prove the build before tagging.
 #
@@ -121,7 +122,7 @@ jobs:
           releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Chronicle Keeper {0}', github.ref_name) || '' }}
           releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && steps.changelog.outputs.body || '' }}
           releaseDraft: true
-          prerelease: true
+          prerelease: false
           args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
 
       # linuxdeploy (Tauri's AppImage bundler) ships AppRun.wrapped as 0770. That
@@ -164,3 +165,16 @@ jobs:
             target/release/bundle/**/*.deb
             target/release/bundle/**/*.msi
             target/release/bundle/**/*.exe
+
+  # The builds upload into a draft so nobody sees a release with half its
+  # installers. Once every target succeeded, publish it as the latest release.
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease=false --latest

@@ -22,6 +22,7 @@ pub struct CampaignDetail {
     pub default_language: String,
     pub players: Value,
     pub extra_info: String,
+    pub image: String,
     /// LLM-generated "story so far" narrative rollup (read-only, regenerate on demand).
     pub recap: String,
     /// When `recap` was last generated (local naive timestamp; empty if never).
@@ -222,6 +223,7 @@ pub struct CampaignUpdateRequest {
     pub default_language: Option<String>,
     pub players: Option<Value>,
     pub extra_info: Option<String>,
+    pub image: Option<String>,
     pub next_session_number: Option<i64>,
 }
 

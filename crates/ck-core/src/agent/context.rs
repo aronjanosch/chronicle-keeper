@@ -338,7 +338,7 @@ mod tests {
             player_name: "Aron".into(),
             character_name: "Lyra".into(),
             pronouns: "she/her".into(),
-            is_gm: false,
+            ..Default::default()
         }];
         let ctx = world_context(&root, &c);
         assert!(ctx.contains("Name: Ashfall"));

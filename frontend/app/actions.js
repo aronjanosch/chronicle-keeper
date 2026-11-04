@@ -606,8 +606,8 @@ export async function deleteTemplate(name) {
 }
 
 // Pasted/dropped editor media → <vault>/Assets/. Returns { path, name }.
-export function uploadVaultAsset(name, blob) {
-  const id = store.campaign.campaign_id;
+export function uploadVaultAsset(name, blob, campaignId) {
+  const id = campaignId || store.campaign.campaign_id;
   return apiFetch(`/campaigns/${id}/vault/assets?name=${encodeURIComponent(name)}`, { method: 'POST', body: blob });
 }
 

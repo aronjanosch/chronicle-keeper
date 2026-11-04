@@ -176,6 +176,13 @@ export function Sigil({ ch, tone = 'default', size = 'md' }) {
   return html`<div style=${{ ...SIGIL_SIZE[size], ...sigilTone(tone) }}>${ch}</div>`;
 }
 
+// A world's or player's chosen image (a Codex media file), else the Sigil.
+export function Avatar({ cid, image, ch, tone, size = 'md' }) {
+  const url = useAsset(cid, image || null);
+  if (!url) return html`<${Sigil} ch=${ch} tone=${tone} size=${size} />`;
+  return html`<img src=${url} alt="" draggable=${false} style=${{ ...SIGIL_SIZE[size], flex: '0 0 auto', objectFit: 'cover', border: '1px solid var(--rule)', display: 'block' }} />`;
+}
+
 // ── BrandMark ─────────────────────────────────────────────────────
 export function BrandMark({ size = 28 }) {
   return html`<div style=${{

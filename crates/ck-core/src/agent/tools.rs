@@ -2273,6 +2273,9 @@ fn read_map_tool(ctx: &ToolCtx<'_>, key: &str) -> Result<String, String> {
             if let Some(page) = &r.page {
                 out.push_str(&format!(" → {page}"));
             }
+            if let Some(to) = &r.to {
+                out.push_str(&format!(" ⇒ map {to}"));
+            }
             out.push_str(&format!(" · centre {}, {}\n", pct(cx), pct(cy)));
         }
     }
@@ -2644,6 +2647,7 @@ mod tests {
             points: vec![[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]],
             page: None,
             color: None,
+            to: None,
         }];
         crate::atlas::write_map(&root, &doc).unwrap();
         (state, root, cfg)

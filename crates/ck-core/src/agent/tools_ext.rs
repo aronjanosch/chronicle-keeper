@@ -568,6 +568,7 @@ fn plan_edit_map(ctx: &ToolCtx<'_>, args: &Value) -> Result<(atlas::MapDoc, Stri
                 points,
                 page,
                 color: Some(s(args, "color").to_string()).filter(|c| !c.is_empty()),
+                to: None,
             });
             format!("add region “{name}” to “{map_name}”")
         }

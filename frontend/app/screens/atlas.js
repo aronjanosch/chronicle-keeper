@@ -166,7 +166,7 @@ const RESERVED_FM = new Set(['kind', 'summary', 'aliases', 'tags', 'cssclasses',
 // drag-resizable width shared by the codex + new-entry side panels
 const usePanelWidth = () => useSidebarWidth('ck_atlas_panel_w', 380, { min: 320, max: 640, fromRight: true });
 
-function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canChart, onEnterMap, onChartMap, onRemovePin, removeLabel = 'Remove pin', onClose }) {
+function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, toName, canChart, onEnterMap, onChartMap, onRemovePin, removeLabel = 'Remove pin', onClose }) {
   const bodyRef = useRef(null);
   const [page, setPage] = useState(null);
   const [err, setErr] = useState(null);
@@ -255,7 +255,7 @@ function CodexPanel({ pagePath, heading, onSetHeading, pinName, kind, to, canCha
             <${Icon} name="map" size=${16} />
           </span>
           <span style=${{ flex: 1, minWidth: 0 }}>
-            <span style=${{ display: 'block', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, color: '#FBF6E9' }}>Enter the map of ${page.title || pinName}</span>
+            <span style=${{ display: 'block', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, color: '#FBF6E9' }}>${toName ? `Enter ${toName}` : `Enter the map of ${page.title || pinName}`}</span>
             <span style=${{ display: 'block', fontSize: 11, color: 'rgba(247,232,226,.8)', marginTop: 1 }}>This place is charted — explore its pins</span>
           </span>
           <${Icon} name="arrow-r" size=${15} />
@@ -853,7 +853,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
   const openPin = (pin) => {
     if (pinMoved.current) { pinMoved.current = false; return; }
     if (drag.current && drag.current.moved) return;
-    if (!pin.page) return;
+    if (!pin.page) { if (pin.to) goToMap(pin.to); return; }
     setNewEntry(null);
     const { path, heading } = splitPageRef(pin.page);
     setPanel({ pagePath: path, heading, pinId: pin.id, kind: pin.kind, name: pin.name, to: pin.to });
@@ -968,8 +968,9 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     if (r.page) {
       const { path, heading } = splitPageRef(r.page);
       setNewRegion(null);
-      setPanel({ pagePath: path, heading, regionId: r.id, kind: 'place', name: r.name });
-    } else { setPanel(null); setNewRegion({ region: r, existing: true }); }
+      setPanel({ pagePath: path, heading, regionId: r.id, kind: 'place', name: r.name, to: r.to });
+    } else if (r.to) goToMap(r.to);
+    else { setPanel(null); setNewRegion({ region: r, existing: true }); }
   };
   const commitRegionNew = async (n, name, folder) => {
     const nm = (name || '').trim() || n.region.name || 'Region';
@@ -1004,10 +1005,27 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     const name = window.prompt('Region name', r.name);
     if (name && name.trim() && name.trim() !== r.name) saveRegion({ ...r, name: name.trim().slice(0, 200) });
   };
+  // Any other map can be a gateway target: a child map, a sibling, the next
+  // dungeon level. Children are listed under the map they belong to.
+  const mapLinkMenu = (to, onPick) => ({
+    label: to ? 'Linked map' : 'Link to map', icon: 'map',
+    children: [
+      ...maps.filter((m) => m.id !== map.id).map((m) => ({
+        label: m.parent && byId[m.parent] ? `${byId[m.parent].name} › ${m.name}` : m.name,
+        icon: m.id === to ? 'check' : undefined,
+        onClick: () => onPick(m.id),
+      })),
+      to && '-',
+      to && { label: 'Unlink map', icon: 'x', onClick: () => onPick(null) },
+    ].filter(Boolean),
+    hidden: maps.length < 2,
+  });
   const regionMenu = (e, r) => openContextMenu(e, [
     r.page && { label: 'Open page', icon: 'book', onClick: () => navigate('page', { path: splitPageRef(r.page).path }) },
     r.page && { label: 'Read here', icon: 'doc', onClick: () => openRegion(r) },
-    !r.page && { label: 'Create place page…', icon: 'plus', onClick: () => openRegion(r) },
+    !r.page && { label: 'Create place page…', icon: 'plus', onClick: () => { setPanel(null); setNewRegion({ region: r, existing: true }); } },
+    r.to && { label: 'Enter the map', icon: 'map', onClick: () => goToMap(r.to) },
+    mapLinkMenu(r.to, (to) => { const { to: _, ...rest } = r; saveRegion(to ? { ...rest, to } : rest); }),
     { label: 'Rename…', icon: 'edit', onClick: () => renameRegion(r) },
     { label: 'Colour', icon: 'tag', children: REGION_COLORS.map(([label, color]) => ({ label, onClick: () => saveRegion({ ...r, color }) })) },
     '-',
@@ -1046,7 +1064,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
     persist({ ...map, pins: (map.pins || []).map((p) => {
       if (p.id !== pinId) return p;
       const next = { ...p, ...patch };
-      for (const k of ['icon', 'label']) if (!next[k]) delete next[k];
+      for (const k of ['icon', 'label', 'to']) if (!next[k]) delete next[k];
       return next;
     }) });
   };
@@ -1139,7 +1157,8 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
 
         <${RegionLayer} regions=${regionsShown} poly=${draw.poly} polyHover=${draw.polyHover} zoom=${view.zoom} W=${W} H=${H}
           interactive=${!draw.tool && !measure && !placing} selectedId=${panel?.regionId || (newRegion && newRegion.region.id)}
-          onOpen=${(r) => { if (wasDrag.current) { wasDrag.current = false; return; } openRegion(r); }} onMenu=${regionMenu} />
+          onOpen=${(r) => { if (wasDrag.current) { wasDrag.current = false; return; } openRegion(r); }} onMenu=${regionMenu}
+          onEnter=${(r) => r.to && goToMap(r.to)} />
 
         <${DrawLayer} drawings=${drawings} texts=${texts} draft=${draw.draft} brush=${draw.brush} zoom=${view.zoom} W=${W} H=${H}
           tool=${draw.tool} color=${draw.color} width=${draw.width} onTextDblClick=${(t) => draw.setEdit({ ...t })} />
@@ -1157,6 +1176,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
             pin.page && { label: 'Open page', icon: 'book', onClick: () => navigate('page', { path: splitPageRef(pin.page).path }) },
             pin.page && { label: 'Read here', icon: 'doc', onClick: () => openPin(pin) },
             pin.to && { label: 'Enter the map', icon: 'map', onClick: () => goToMap(pin.to) },
+            mapLinkMenu(pin.to, (to) => patchPin(pin.id, { to })),
             '-',
             { label: 'Icon', icon: 'pin', children: [
               { label: 'Default', onClick: () => patchPin(pin.id, { icon: '' }) },
@@ -1333,7 +1353,7 @@ function AtlasStage({ campaign, maps, initialMapId, initialPinId }) {
 
     ${panel && html`<${CodexPanel} pagePath=${panel.pagePath} heading=${panel.heading}
       onSetHeading=${panel.pinId ? setPinHeading : null} pinName=${panel.name} kind=${panel.kind}
-      to=${panel.to} canChart=${!!panel.pinId && !busy}
+      to=${panel.to} toName=${byId[panel.to]?.name} canChart=${!!panel.pinId && !busy}
       onEnterMap=${() => goToMap(panel.to)} onChartMap=${chartFromPin}
       onRemovePin=${panel.pinId ? () => removePin(panel.pinId) : panel.regionId ? () => removeRegion(panel.regionId) : null}
       removeLabel=${panel.regionId ? 'Remove region' : 'Remove pin'}

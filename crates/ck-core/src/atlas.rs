@@ -371,18 +371,22 @@ fn versions(dir: &Path) -> Vec<(PathBuf, MapVersion)> {
 fn snapshot(world_root: &Path, id: &str, before: &str, origin: &str) {
     let dir = history_dir(world_root, id);
     let existing = versions(&dir);
+    let mut ts = now_ms();
     if let Some((path, latest)) = existing.first() {
-        let fresh = now_ms().saturating_sub(latest.ts) < COALESCE_SECS * 1000;
+        let fresh = ts.saturating_sub(latest.ts) < COALESCE_SECS * 1000;
         if (fresh && latest.origin == origin)
             || std::fs::read_to_string(path).is_ok_and(|t| t == before)
         {
             return;
         }
+        // versions are addressed by ts, so two snapshots in one millisecond
+        // must not share it
+        ts = ts.max(latest.ts + 1);
     }
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
-    let _ = std::fs::write(dir.join(format!("{}-{origin}.json", now_ms())), before);
+    let _ = std::fs::write(dir.join(format!("{ts}-{origin}.json")), before);
     for (path, _) in versions(&dir).into_iter().skip(MAX_HISTORY) {
         let _ = std::fs::remove_file(path);
     }
@@ -980,6 +984,23 @@ mod tests {
         assert_eq!(restored.name, "Vale");
         assert_eq!(read_map(&dir, &doc.id).unwrap().name, "Vale");
         assert!(restore_version(&dir, &doc.id, 1).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn snapshots_in_one_millisecond_get_distinct_versions() {
+        let dir = temp_world("hist-ms");
+        let src = fake_png(&dir, "a.png");
+        let doc = create_map(&dir, "Vale", &src, None, None).unwrap();
+        let hist = history_dir(&dir, &doc.id);
+        std::fs::create_dir_all(&hist).unwrap();
+        let future = now_ms() + 60_000;
+        std::fs::write(hist.join(format!("{future}-keeper.json")), "{}").unwrap();
+
+        snapshot(&dir, &doc.id, "{\"x\":1}", "user");
+        let v = list_history(&dir, &doc.id).unwrap();
+        assert_eq!(v.len(), 2);
+        assert_eq!((v[0].ts, v[0].origin.as_str()), (future + 1, "user"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

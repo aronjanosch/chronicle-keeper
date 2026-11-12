@@ -748,6 +748,14 @@ export async function loadSession(id) {
   } catch (e) { setState({ error: e.message, loading: false }); }
 }
 
+// The review is a free-form Keeper chat, so "done" is the GM's call, not derived.
+export async function setSessionReviewed(id, reviewed) {
+  try {
+    const r = await apiJson(`/sessions/${id}/reviewed`, 'POST', { reviewed });
+    if (store.session?.session_id === id) setState({ session: { ...store.session, reviewed_at: r.reviewed_at } });
+  } catch (e) { setOp(`Couldn't update the review mark: ${e.message}`, 'err'); }
+}
+
 export async function createSession() {
   const id = store.campaign.campaign_id;
   const created = await apiJson(`/campaigns/${id}/sessions`, 'POST', {});

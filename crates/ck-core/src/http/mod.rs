@@ -250,6 +250,7 @@ pub fn router(state: AppState) -> Router {
         .route("/session/:id/metadata", get(sessions::metadata))
         .route("/session-metadata", post(sessions::set_metadata))
         .route("/sessions/:id", delete(sessions::delete))
+        .route("/sessions/:id/reviewed", post(sessions::set_reviewed))
         .route("/sessions/:id/prep", get(session_prep::get))
         .route(
             "/sessions/:id/prep/ops",

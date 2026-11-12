@@ -90,6 +90,10 @@ pub struct SessionToml {
     /// Codex-relative path of this session's prep page (`kind: prep`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prep: Option<String>,
+    /// When the GM marked the post-session review as done (RFC 3339). A manual
+    /// flag: the review itself is a free-form Keeper chat with no state to derive it from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed: Option<String>,
     #[serde(default, skip_serializing_if = "SessionMetadata::is_empty")]
     pub metadata: SessionMetadata,
     #[serde(default, skip_serializing_if = "ArtifactMeta::is_empty")]
@@ -295,6 +299,26 @@ mod tests {
     }
 
     #[test]
+    fn reviewed_flag_round_trips_and_is_absent_by_default() {
+        let dir = std::env::temp_dir().join(format!("ck-sf-reviewed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut st = SessionToml {
+            number: Some(3),
+            ..Default::default()
+        };
+        write_session_toml_file(&dir, &st).unwrap();
+        let raw = std::fs::read_to_string(session_toml_path(&dir)).unwrap();
+        assert!(!raw.contains("reviewed"));
+
+        st.reviewed = Some("2026-11-11T20:00:00Z".into());
+        write_session_toml_file(&dir, &st).unwrap();
+        let back: SessionToml =
+            toml::from_str(&std::fs::read_to_string(session_toml_path(&dir)).unwrap()).unwrap();
+        assert_eq!(back.reviewed.as_deref(), Some("2026-11-11T20:00:00Z"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn write_session_toml_format() {
         let dir = std::env::temp_dir().join(format!("ck-sf-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -334,6 +358,7 @@ mod tests {
             language: "de".into(),
             notes: "line one\nline two\n".into(),
             prep: Some("Prep/Session 007.md".into()),
+            reviewed: None,
             metadata: SessionMetadata {
                 characters: vec!["Lyra".into()],
                 tags: vec!["Kampf".into(), "Mysterium".into()],

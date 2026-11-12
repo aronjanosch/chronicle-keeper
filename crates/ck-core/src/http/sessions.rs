@@ -35,6 +35,25 @@ pub async fn set_metadata(
     })
 }
 
+#[derive(serde::Deserialize)]
+pub struct ReviewedRequest {
+    reviewed: bool,
+}
+
+pub async fn set_reviewed(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<ReviewedRequest>,
+) -> AppResult<Json<Value>> {
+    state.with_db(|conn| {
+        Ok(Json(sessions::set_reviewed(
+            conn,
+            &session_id,
+            req.reviewed,
+        )?))
+    })
+}
+
 pub async fn delete(
     State(state): State<AppState>,
     Path(session_id): Path<String>,

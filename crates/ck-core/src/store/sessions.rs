@@ -354,6 +354,7 @@ pub fn get_session_object(conn: &Connection, session_id: &str) -> AppResult<Valu
         "metadata": metadata_value(&loc.st),
         "transcription": {},
         "summary": {},
+        "reviewed_at": loc.st.reviewed,
         "campaign": {
             "campaign_id": campaign_id,
             "campaign_name": campaign_name,
@@ -363,6 +364,17 @@ pub fn get_session_object(conn: &Connection, session_id: &str) -> AppResult<Valu
             "notes": loc.st.notes,
         }
     }))
+}
+
+/// Set or clear the "review done" flag in `session.toml`.
+pub fn set_reviewed(conn: &Connection, session_id: &str, reviewed: bool) -> AppResult<Value> {
+    let loc = require(conn, session_id)?;
+    let mut st = loc.st;
+    st.reviewed =
+        reviewed.then(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+    session_files::write_session_toml_file(&loc.dir, &st)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("write session.toml: {e}")))?;
+    Ok(json!({ "session_id": session_id, "reviewed_at": st.reviewed }))
 }
 
 /// `/session/{id}/metadata` — campaign metadata view.

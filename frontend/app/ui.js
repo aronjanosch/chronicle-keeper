@@ -237,6 +237,7 @@ export function Pipeline({ stages }) {
         </div>
         <div style=${{ fontSize: 13, color: 'var(--ink)' }}>${s.detail}</div>
         ${s.meta && html`<div style=${{ fontSize: 11, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>${s.meta}</div>`}
+        ${s.action}
       </div>`;
     })}
   </div>`;

@@ -2,7 +2,7 @@
 // metadata. Preparation and post-session review run as Keeper skills.
 import { html, useState, useEffect } from '../../vendor/htm-preact-standalone.mjs';
 import { navigate, openModal, fmtDate, fmtDateTime, toneFor } from '../core.js';
-import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, saveSummaryEdit, loadSession, importTranscript } from '../actions.js';
+import { deleteArtifact, artifactContent, deleteSession, openCampaign, runTranscribe, saveSessionMetadata, saveSummaryEdit, loadSession, importTranscript, setSessionReviewed } from '../actions.js';
 import { Shell, Sidebar, Topbar } from '../shell.js';
 import { Icon, Sigil, Btn, Pipeline, Markdown, Empty, Menu, Card } from '../ui.js';
 import { loadPrep, prepOps } from '../prep.js';
@@ -273,14 +273,24 @@ export function SessionScreen({ store }) {
   const speakers = sess.speakers || [];
   const hasT = store.transcripts.length > 0;
   const hasS = store.summaries.length > 0;
+  const reviewedAt = sess.reviewed_at;
+  const localModel = (store.config?.summary_provider || 'ollama').toLowerCase() === 'ollama';
 
   const stages = [
     { key: 'u', label: 'Recording', done: tracks.length > 0, current: tracks.length === 0, detail: tracks.length ? `${tracks.length} track${tracks.length === 1 ? '' : 's'}` : 'No upload', meta: tracks.length ? '' : 'Upload a Craig ZIP' },
     { key: 't', label: 'Transcribed', done: hasT, current: tracks.length > 0 && !hasT, detail: hasT ? `${store.transcripts[0].provider} / ${store.transcripts[0].model}` : 'Pending', meta: hasT ? 'on-device' : '' },
     { key: 's', label: 'Summarized', done: hasS, current: hasT && !hasS, detail: hasS ? `${store.summaries[0].provider} / ${store.summaries[0].model}` : 'Pending', meta: hasS ? fmtDateTime(store.summaries[0].created_at) : '' },
+    {
+      key: 'r', label: 'Reviewed', done: !!reviewedAt, current: hasS && !reviewedAt,
+      detail: reviewedAt ? 'Marked as reviewed' : hasS ? 'Review with the Keeper' : 'Needs a summary first',
+      // The review edits pages through Keeper tools; small local models often can't drive them.
+      meta: reviewedAt ? fmtDateTime(reviewedAt) : (hasS && localModel ? 'needs a tool-capable model' : ''),
+      action: hasS && html`<a href="#" style=${{ fontSize: 11.5, color: 'var(--ink-muted)', textDecoration: 'underline', textUnderlineOffset: 2 }}
+        onClick=${(e) => { e.preventDefault(); setSessionReviewed(sess.session_id, !reviewedAt); }}>${reviewedAt ? 'Mark as not reviewed' : 'Mark as reviewed'}</a>`,
+    },
   ];
 
-  const reviewBtn = html`<${Btn} kind="primary" icon="book" onClick=${() => reviewSessionChat(cam)}>Review session</${Btn}>`;
+  const reviewBtn = html`<${Btn} kind=${reviewedAt ? 'secondary' : 'primary'} icon="book" onClick=${() => reviewSessionChat(cam)}>Review session</${Btn}>`;
 
   // Existing transcript/summary dominate: an imported transcript with no audio
   // must offer Summarize, not Upload, as primary.
@@ -293,9 +303,12 @@ export function SessionScreen({ store }) {
           onConfirm: () => navigate('summarize', { id: sess.session_id }),
         })}>Re-summarize</${Btn}>
         ${reviewBtn}`)
-    : tracks.length
-      ? html`<${Btn} kind="primary" icon="mic" onClick=${() => runTranscribe()}>Transcribe</${Btn}>`
-      : html`<${Btn} kind="primary" icon="upload" onClick=${() => navigate('newSession', { id: cam.campaign_id, attach: sess.session_id })}>Upload recording</${Btn}>`;
+    // A summary without a transcript (written by hand or brought in from elsewhere)
+    // is still reviewable; the upload stays available beside it.
+    : html`${tracks.length
+        ? html`<${Btn} kind=${hasS ? 'secondary' : 'primary'} icon="mic" onClick=${() => runTranscribe()}>Transcribe</${Btn}>`
+        : html`<${Btn} kind=${hasS ? 'secondary' : 'primary'} icon="upload" onClick=${() => navigate('newSession', { id: cam.campaign_id, attach: sess.session_id })}>Upload recording</${Btn}>`}
+      ${hasS ? reviewBtn : ''}`;
 
   const sessionMenu = html`<${Menu} items=${[
     { label: 'Edit session', icon: 'edit', onClick: () => openModal('session', { session: sess }) },
